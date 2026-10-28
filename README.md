@@ -65,8 +65,10 @@ node scripts/build.mjs        # por último (o sitemap inclui as páginas da Goo
 
 Em `law/assets/config.js`, informe o e-mail e o WhatsApp reais do escritório (o e-mail atual é provisório). Inclua também o registro na OAB no rodapé, em `scripts/build-law.mjs`.
 
-### Notícias em tempo real
+### Publicação e notícias em tempo real
 
-O workflow `.github/workflows/pages.yml` roda a cada 15 minutos: coleta as notícias, mesclando com a coleta anterior para que uma fonte instável não esvazie um tema, gera as páginas e publica no GitHub Pages. No navegador, o portal mostra primeiro esses dados e depois os complementa lendo os feeds diretamente. Para ativar, vá em **Settings → Pages → Source: GitHub Actions**.
+O site está no ar em https://monolito123.github.io/Gooners/ e é servido pelo GitHub Pages a partir do branch `gh-pages`, que contém só o site gerado.
+
+O workflow `.github/workflows/pages.yml` roda a cada push e a cada 15 minutos. Ele coleta as notícias, mesclando com a coleta anterior para que uma fonte instável não esvazie um tema, gera as páginas e substitui o conteúdo do `gh-pages`. No navegador, o portal mostra primeiro esses dados e depois os complementa lendo os feeds diretamente.
 
 > O conteúdo é informativo e não constitui aconselhamento jurídico. Revise textos e números com o responsável técnico do escritório antes de publicar (Provimento CFOAB nº 205/2021).
