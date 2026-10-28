@@ -206,9 +206,9 @@
   let installEvt = null;
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; $('installBtn').hidden = false; });
   $('installBtn').addEventListener('click', async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('installBtn').hidden = true; });
-  if ('serviceWorker' in navigator && location.protocol === 'https:' || location.hostname === 'localhost') {
-    navigator.serviceWorker?.register(R + 'sw.js').catch(() => {});
-  }
+  try {
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register(R + 'sw.js').catch(() => {});
+  } catch { /* ambiente sem service worker (iframe isolado) */ }
 
   document.querySelectorAll('[data-year]').forEach((el) => (el.textContent = new Date().getFullYear()));
   decorate(); syncStars(); renderNavRecent(); renderPersonal();

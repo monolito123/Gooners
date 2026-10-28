@@ -2,7 +2,7 @@ name: Publicar site e atualizar notícias
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/gooners-interactive-website-xszyfd]
   schedule:
     - cron: '*/15 * * * *'   # coleta as notícias jurídicas a cada 15 minutos
   workflow_dispatch:
