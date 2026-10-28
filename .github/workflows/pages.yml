@@ -30,6 +30,10 @@ jobs:
       - name: Coletar notícias
         run: node scripts/fetch-news.mjs
         continue-on-error: true
+      - name: Gerar páginas (Gooners Law e ferramentas, sitemap)
+        run: |
+          node scripts/build-law.mjs
+          node scripts/build.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /favoritos/
+Disallow: /scripts/
+
+Sitemap: https://monolito123.github.io/Gooners/sitemap.xml

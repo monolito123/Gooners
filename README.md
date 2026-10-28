@@ -1,47 +1,72 @@
 # Gooners
 
-Este repositório tem dois sites estáticos, sem etapa de build:
+Dois sites estáticos, indexáveis por buscadores e prontos para o GitHub Pages:
 
 | Caminho | O que é |
 |---|---|
-| `/` | **Gooners**: hub com 45 ferramentas online (texto, geradores, validadores, conversores, calculadoras, ferramentas de desenvolvedor e de tempo). Tudo roda no navegador. |
-| `/law/` | **Gooners Law**: site de assistência jurídica em proteção patrimonial e assessoria offshore, com simuladores e um portal de notícias jurídicas atualizado em tempo real. |
+| `/` | **Gooners**: 62 ferramentas online gratuitas em 8 categorias (texto, geradores, validadores, consultas, conversores, calculadoras, desenvolvedor, tempo e produtividade). Cada ferramenta tem sua própria página. |
+| `/law/` | **Gooners Law**: assistência jurídica em proteção patrimonial e assessoria offshore, com simuladores, portal de notícias jurídicas em tempo real, glossário e artigos. |
 
 ## Rodar localmente
 
 ```bash
 python3 -m http.server 8000
-# abra http://localhost:8000 e http://localhost:8000/law/
+# http://localhost:8000  e  http://localhost:8000/law/
 ```
 
-## Gooners: ferramentas
+## Estrutura
 
-- **Texto:** inverter texto, contador de caracteres, maiúsculas/minúsculas, letras diferentes (Unicode), remover acentos, slug, ordenar/limpar linhas, remover espaços, localizar e substituir, comparar textos (diff), Lorem Ipsum, número por extenso.
-- **Geradores:** senha forte, CPF, CNPJ (inclusive alfanumérico), UUID v4/v7, sorteador de números, sorteador de nomes e times, cara ou coroa e dados, QR Code.
-- **Validadores:** CPF/CNPJ em lote, cartão (Luhn + bandeira), e-mails, testador de regex.
-- **Conversores:** Base64, URL, texto ↔ binário/hex, bases numéricas, unidades, cores, Morse (com áudio), timestamp Unix.
-- **Calculadoras:** porcentagem, idade, diferença entre datas e prazos (dias úteis), regra de três, juros compostos, IMC.
-- **Dev:** JSON, hash (MD5/SHA), JWT, escapar HTML. **Tempo:** cronômetro, timer/Pomodoro, relógio mundial.
+```
+assets/js/tools.js        catálogo e lógica de todas as ferramentas
+assets/js/app.js          busca, favoritos, recentes, paleta (Ctrl+K), atalhos, PWA
+assets/css/gooners.css    design system do hub (tema claro/escuro)
+assets/icons.svg          sprite de ícones (Lucide, licença ISC)
+law/assets/               estilos e scripts da Gooners Law (config.js = dados de contato)
+law/data/feeds.json       fontes do portal de notícias
+law/data/news.json        notícias coletadas no servidor
+scripts/build.mjs         gera home, categorias, páginas de ferramentas, sitemap, robots e manifest
+scripts/build-law.mjs     gera as páginas da Gooners Law
+scripts/fetch-news.mjs    coleta as notícias (sem dependências)
+scripts/seo-content.mjs   textos de SEO das ferramentas (títulos, passo a passo, FAQ)
+scripts/law-content.mjs   conteúdo da Gooners Law (áreas, jurisdições, FAQ, glossário, artigos)
+```
 
-O hub também tem busca instantânea, filtro por categoria, favoritos, ferramentas recentes, paleta de comandos (`Ctrl+K`), tema claro/escuro e links compartilháveis (`#/ferramenta/<id>`).
+As páginas HTML são **geradas**: edite os scripts ou o conteúdo e rode:
 
-Para criar uma ferramenta, adicione um bloco `add({ id, name, cat, icon, desc, keys, render(root) { … } })` em `assets/js/tools.js`.
+```bash
+node scripts/fetch-news.mjs   # opcional: atualiza as notícias
+node scripts/build-law.mjs
+node scripts/build.mjs        # por último (o sitemap inclui as páginas da Gooners Law)
+```
 
-## Gooners Law
+## SEO
 
-- Áreas de atuação, metodologia, comparador de jurisdições offshore, FAQ e formulário de contato (por e-mail ou WhatsApp).
-- Três simuladores: **diagnóstico patrimonial**, **custo de inventário × holding** e **tributação offshore (Lei 14.754/2023)**.
-- **Notícias em tempo real:** faixa de manchetes ao vivo, abas por tema, busca, selo “NOVO”, atualização automática a cada 3 minutos, alertas no navegador e cache local.
+- Página estática e indexável para cada ferramenta (`/ferramentas/<id>/`) e categoria (`/categorias/<id>/`), com título, descrição, canonical, Open Graph e Twitter Card próprios.
+- Dados estruturados (JSON-LD): `WebSite` com `SearchAction`, `Organization`, `WebApplication`, `BreadcrumbList`, `FAQPage`, `CollectionPage`/`ItemList`, `LegalService`, `Article` e `DefinedTermSet`.
+- Conteúdo editorial em cada ferramenta (passo a passo e perguntas frequentes) e links internos no rodapé.
+- `sitemap.xml`, `robots.txt`, imagens de compartilhamento (1200×630) e manchetes pré-renderizadas no HTML do portal de notícias.
+- A URL canônica vem de `scripts/site.config.json` (`siteUrl`). Se usar domínio próprio, altere ali, ou defina `SITE_URL`, e gere de novo.
+
+## Gooners: recursos
+
+- Novas ferramentas: QR Code Pix (BR Code), consulta CEP (ViaCEP) e CNPJ (BrasilAPI), conversor de moedas, feriados nacionais, link do WhatsApp, pessoas fictícias para testes, conversor e compressor de imagens, CSV ↔ JSON, números romanos, financiamento Price/SAC, calculadora de horas, estatística, editor Markdown, gerador de meta tags SEO, leitura em voz alta e bloco de notas. A diferença entre datas agora desconta feriados.
+- Menu lateral com categorias e recentes, busca instantânea (também por `?q=`), favoritos, modo foco, compartilhamento, atalhos de teclado (`?`) e tema claro/escuro.
+- PWA instalável com funcionamento offline (`sw.js` e `manifest.webmanifest`).
+
+## Gooners Law: recursos
+
+- Comparador de jurisdições com filtro por objetivo e comparação lado a lado.
+- Simuladores: diagnóstico patrimonial, inventário × holding, tributação offshore (Lei 14.754/2023) e checklist de documentos da holding (salvo no navegador e imprimível).
+- Agendamento: escolha do dia útil, horário e formato, com envio por e-mail ou WhatsApp e arquivo `.ics` para a agenda.
+- Portal de notícias (`/law/noticias/`): busca, temas, filtro por período e fonte, grade ou lista, “ler depois”, marcação de lidas, compartilhamento, alertas no navegador e atualização automática.
+- Glossário com 37 termos e 3 artigos (Lei 14.754/2023, holding familiar e proteção patrimonial lícita).
 
 ### Configuração
 
-Edite `law/assets/config.js` com o e-mail e o WhatsApp reais do escritório (o e-mail atual é provisório). Também vale incluir o registro na OAB no rodapé de `law/index.html`.
+Em `law/assets/config.js`, informe o e-mail e o WhatsApp reais do escritório (o e-mail atual é provisório). Inclua também o registro na OAB no rodapé, em `scripts/build-law.mjs`.
 
-### Como as notícias são atualizadas
+### Notícias em tempo real
 
-1. **No servidor:** o workflow `.github/workflows/pages.yml` roda `scripts/fetch-news.mjs` a cada 15 minutos. O script lê as fontes de `law/data/feeds.json` (buscas temáticas no Google Notícias, Migalhas, Conjur, JOTA e STF), gera `law/data/news.json` e publica o site no GitHub Pages.
-2. **No navegador:** a página lê `news.json` e também tenta ler os feeds diretamente, por proxies CORS públicos, para captar o que saiu entre duas coletas. Se os proxies falharem, o site continua funcionando com os dados do servidor.
+O workflow `.github/workflows/pages.yml` roda a cada 15 minutos: coleta as notícias, mesclando com a coleta anterior para que uma fonte instável não esvazie um tema, gera as páginas e publica no GitHub Pages. No navegador, o portal mostra primeiro esses dados e depois os complementa lendo os feeds diretamente. Para ativar, vá em **Settings → Pages → Source: GitHub Actions**.
 
-Para ativar, vá em **Settings → Pages → Source: GitHub Actions** e faça merge na branch `main`. Para incluir ou remover fontes, edite `law/data/feeds.json`.
-
-> O conteúdo do site é informativo e não constitui aconselhamento jurídico. Revise os textos com o responsável técnico do escritório para garantir a conformidade com o Provimento CFOAB nº 205/2021.
+> O conteúdo é informativo e não constitui aconselhamento jurídico. Revise textos e números com o responsável técnico do escritório antes de publicar (Provimento CFOAB nº 205/2021).

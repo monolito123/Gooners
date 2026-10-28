@@ -57,13 +57,17 @@ await Promise.all(feeds.map(async (f) => {
   }
 }));
 
+// Mantém as notícias da coleta anterior (até 10 dias), para que uma fonte instável não esvazie um tema
+let previous = [];
+try { previous = JSON.parse(await readFile(new URL('news.json', root), 'utf8')).items || []; } catch { /* primeira coleta */ }
+const cutoff = Date.now() - 10 * 864e5;
 const map = new Map();
-for (const it of all.sort((a, b) => b.date - a.date)) {
+for (const it of [...all.sort((a, b) => b.date - a.date), ...previous.filter((x) => x.date > cutoff)]) {
   const k = norm(it.title);
   if (!map.has(k)) map.set(k, it);
-  else if (!map.get(k).cats.includes(it.cats[0])) map.get(k).cats.push(it.cats[0]);
+  else for (const c of it.cats) if (!map.get(k).cats.includes(c)) map.get(k).cats.push(c);
 }
-const items = [...map.values()].filter((x) => x.date < Date.now() + 36e5).slice(0, 300);
+const items = [...map.values()].filter((x) => x.date < Date.now() + 36e5).sort((a, b) => b.date - a.date).slice(0, 400);
 if (!items.length) { console.error('Nenhuma notícia coletada — news.json mantido.'); process.exit(0); }
 await writeFile(new URL('news.json', root), JSON.stringify({ updated: Date.now(), sources, items }));
 console.log(`✓ ${items.length} notícias de ${Object.values(sources).filter((s) => s[0]).length}/${feeds.length} fontes`);
