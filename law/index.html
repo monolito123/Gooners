@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gooners Law — Proteção Patrimonial, Offshore e Notícias Jurídicas</title>
+  <meta name="description" content="Gooners Law: assistência jurídica especializada em proteção patrimonial, holdings, planejamento sucessório e assessoria offshore. Portal de notícias jurídicas atualizado em tempo real.">
+  <meta name="theme-color" content="#0a1222">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a1222'/%3E%3Cpath d='M32 12v40M18 52h28M14 24h36M20 24l-7 14a7 7 0 0 0 14 0zM44 24l-7 14a7 7 0 0 0 14 0z' stroke='%23d4af6a' stroke-width='3' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/law.css">
+</head>
+<body>
+  <!-- Ticker -->
+  <div class="ticker" aria-label="Últimas notícias">
+    <span class="live"><i></i> AO VIVO</span>
+    <div class="ticker-track"><div class="ticker-move" id="ticker"><span>Carregando manchetes jurídicas…</span></div></div>
+  </div>
+
+  <header class="nav" id="nav">
+    <a href="#inicio" class="logo" aria-label="Gooners Law">
+      <svg viewBox="0 0 64 64" width="34" height="34" aria-hidden="true"><path d="M32 10v42M18 52h28M12 22h40M19 22l-7 15a7 7 0 0 0 14 0zM45 22l-7 15a7 7 0 0 0 14 0z" stroke="currentColor" stroke-width="3" fill="none" stroke-linejoin="round"/></svg>
+      <span>Gooners <em>Law</em></span>
+    </a>
+    <button class="menu-btn" id="menuBtn" aria-label="Abrir menu" aria-expanded="false"><span></span><span></span><span></span></button>
+    <nav class="links" id="links">
+      <a href="#atuacao">Atuação</a>
+      <a href="#offshore">Offshore</a>
+      <a href="#ferramentas">Simuladores</a>
+      <a href="#noticias">Notícias <span class="dot"></span></a>
+      <a href="#contato" class="cta">Agendar consulta</a>
+      <a href="../" class="back-hub">← Gooners</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero" id="inicio">
+      <div class="hero-inner">
+        <p class="kicker">Proteção patrimonial · Estruturação offshore · Sucessão</p>
+        <h1>Seu patrimônio merece <em>arquitetura jurídica</em>, não improviso.</h1>
+        <p class="sub">Assessoria técnica para famílias, empresários e investidores que buscam organizar, proteger e transmitir patrimônio no Brasil e no exterior — com conformidade fiscal e segurança jurídica.</p>
+        <div class="hero-cta">
+          <a href="#diagnostico" class="btn btn-gold">Fazer diagnóstico gratuito</a>
+          <a href="#noticias" class="btn btn-line">Ver notícias ao vivo</a>
+        </div>
+        <ul class="pillars">
+          <li><b>Planejamento lícito</b><span>Estruturas preventivas, com propósito negocial e transparência perante o Fisco.</span></li>
+          <li><b>Visão internacional</b><span>Jurisdições, veículos e tratados analisados caso a caso.</span></li>
+          <li><b>Conformidade</b><span>Lei 14.754/2023, CBE do Banco Central, CRS e FATCA.</span></li>
+        </ul>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="globe"><span></span><span></span><span></span></div>
+      </div>
+    </section>
+
+    <!-- Áreas -->
+    <section class="section" id="atuacao">
+      <header class="sec-head">
+        <p class="kicker">Áreas de atuação</p>
+        <h2>Soluções integradas para proteger o que você construiu</h2>
+      </header>
+      <div class="areas" id="areas"></div>
+    </section>
+
+    <!-- Método -->
+    <section class="section method">
+      <header class="sec-head">
+        <p class="kicker">Metodologia</p>
+        <h2>Como trabalhamos</h2>
+      </header>
+      <ol class="steps">
+        <li><span>01</span><h3>Diagnóstico</h3><p>Mapeamento do patrimônio, riscos (empresariais, familiares, sucessórios) e objetivos.</p></li>
+        <li><span>02</span><h3>Desenho da estrutura</h3><p>Comparação de alternativas: holding, acordos, testamento, previdência, veículos no exterior.</p></li>
+        <li><span>03</span><h3>Implementação</h3><p>Constituição de sociedades, integralização de bens, contratos, registros e declarações.</p></li>
+        <li><span>04</span><h3>Governança contínua</h3><p>Revisão periódica, obrigações acessórias e adaptação a mudanças legais e familiares.</p></li>
+      </ol>
+    </section>
+
+    <!-- Offshore -->
+    <section class="section" id="offshore">
+      <header class="sec-head">
+        <p class="kicker">Assessoria offshore</p>
+        <h2>Comparador de jurisdições</h2>
+        <p>Visão de referência para início de conversa. A escolha da jurisdição depende do objetivo, do perfil do patrimônio e da residência fiscal de cada pessoa.</p>
+      </header>
+      <div class="filters" id="jurFilters"></div>
+      <div class="jur-grid" id="jurGrid"></div>
+      <div class="note">
+        <b>Regras brasileiras que se aplicam a qualquer estrutura:</b>
+        <ul>
+          <li><b>Lei 14.754/2023</b> — lucros de entidades controladas no exterior tributados anualmente a 15% em 31/12, conforme o enquadramento; trusts tratados com transparência e bens atribuídos ao instituidor.</li>
+          <li><b>Declaração de Capitais Brasileiros no Exterior (CBE)</b> ao Banco Central, quando atingidos os limites vigentes, e informação na Declaração de Ajuste Anual.</li>
+          <li><b>Troca automática de informações</b> (CRS/OCDE e FATCA) — sigilo não é estratégia; conformidade é.</li>
+          <li>Jurisdições de tributação favorecida e regimes privilegiados (IN RFB 1.037/2010) trazem efeitos fiscais específicos. Confira sempre a versão vigente.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Simuladores -->
+    <section class="section" id="ferramentas">
+      <header class="sec-head">
+        <p class="kicker">Ferramentas interativas</p>
+        <h2>Simuladores jurídicos</h2>
+      </header>
+      <div class="sim-tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="diagnostico">Diagnóstico patrimonial</button>
+        <button role="tab" aria-selected="false" data-tab="sucessao">Custo de inventário × holding</button>
+        <button role="tab" aria-selected="false" data-tab="offshore-calc">Tributação offshore (Lei 14.754)</button>
+      </div>
+
+      <div class="panel" id="diagnostico" data-panel="diagnostico">
+        <div class="quiz" id="quiz"></div>
+      </div>
+
+      <div class="panel" id="sucessao" data-panel="sucessao" hidden>
+        <div class="sim">
+          <form class="sim-form" id="sucForm" onsubmit="return false">
+            <label>Patrimônio total (R$)<input name="pat" value="5.000.000" inputmode="decimal"></label>
+            <label>Alíquota de ITCMD aplicável (%)
+              <select name="itcmd">
+                <option value="2">2%</option><option value="3">3%</option><option value="4" selected>4%</option><option value="5">5%</option>
+                <option value="6">6%</option><option value="7">7%</option><option value="8">8% (teto — Resolução do Senado nº 9/1992)</option>
+              </select>
+            </label>
+            <label>Honorários advocatícios do inventário (% do monte)<input name="hon" value="6" inputmode="decimal"></label>
+            <label>Custas e emolumentos (% do monte)<input name="cus" value="2" inputmode="decimal"></label>
+            <label>Duração estimada do inventário (meses)<input name="dur" value="24" inputmode="numeric"></label>
+            <label>Custo de implementação da holding (% do patrimônio)<input name="impl" value="2" inputmode="decimal"></label>
+            <label class="chk"><input type="checkbox" name="doacao" checked> Doação de quotas em vida (com reserva de usufruto)</label>
+          </form>
+          <div class="sim-out" id="sucOut"></div>
+        </div>
+        <p class="disclaimer">Estimativa simplificada e ilustrativa. A Reforma Tributária (EC 132/2023) tornou o ITCMD obrigatoriamente progressivo e alíquotas estaduais vêm sendo alteradas; a base de cálculo, a valoração das quotas e a tributação na integralização (ITBI, IR) exigem análise individual.</p>
+      </div>
+
+      <div class="panel" id="offshore-calc" data-panel="offshore-calc" hidden>
+        <div class="sim">
+          <form class="sim-form" id="offForm" onsubmit="return false">
+            <label>Lucro anual da controlada no exterior (US$)<input name="lucro" value="200.000" inputmode="decimal"></label>
+            <label>Câmbio (R$ por US$)<input name="fx" value="5,40" inputmode="decimal"></label>
+            <label>Imposto pago no exterior (US$)<input name="ext" value="0" inputmode="decimal"></label>
+            <label>Regime
+              <select name="reg">
+                <option value="tp">Controlada sujeita à tributação anual (passiva / tributação favorecida)</option>
+                <option value="ativa">Controlada com renda ativa própria ≥ 60% (diferimento até a distribuição)</option>
+              </select>
+            </label>
+          </form>
+          <div class="sim-out" id="offOut"></div>
+        </div>
+        <p class="disclaimer">Cálculo de referência da alíquota de 15% prevista na Lei 14.754/2023 para pessoas físicas residentes, com dedução limitada do imposto pago no exterior. Não considera ajustes de variação cambial, prejuízos acumulados, tratados nem regras de transição.</p>
+      </div>
+    </section>
+
+    <!-- Notícias -->
+    <section class="section news" id="noticias">
+      <header class="sec-head row">
+        <div>
+          <p class="kicker"><span class="live sm"><i></i> Tempo real</span> Portal de notícias</p>
+          <h2>Notícias jurídicas</h2>
+        </div>
+        <div class="news-status" id="newsStatus">Conectando às fontes…</div>
+      </header>
+      <div class="news-bar">
+        <div class="news-tabs" id="newsTabs" role="tablist"></div>
+        <div class="news-search">
+          <input id="newsSearch" type="search" placeholder="Filtrar notícias…" aria-label="Filtrar notícias">
+          <button class="btn btn-line sm" id="newsRefresh" title="Atualizar agora">↻ Atualizar</button>
+        </div>
+      </div>
+      <div class="news-layout">
+        <div class="news-grid" id="newsGrid"></div>
+        <aside class="news-side">
+          <div class="side-card">
+            <h3>Mais recentes</h3>
+            <ol id="newsLatest" class="latest"></ol>
+          </div>
+          <div class="side-card">
+            <h3>Fontes monitoradas</h3>
+            <ul id="newsSources" class="sources"></ul>
+          </div>
+          <div class="side-card">
+            <h3>Alertas no navegador</h3>
+            <p>Receba um aviso quando chegar uma notícia nova enquanto a página estiver aberta.</p>
+            <button class="btn btn-gold sm" id="notifyBtn">Ativar alertas</button>
+          </div>
+        </aside>
+      </div>
+      <div class="news-more"><button class="btn btn-line" id="newsMore" hidden>Carregar mais notícias</button></div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section faq">
+      <header class="sec-head">
+        <p class="kicker">Perguntas frequentes</p>
+        <h2>Dúvidas comuns</h2>
+      </header>
+      <div class="faq-list" id="faq"></div>
+    </section>
+
+    <!-- Contato -->
+    <section class="section contact" id="contato">
+      <div class="contact-card">
+        <div>
+          <p class="kicker">Atendimento reservado</p>
+          <h2>Agende uma consulta</h2>
+          <p>Conte, em linhas gerais, o que você precisa. As informações são tratadas com sigilo profissional e em conformidade com a LGPD.</p>
+          <ul class="contact-info" id="contactInfo"></ul>
+        </div>
+        <form id="contactForm" class="contact-form">
+          <label>Nome<input name="nome" required autocomplete="name"></label>
+          <label>E-mail<input name="email" type="email" required autocomplete="email"></label>
+          <label>Telefone / WhatsApp<input name="tel" autocomplete="tel"></label>
+          <label>Assunto
+            <select name="assunto">
+              <option>Proteção patrimonial</option>
+              <option>Holding familiar</option>
+              <option>Planejamento sucessório</option>
+              <option>Estruturação offshore</option>
+              <option>Regularização de ativos no exterior</option>
+              <option>Outro</option>
+            </select>
+          </label>
+          <label class="full">Mensagem<textarea name="msg" rows="4" required></textarea></label>
+          <label class="chk full"><input type="checkbox" required> Concordo com o tratamento dos meus dados para retorno do contato (LGPD).</label>
+          <div class="full form-actions">
+            <button class="btn btn-gold" type="submit" data-via="email">Enviar por e-mail</button>
+            <button class="btn btn-line" type="submit" data-via="wa">Enviar pelo WhatsApp</button>
+          </div>
+          <p class="form-msg full" id="formMsg" role="status"></p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-top">
+      <a href="#inicio" class="logo"><svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true"><path d="M32 10v42M18 52h28M12 22h40M19 22l-7 15a7 7 0 0 0 14 0zM45 22l-7 15a7 7 0 0 0 14 0z" stroke="currentColor" stroke-width="3" fill="none" stroke-linejoin="round"/></svg><span>Gooners <em>Law</em></span></a>
+      <nav><a href="#atuacao">Atuação</a><a href="#offshore">Offshore</a><a href="#noticias">Notícias</a><a href="#contato">Contato</a><a href="../">Gooners Ferramentas</a></nav>
+    </div>
+    <p class="legal">Conteúdo de caráter exclusivamente informativo, que não constitui aconselhamento jurídico, fiscal ou financeiro nem promessa de resultado. Cada caso exige análise individual por profissional habilitado. Publicidade informativa nos termos do Código de Ética e Disciplina da OAB e do Provimento CFOAB nº 205/2021. As notícias pertencem a seus respectivos veículos e são exibidas com link para a fonte original.</p>
+    <p class="legal">© <span id="year"></span> Gooners Law. Plataforma independente do hub Gooners.</p>
+  </footer>
+
+  <button class="to-top" id="toTop" aria-label="Voltar ao topo">↑</button>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/law.js"></script>
+  <script src="assets/news.js"></script>
+</body>
+</html>
