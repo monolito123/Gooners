@@ -14,7 +14,13 @@ const hash = (f) => createHash('md5').update(readFileSync(ROOT + f)).digest('hex
 const V = { css: hash('law/assets/law.css'), js: hash('law/assets/law.js'), news: hash('law/assets/news.js'), cfg: hash('law/assets/config.js') };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ld = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`;
-const out = (rel, html) => { const f = ROOT + rel; mkdirSync(f.replace(/[^/]+$/, ''), { recursive: true }); writeFileSync(f, html); };
+// Links internos explícitos (pasta/ → pasta/index.html) funcionam em qualquer hospedagem estática
+const linkify = (html) => html.replace(/(href)="([^"]*)"/g, (m, a, u) => {
+  if (/^(https?:|mailto:|tel:|data:|javascript:|#)/.test(u)) return m;
+  const [p, ...h] = u.split('#'); if (p !== '' && !p.endsWith('/')) return m;
+  return `${a}="${p}index.html${h.length ? '#' + h.join('#') : ''}"`;
+});
+const out = (rel, html) => { const f = ROOT + rel; mkdirSync(f.replace(/[^/]+$/, ''), { recursive: true }); writeFileSync(f, linkify(html)); };
 const slug = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 // ---------- notícias pré-renderizadas ----------

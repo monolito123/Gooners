@@ -10,7 +10,7 @@
   const PAGE = body.dataset.page;
   const catById = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
   const toolById = Object.fromEntries(TOOLS.map((t) => [t.id, t]));
-  const toolHref = (id) => `${R}ferramentas/${id}/`;
+  const toolHref = (id) => `${R}ferramentas/${id}/index.html`;
   const svg = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', 'ic'); s.setAttribute('aria-hidden', 'true'); const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', `${R}assets/icons.svg#i-${name}`); s.append(u); return s; };
 
   // Endereços antigos (#/ferramenta/<id>) → páginas estáticas

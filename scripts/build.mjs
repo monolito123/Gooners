@@ -155,7 +155,13 @@ const faqLd = (faq) => ({ '@context': 'https://schema.org', '@type': 'FAQPage', 
 const faqHtml = (faq) => `<div class="faq">${faq.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join('')}</div>`;
 const ORG = { '@context': 'https://schema.org', '@type': 'Organization', name: 'Gooners', url: SITE_URL, logo: SITE_URL + 'assets/img/icon-512.png' };
 
-const out = (rel, html) => { const f = ROOT + rel; mkdirSync(f.replace(/[^/]+$/, ''), { recursive: true }); writeFileSync(f, html); };
+// Links internos explícitos (pasta/ → pasta/index.html) funcionam em qualquer hospedagem estática
+const linkify = (html) => html.replace(/(href)="([^"]*)"/g, (m, a, u) => {
+  if (/^(https?:|mailto:|tel:|data:|javascript:|#)/.test(u)) return m;
+  const [p, ...h] = u.split('#'); if (p !== '' && !p.endsWith('/')) return m;
+  return `${a}="${p}index.html${h.length ? '#' + h.join('#') : ''}"`;
+});
+const out = (rel, html) => { const f = ROOT + rel; mkdirSync(f.replace(/[^/]+$/, ''), { recursive: true }); writeFileSync(f, linkify(html)); };
 
 // ---------- home ----------
 {
