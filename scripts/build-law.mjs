@@ -69,11 +69,11 @@ ${extraHead}${jsonld.map(ld).join('\n')}
 </head>
 <body data-page="${page}" data-l="${L}" data-h="${H}">
 <a class="skip" href="#conteudo">Pular para o conteúdo</a>
-<div class="ticker" aria-label="Últimas notícias jurídicas">
+<section class="ticker" aria-label="Últimas notícias jurídicas">
   <a class="live" href="${L}noticias/"><i></i>AO VIVO</a>
   <div class="ticker-track"><div class="ticker-move" id="ticker">${ticker || '<span>Carregando manchetes jurídicas…</span>'}</div></div>
   <a class="ticker-all" href="${L}noticias/">Todas as notícias ${ic('arrow-right')}</a>
-</div>
+</section>
 <header class="nav" id="nav">
   <div class="nav-inner">
     <a href="${L}" class="logo" aria-label="Gooners Law — página inicial"><img src="${L}assets/icon.svg" width="36" height="36" alt=""><span>Gooners <em>Law</em></span></a>
@@ -311,6 +311,7 @@ const crumbs = (items) => `<nav class="crumbs" aria-label="Você está em"><ol>$
   <div class="news-tabs" id="newsTabs" role="tablist" aria-label="Temas"></div>
   <div class="news-layout">
     <div>
+      <h2 class="sr-only">Lista de notícias</h2>
       <div class="news-grid" id="newsGrid">${items.map((x, i) => newsCard(x, i === 0)).join('')}</div>
       <div class="news-more"><button class="btn btn-line" id="newsMore">Carregar mais notícias</button></div>
     </div>
@@ -373,7 +374,7 @@ for (const a of ARTICLES) {
     <nav class="toc" aria-label="Neste artigo"><p>Neste artigo</p><ol>${a.sections.map(([t]) => `<li><a href="#${slug(t)}">${t}</a></li>`).join('')}</ol></nav>
     <div class="prose">
       ${a.sections.map(([t, html]) => `<section id="${slug(t)}"><h2>${t}</h2>${html}</section>`).join('\n')}
-      <aside class="art-cta"><h2>Quer aplicar isso ao seu caso?</h2><p>Cada patrimônio tem riscos e objetivos próprios. Agende uma conversa para avaliar a melhor estrutura.</p><a class="btn btn-gold" href="${L}#contato">Agendar consulta</a></aside>
+      <div class="art-cta"><h2>Quer aplicar isso ao seu caso?</h2><p>Cada patrimônio tem riscos e objetivos próprios. Agende uma conversa para avaliar a melhor estrutura.</p><a class="btn btn-gold" href="${L}#contato">Agendar consulta</a></div>
       <p class="disclaimer">Conteúdo informativo, elaborado com base na legislação vigente na data de publicação. Não substitui a análise individual por profissional habilitado.</p>
     </div>
   </div>

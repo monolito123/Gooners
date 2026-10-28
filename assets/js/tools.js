@@ -1422,7 +1422,7 @@
               ['Natureza jurídica', j.natureza_juridica], ['Capital social', j.capital_social != null ? brl(j.capital_social) : ''], ['Atividade principal', j.cnae_fiscal && `${j.cnae_fiscal} — ${j.cnae_fiscal_descricao}`],
               ['Endereço', addr], ['Telefone', j.ddd_telefone_1], ['E-mail', j.email]].filter((x) => x[1]).map(([k, v]) => resultItem(k, v))),
             j.cnaes_secundarios && j.cnaes_secundarios.filter((c) => c.codigo).length ? h('details', { class: 'more' }, h('summary', null, `Atividades secundárias (${j.cnaes_secundarios.filter((c) => c.codigo).length})`), h('ul', null, j.cnaes_secundarios.filter((c) => c.codigo).map((c) => h('li', null, `${c.codigo} — ${c.descricao}`)))) : null,
-            j.qsa && j.qsa.length ? h('div', { class: 'table-wrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, h('th', null, 'Sócio / administrador'), h('th', null, 'Qualificação'), h('th', null, 'Entrada'))),
+            j.qsa && j.qsa.length ? h('div', { class: 'table-wrap', tabindex: 0, role: 'region', 'aria-label': 'Quadro de sócios' }, h('table', { class: 't' }, h('thead', null, h('tr', null, h('th', null, 'Sócio / administrador'), h('th', null, 'Qualificação'), h('th', null, 'Entrada'))),
               h('tbody', null, j.qsa.map((q) => h('tr', null, h('td', null, q.nome_socio), h('td', null, q.qualificacao_socio), h('td', null, q.data_entrada_sociedade ? new Date(q.data_entrada_sociedade + 'T12:00').toLocaleDateString('pt-BR') : '—')))))) : null,
             h('p', { class: 'hint' }, 'Dados públicos do CNPJ (Receita Federal) via BrasilAPI. Podem ter alguns dias de defasagem.'));
         } catch (e) { errorBox(out, e.message); }
@@ -1603,7 +1603,7 @@
     render(root) {
       const pv = inp({ value: '300.000', inputmode: 'decimal' }), down = inp({ value: '60.000', inputmode: 'decimal' }), rate = inp({ value: '11,5', inputmode: 'decimal' }), per = sel([['a', '% ao ano'], ['m', '% ao mês']]);
       const n = inp({ type: 'number', value: 360 }), sys = sel([['price', 'Tabela Price (parcelas fixas)'], ['sac', 'SAC (amortização constante)']]);
-      const out = h('div', { class: 'metrics' }), table = h('div', { class: 'table-wrap', style: 'max-height:380px;overflow:auto' });
+      const out = h('div', { class: 'metrics' }), table = h('div', { class: 'table-wrap', style: 'max-height:380px;overflow:auto', tabindex: 0, role: 'region', 'aria-label': 'Tabela de amortização' });
       function run() {
         const P = Math.max(0, (num(pv.value) || 0) - (num(down.value) || 0)), N = Math.min(600, Math.max(1, +n.value | 0)), r0 = (num(rate.value) || 0) / 100;
         const i = per.value === 'a' ? (1 + r0) ** (1 / 12) - 1 : r0;
