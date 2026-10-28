@@ -9,11 +9,15 @@ export const SITE = {
 
 export const POPULAR = ['contador-caracteres', 'inverter-texto', 'gerador-senha', 'gerador-pix', 'gerador-cpf', 'consulta-cep', 'gerador-qrcode', 'numero-por-extenso', 'conversor-moedas', 'letras-diferentes', 'diferenca-datas', 'consulta-cnpj'];
 
+// Ferramentas lançadas recentemente (exibem o selo "Novo")
+export const NEW_TOOLS = ['gerador-pix', 'consulta-cep', 'consulta-cnpj', 'conversor-moedas', 'feriados-nacionais', 'link-whatsapp', 'gerador-dados-teste', 'conversor-imagem', 'csv-json', 'numeros-romanos', 'calculadora-financiamento', 'calculadora-horas', 'estatistica', 'markdown-html', 'gerador-meta-tags', 'texto-em-voz', 'bloco-de-notas'];
+
 export const HOME_FAQ = [
   ['O Gooners é gratuito?', 'Sim. Todas as ferramentas são gratuitas, sem cadastro e sem limite de uso.'],
   ['Meus textos e arquivos são enviados para algum servidor?', 'Não. As ferramentas processam os dados no seu próprio navegador. Só as consultas de CEP, CNPJ e cotações acessam serviços públicos, enviando apenas o número consultado.'],
   ['Funciona no celular e sem internet?', 'Sim. O site é responsivo e pode ser instalado como aplicativo (PWA). Depois da primeira visita, a maioria das ferramentas funciona offline.'],
   ['Posso salvar minhas ferramentas favoritas?', 'Sim. Clique na estrela de qualquer ferramenta para adicioná-la aos favoritos, que ficam salvos neste navegador.'],
+  ['Como sugiro uma ferramenta ou relato um problema?', 'Pela página de contato ou pelo WhatsApp (61) 99403-2833. Também é possível escrever para felipe@gooners.com.br.'],
 ];
 
 const GEN_FAQ = () => [

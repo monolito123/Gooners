@@ -21,7 +21,7 @@ assets/js/tools.js        catálogo e lógica de todas as ferramentas
 assets/js/app.js          busca, favoritos, recentes, paleta (Ctrl+K), atalhos, PWA
 assets/css/gooners.css    design system do hub (tema claro/escuro)
 assets/icons.svg          sprite de ícones (Lucide, licença ISC)
-law/assets/               estilos e scripts da Gooners Law (config.js = dados de contato)
+law/assets/               estilos e scripts da Gooners Law (config.js é gerado)
 law/data/feeds.json       fontes do portal de notícias
 law/data/news.json        notícias coletadas no servidor
 scripts/build.mjs         gera home, categorias, páginas de ferramentas, sitemap, robots e manifest
@@ -61,9 +61,9 @@ node scripts/build.mjs        # por último (o sitemap inclui as páginas da Goo
 - Portal de notícias (`/law/noticias/`): busca, temas, filtro por período e fonte, grade ou lista, “ler depois”, marcação de lidas, compartilhamento, alertas no navegador e atualização automática.
 - Glossário com 37 termos e 3 artigos (Lei 14.754/2023, holding familiar e proteção patrimonial lícita).
 
-### Configuração
+### Contato
 
-Em `law/assets/config.js`, informe o e-mail e o WhatsApp reais do escritório (o e-mail atual é provisório). Inclua também o registro na OAB no rodapé, em `scripts/build-law.mjs`.
+Todos os contatos dos dois sites (formulários, botões de WhatsApp, rodapés, dados estruturados) vêm de `scripts/site.config.json`, em `contact`: e-mail **felipe@gooners.com.br** e WhatsApp **(61) 99403-2833**. Para trocar, edite esse arquivo e gere as páginas de novo; `law/assets/config.js` é gerado a partir dele. Falta incluir o registro na OAB no rodapé, em `scripts/build-law.mjs`.
 
 ### Publicação e notícias em tempo real
 

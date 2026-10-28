@@ -1,5 +1,5 @@
 /* Gooners — service worker: funcionamento offline e carregamento rápido */
-const VERSION = 'gooners-dedfa4e3a7362c7b4a64c4e3';
+const VERSION = 'gooners-066d22efca42ffd445c1cfc6';
 const CORE = ['./', 'assets/css/gooners.css', 'assets/js/tools.js', 'assets/js/app.js', 'assets/icons.svg', 'assets/img/icon.svg', 'manifest.webmanifest'];
 const CDN = /^https:\/\/(cdnjs\.cloudflare\.com|fonts\.(googleapis|gstatic)\.com)\//;
 

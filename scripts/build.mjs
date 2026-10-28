@@ -5,11 +5,13 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
-import { SITE, POPULAR, HOME_FAQ, seoFor } from './seo-content.mjs';
+import { SITE, POPULAR, NEW_TOOLS, HOME_FAQ, seoFor } from './seo-content.mjs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
 const cfg = JSON.parse(readFileSync(ROOT + 'scripts/site.config.json', 'utf8'));
 const SITE_URL = (process.env.SITE_URL || cfg.siteUrl).replace(/\/?$/, '/');
+const C = cfg.contact;
+const WA = (text) => `https://wa.me/${C.whatsapp}${text ? '?text=' + encodeURIComponent(text) : ''}`;
 const TODAY = new Date().toISOString().slice(0, 10);
 
 // Carrega o catálogo de ferramentas executando tools.js num contexto isolado
@@ -93,6 +95,9 @@ ${jsonld.map(ld).join('\n')}
       <p class="nav-label">Categorias</p>
       ${navCat}
       <div id="navRecent" hidden><p class="nav-label">Recentes</p><div id="navRecentList"></div></div>
+      <p class="nav-label">Gooners</p>
+      <a href="${R}contato/" class="nav-item${page === 'contact' ? ' active' : ''}">${ic('mail')}<span>Contato e sugestões</span></a>
+      <a href="${WA('Olá! Vim pelo site do Gooners.')}" class="nav-item" target="_blank" rel="noopener" style="--c:#177a40">${ic('message-circle')}<span>WhatsApp</span></a>
     </nav>
     <a class="side-promo" href="${R}law/">
       <span class="side-promo-ic">${ic('scale')}</span>
@@ -110,7 +115,11 @@ ${body}
     <div class="footer-brand">
       <a class="brand" href="${R}"><img src="${R}assets/img/icon.svg" width="28" height="28" alt=""><span>Gooners</span></a>
       <p>${TOOLS.length} ferramentas online gratuitas, processadas no seu navegador. Sem cadastro, sem anúncios invasivos e com funcionamento offline.</p>
-      <p><a href="${R}law/">Gooners Law</a> · <a href="${R}law/noticias/">Notícias jurídicas</a> · <a href="${R}sitemap.xml">Mapa do site</a></p>
+      <ul class="footer-contact">
+        <li><a href="${WA('Olá! Vim pelo site do Gooners.')}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp ${C.phoneDisplay}</a></li>
+        <li><a href="mailto:${C.email}">${ic('mail')}${C.email}</a></li>
+      </ul>
+      <p><a href="${R}contato/">Contato</a> · <a href="${R}law/">Gooners Law</a> · <a href="${R}law/noticias/">Notícias jurídicas</a> · <a href="${R}sitemap.xml">Mapa do site</a></p>
     </div>
     <div class="footer-cols">${footCols}</div>
   </div>
@@ -138,6 +147,7 @@ ${body}
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>window.GOONERS_CONTACT=${JSON.stringify({ email: C.email, whatsapp: C.whatsapp, phone: C.phoneDisplay })}</script>
 <script src="${R}assets/js/tools.js?v=${V.tools}" defer></script>
 <script src="${R}assets/js/app.js?v=${V.app}" defer></script>
 </body>
@@ -148,12 +158,13 @@ ${body}
 // ---------- componentes ----------
 const icFor = (R) => (n, c = '') => `<svg class="ic ${c}" aria-hidden="true"><use href="${R}assets/icons.svg#i-${n}"/></svg>`;
 const card = (R, t) => { const ic = icFor(R); const c = catById[t.cat];
-  return `<a class="tcard" href="${R}ferramentas/${t.id}/" data-id="${t.id}" style="--c:${c.color}"><span class="ticon">${ic(t.icon)}</span><span class="tbody"><span class="tname">${esc(t.name)}</span><span class="tdesc">${esc(t.desc)}</span></span></a>`; };
+  return `<a class="tcard" href="${R}ferramentas/${t.id}/" data-id="${t.id}" style="--c:${c.color}"><span class="ticon">${ic(t.icon)}</span><span class="tbody"><span class="tname">${esc(t.name)}${NEW_TOOLS.includes(t.id) ? '<span class="new-tag">Novo</span>' : ''}</span><span class="tdesc">${esc(t.desc)}</span></span></a>`; };
 const crumbs = (R, items) => `<nav class="crumbs" aria-label="Você está em"><ol>${items.map(([n, href], i) => `<li>${href && i < items.length - 1 ? `<a href="${href}">${esc(n)}</a>` : `<span aria-current="page">${esc(n)}</span>`}</li>`).join('')}</ol></nav>`;
 const crumbLd = (items) => ({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: items.map(([name, url], i) => ({ '@type': 'ListItem', position: i + 1, name, item: url })) });
 const faqLd = (faq) => ({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })) });
 const faqHtml = (faq) => `<div class="faq">${faq.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join('')}</div>`;
-const ORG = { '@context': 'https://schema.org', '@type': 'Organization', name: 'Gooners', url: SITE_URL, logo: SITE_URL + 'assets/img/icon-512.png' };
+const ORG = { '@context': 'https://schema.org', '@type': 'Organization', name: 'Gooners', url: SITE_URL, logo: SITE_URL + 'assets/img/icon-512.png', email: C.email, telephone: C.phoneE164,
+  contactPoint: { '@type': 'ContactPoint', contactType: 'customer support', email: C.email, telephone: C.phoneE164, availableLanguage: 'Portuguese' } };
 
 // Links internos explícitos (pasta/ → pasta/index.html) funcionam em qualquer hospedagem estática
 const linkify = (html) => html.replace(/(href)="([^"]*)"/g, (m, a, u) => {
@@ -173,7 +184,8 @@ const out = (rel, html) => { const f = ROOT + rel; mkdirSync(f.replace(/[^/]+$/,
       <div class="grid">${TOOLS.filter((t) => t.cat === c.id).map((t) => card(R, t)).join('')}</div>
     </section>`).join('');
   const body = `
-    <section class="hero">
+    <section class="hero hero-split">
+      <div class="hero-main">
       <p class="eyebrow"><span class="dot"></span>${TOOLS.length} ferramentas gratuitas · atualizado em ${new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</p>
       <h1>Ferramentas online grátis para o seu dia a dia</h1>
       <p class="lead">Texto, documentos, Pix, consultas de CEP e CNPJ, conversores e calculadoras. Tudo processado no seu navegador, sem cadastro.</p>
@@ -184,6 +196,21 @@ const out = (rel, html) => { const f = ROOT + rel; mkdirSync(f.replace(/[^/]+$/,
         <kbd>/</kbd>
       </div>
       <div class="quick" aria-label="Mais usadas">${popular.slice(0, 6).map((t) => `<a href="ferramentas/${t.id}/">${esc(t.name)}</a>`).join('')}</div>
+      </div>
+      <aside class="demo" aria-labelledby="demo-h">
+        <header><h2 id="demo-h">${ic('zap')}Experimente agora</h2><span>resultado ao vivo</span></header>
+        <label class="sr-only" for="demoInput">Texto de exemplo</label>
+        <textarea id="demoInput" rows="4" spellcheck="false">Gooners: ferramentas que resolvem em segundos!</textarea>
+        <dl class="demo-stats">
+          <div><dt>Caracteres</dt><dd id="dChars">0</dd></div><div><dt>Palavras</dt><dd id="dWords">0</dd></div><div><dt>Sem espaços</dt><dd id="dNoSp">0</dd></div>
+        </dl>
+        <ul class="demo-out">
+          <li><span>Invertido</span><output id="dRev"></output><a href="ferramentas/inverter-texto/" aria-label="Abrir inverter texto">${ic('arrow-up-right')}</a></li>
+          <li><span>MAIÚSCULAS</span><output id="dUp"></output><a href="ferramentas/maiusculas-minusculas/" aria-label="Abrir maiúsculas e minúsculas">${ic('arrow-up-right')}</a></li>
+          <li><span>Slug</span><output id="dSlug"></output><a href="ferramentas/gerador-slug/" aria-label="Abrir gerador de slug">${ic('arrow-up-right')}</a></li>
+          <li><span>Negrito</span><output id="dBold"></output><a href="ferramentas/letras-diferentes/" aria-label="Abrir letras diferentes">${ic('arrow-up-right')}</a></li>
+        </ul>
+      </aside>
     </section>
 
     <ul class="trust" aria-label="Diferenciais">
@@ -273,6 +300,14 @@ for (const t of TOOLS) {
         <h2>Ferramentas relacionadas</h2>
         <div class="grid grid-compact">${related.map((x) => card(R, x)).join('')}</div>
         <a class="sec-more" href="${R}categorias/${c.id}/">Todas de ${c.name.toLowerCase()} ${ic('arrow-right')}</a>
+        <div class="feedback">
+          <h2>${ic('lightbulb')}Sugestão ou problema?</h2>
+          <p>Encontrou um erro nesta ferramenta ou quer uma função nova? Fale com a gente.</p>
+          <div class="feedback-actions">
+            <a class="btn btn-wa btn-sm" href="${WA(`Olá! Sobre a ferramenta "${t.name}" do Gooners: `)}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp</a>
+            <a class="btn btn-ghost btn-sm" href="mailto:${C.email}?subject=${encodeURIComponent('[Gooners] ' + t.name)}">${ic('mail')}E-mail</a>
+          </div>
+        </div>
       </aside>
     </div>`;
   out(`ferramentas/${t.id}/index.html`, shell({ R, path: `ferramentas/${t.id}/`, page: 'tool', tool: t.id, cat: t.cat, title: `${s.title} — ${SITE.name}`, desc, body,
@@ -280,12 +315,54 @@ for (const t of TOOLS) {
       isAccessibleForFree: true, offers: { '@type': 'Offer', price: '0', priceCurrency: 'BRL' }, publisher: { '@type': 'Organization', name: 'Gooners', url: SITE_URL } }, faqLd(s.faq)] }));
 }
 
+// ---------- contato ----------
+{
+  const R = '../', ic = icFor(R);
+  const body = `${crumbs(R, [['Início', R], ['Contato']])}
+    <header class="page-head"><h1>Contato e sugestões</h1><p class="lead">Sugira uma ferramenta, relate um problema ou proponha uma parceria. Respondemos pelo WhatsApp ou por e-mail.</p></header>
+    <div class="contact-grid">
+      <div class="contact-cards">
+        <a class="contact-card wa" href="${WA('Olá! Vim pelo site do Gooners.')}" target="_blank" rel="noopener"><span class="cc-ic">${ic('message-circle')}</span><span><b>WhatsApp</b><span>${C.phoneDisplay}</span></span>${ic('arrow-up-right')}</a>
+        <a class="contact-card" href="mailto:${C.email}"><span class="cc-ic">${ic('mail')}</span><span><b>E-mail</b><span>${C.email}</span></span>${ic('arrow-up-right')}</a>
+        <div class="contact-copy-row"><button class="btn btn-ghost btn-sm" data-copy="${C.phoneDisplay}">${ic('copy')}Copiar telefone</button><button class="btn btn-ghost btn-sm" data-copy="${C.email}">${ic('copy')}Copiar e-mail</button></div>
+        <p class="hint">${C.horario}. Para assuntos jurídicos, acesse a <a href="${R}law/">Gooners Law</a>.</p>
+      </div>
+      <form class="tool-card contact-form" id="contactForm" novalidate>
+        <div class="tool-body stack">
+          <div class="row">
+            <label class="f">Nome<input class="inp" id="cfNome" name="nome" required autocomplete="name"></label>
+            <label class="f">Assunto<select class="inp" id="cfTipo" name="tipo"><option>Sugestão de ferramenta</option><option>Relatar um problema</option><option>Parceria ou publicidade</option><option>Outro assunto</option></select></label>
+          </div>
+          <label class="f">Ferramenta relacionada (opcional)<select class="inp" id="cfTool" name="tool"><option value="">Nenhuma</option>${TOOLS.map((t) => `<option>${esc(t.name)}</option>`).join('')}</select></label>
+          <label class="f">Mensagem<textarea class="inp" id="cfMsg" name="msg" rows="5" required placeholder="Descreva sua sugestão ou o problema que encontrou."></textarea></label>
+          <div class="toolbar"><button class="btn btn-wa" type="submit" data-via="wa">${ic('message-circle')}Enviar pelo WhatsApp</button><button class="btn btn-ghost" type="submit" data-via="email">${ic('mail')}Enviar por e-mail</button></div>
+          <p class="hint" id="cfMsgOut" role="status"></p>
+        </div>
+      </form>
+    </div>`;
+  out('contato/index.html', shell({ R, path: 'contato/', page: 'contact', title: `Contato e sugestões — ${SITE.name}`, desc: `Fale com o Gooners: sugira ferramentas ou relate problemas pelo WhatsApp ${C.phoneDisplay} ou pelo e-mail ${C.email}.`, body,
+    jsonld: [ORG, crumbLd([['Início', SITE_URL], ['Contato', SITE_URL + 'contato/']]), { '@context': 'https://schema.org', '@type': 'ContactPage', name: 'Contato — Gooners', url: SITE_URL + 'contato/' }] }));
+}
+// ---------- 404 (servido pelo GitHub Pages em qualquer caminho, por isso usa endereços absolutos) ----------
+{
+  const R = SITE_URL, ic = icFor(R);
+  const body = `<section class="nf">
+      <p class="nf-code">404</p>
+      <h1>Página não encontrada</h1>
+      <p class="lead">O endereço pode ter mudado. Busque a ferramenta que você procura ou volte para o início.</p>
+      <div class="search" role="search">${ic('search')}<input id="nfSearch" type="search" placeholder="Buscar ferramenta…" aria-label="Buscar ferramenta"></div>
+      <div class="quick">${POPULAR.slice(0, 8).map((id) => `<a href="${R}ferramentas/${id}/">${esc(toolById[id].name)}</a>`).join('')}</div>
+      <p><a class="btn" href="${R}">${ic('house')}Ir para o início</a></p>
+    </section>`;
+  out('404.html', shell({ R, path: '404.html', page: 'notfound', robots: 'noindex,follow', title: `Página não encontrada — ${SITE.name}`, desc: 'A página que você procura não existe. Busque entre as ferramentas do Gooners.', body }));
+}
+
 // Remove páginas de ferramentas que não existem mais
 for (const d of existsSync(ROOT + 'ferramentas') ? readdirSync(ROOT + 'ferramentas') : []) if (!toolById[d]) rmSync(ROOT + 'ferramentas/' + d, { recursive: true });
 
 // ---------- sitemap, robots, manifest ----------
 const lawPages = ['law/', 'law/noticias/', 'law/glossario/', 'law/artigos/', ...(existsSync(ROOT + 'law/artigos') ? readdirSync(ROOT + 'law/artigos').filter((d) => existsSync(`${ROOT}law/artigos/${d}/index.html`)).map((d) => `law/artigos/${d}/`) : [])];
-const urls = [['', '1.0', 'weekly'], ...CATEGORIES.map((c) => [`categorias/${c.id}/`, '0.8', 'weekly']), ...TOOLS.map((t) => [`ferramentas/${t.id}/`, POPULAR.includes(t.id) ? '0.9' : '0.7', 'monthly']),
+const urls = [['', '1.0', 'weekly'], ['contato/', '0.5', 'yearly'], ...CATEGORIES.map((c) => [`categorias/${c.id}/`, '0.8', 'weekly']), ...TOOLS.map((t) => [`ferramentas/${t.id}/`, POPULAR.includes(t.id) ? '0.9' : '0.7', 'monthly']),
   ...lawPages.map((p) => [p, p === 'law/noticias/' ? '0.9' : '0.8', p === 'law/noticias/' ? 'hourly' : 'monthly'])];
 writeFileSync(ROOT + 'sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(([p, pr, cf]) => `  <url><loc>${SITE_URL}${p}</loc><lastmod>${TODAY}</lastmod><changefreq>${cf}</changefreq><priority>${pr}</priority></url>`).join('\n')}\n</urlset>\n`);
 writeFileSync(ROOT + 'robots.txt', `User-agent: *\nAllow: /\nDisallow: /favoritos/\nDisallow: /scripts/\n\nSitemap: ${SITE_URL}sitemap.xml\n`);

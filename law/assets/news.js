@@ -98,7 +98,7 @@
     return `<article class="news-card${feat ? ' feat' : ''}${fresh ? ' fresh' : ''}${readSet.has(x.link) ? ' read' : ''}" data-link="${esc(x.link)}" style="animation-delay:${Math.min(i, 10) * 30}ms">
       <div class="news-meta"><span class="cat">${esc(CAT_NAME[x.cats[0]] || 'Geral')}</span><time datetime="${new Date(x.date).toISOString()}" data-rel="${x.date}">${rel(x.date)}</time></div>
       <h3><a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a></h3>${x.desc ? `<p>${esc(x.desc)}</p>` : ''}
-      <footer><span class="src">${esc(x.source)}</span>${PORTAL ? `<button class="act${isSaved(x) ? ' on' : ''}" data-act="save" aria-label="${isSaved(x) ? 'Remover dos salvos' : 'Salvar para ler depois'}" title="Ler depois">${ic('bookmark')}</button><button class="act" data-act="share" aria-label="Compartilhar" title="Compartilhar">${ic('share-2')}</button>` : ''}</footer></article>`;
+      <footer><span class="src">${esc(x.source)}</span>${PORTAL ? `<button class="act${isSaved(x) ? ' on' : ''}" data-act="save" aria-label="${isSaved(x) ? 'Remover dos salvos' : 'Salvar para ler depois'}" title="Ler depois">${ic('bookmark')}</button><a class="act" data-act="wa" href="https://wa.me/?text=${encodeURIComponent(x.title + ' — ' + x.link)}" target="_blank" rel="noopener" aria-label="Enviar pelo WhatsApp" title="Enviar pelo WhatsApp">${ic('message-circle')}</a><button class="act" data-act="share" aria-label="Compartilhar" title="Compartilhar">${ic('share-2')}</button>` : ''}</footer></article>`;
   }
   function filtered() {
     const q = norm(query), now = new Date(), midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -188,6 +188,7 @@
     const cardEl = e.target.closest('.news-card[data-link]'); if (!cardEl) return;
     const link = cardEl.dataset.link, act = e.target.closest('[data-act]');
     if (!act) { if (e.target.closest('a')) { readSet.add(link); store.set('read', [...readSet].slice(-600)); cardEl.classList.add('read'); } return; }
+    if (act.dataset.act === 'wa') return;
     e.preventDefault();
     const x = items.find((i) => i.link === link) || saved.find((i) => i.link === link); if (!x) return;
     if (act.dataset.act === 'share') return share(x.title, x.link);

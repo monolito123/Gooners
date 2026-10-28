@@ -35,7 +35,7 @@ jobs:
           TOKEN: ${{ github.token }}
         run: |
           mkdir _site
-          cp -r index.html assets categorias ferramentas favoritos law manifest.webmanifest robots.txt sitemap.xml sw.js .nojekyll _site/
+          cp -r index.html 404.html assets categorias contato ferramentas favoritos law manifest.webmanifest robots.txt sitemap.xml sw.js .nojekyll _site/
           cd _site
           git init -q -b gh-pages
           git config user.name "github-actions[bot]"

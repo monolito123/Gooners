@@ -82,17 +82,24 @@
       try { output.value = transform(input.value); output.classList.remove('err'); }
       catch (e) { output.value = '⚠ ' + e.message; }
     }
-    input.addEventListener('input', run);
+    // Lembra o último texto digitado em cada ferramenta (somente neste navegador)
+    const memKey = window.Gooners && window.Gooners.currentTool ? 'gooners:input:' + window.Gooners.currentTool : null;
+    const remember = () => { if (!memKey) return; try { input.value ? localStorage.setItem(memKey, input.value.slice(0, 20000)) : localStorage.removeItem(memKey); } catch { /* indisponível */ } };
+    let memT;
+    input.addEventListener('input', () => { run(); clearTimeout(memT); memT = setTimeout(remember, 300); });
     root.append(h('div', { class: 'stack' },
       extra,
       h('div', { class: 'cols-2' }, field('Entrada', input), field('Resultado', output)),
       h('div', { class: 'toolbar' },
         copyBtn(() => output.value, 'Copiar resultado'),
         h('button', { class: 'btn btn-sm btn-ghost', onclick: () => { input.value = output.value; run(); } }, '⇅ Usar resultado como entrada'),
-        h('button', { class: 'btn btn-sm btn-ghost', onclick: () => { input.value = ''; run(); input.focus(); } }, 'Limpar'),
+        h('button', { class: 'btn btn-sm btn-ghost', onclick: () => { input.value = ''; run(); remember(); input.focus(); } }, 'Limpar'),
         h('span', { class: 'spacer' }),
         opts.sample ? h('button', { class: 'btn btn-sm btn-ghost', onclick: () => { input.value = opts.sample; run(); } }, 'Exemplo') : null)));
-    if (opts.sample && opts.prefill) input.value = opts.sample;
+    let saved = null;
+    try { saved = memKey && localStorage.getItem(memKey); } catch { /* indisponível */ }
+    if (saved) input.value = saved;
+    else if (opts.sample && opts.prefill) input.value = opts.sample;
     run();
     setTimeout(() => input.focus(), 50);
     return { input, output, run };
@@ -794,7 +801,7 @@
       function build() {
         fields.replaceChildren();
         const mk = (k, label, attrs = {}) => { f[k] = inp({ placeholder: label, ...attrs }); f[k].addEventListener('input', draw); fields.append(field(label, f[k])); };
-        if (type.value === 'text') mk('t', 'Texto ou URL', { value: 'https://gooners.app' });
+        if (type.value === 'text') mk('t', 'Texto ou URL', { value: 'https://monolito123.github.io/Gooners/' });
         if (type.value === 'wifi') { mk('ssid', 'Nome da rede (SSID)'); mk('pw', 'Senha'); }
         if (type.value === 'wa') { mk('tel', 'Telefone com DDI e DDD (ex.: 5511999999999)'); mk('msg', 'Mensagem (opcional)'); }
         if (type.value === 'email') { mk('to', 'E-mail'); mk('sub', 'Assunto'); }
@@ -866,7 +873,7 @@
 
   add({ id: 'validador-email', name: 'Validador de e-mails em lote', cat: 'validadores', icon: 'at-sign', desc: 'Valide a sintaxe de listas de e-mail, remova duplicados e extraia de textos.', keys: 'email extrair lista mailing validar',
     render(root) {
-      const input = area({ placeholder: 'Cole e-mails ou qualquer texto contendo e-mails', value: 'contato@gooners.app, joao@@exemplo, maria.silva@empresa.com.br\nfulano@ dominio.com' });
+      const input = area({ placeholder: 'Cole e-mails ou qualquer texto contendo e-mails', value: 'felipe@gooners.com.br, joao@@exemplo, maria.silva@empresa.com.br\nfulano@ dominio.com' });
       const mode = sel([['validate', 'Validar cada item (separados por vírgula, ; ou linha)'], ['extract', 'Extrair e-mails de um texto']]);
       const out = h('div', { class: 'result-list' }), info = h('p', { class: 'hint' });
       const re = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.[A-Za-z]{2,}$/;
@@ -925,7 +932,7 @@
   add({ id: 'url-encode', name: 'Codificar / decodificar URL', cat: 'conversores', icon: 'percent', desc: 'Percent-encoding de URLs e parâmetros de consulta.', keys: 'url encode decode uri percent escape',
     render(root) {
       let mode;
-      textTool(root, (s) => (mode.value === 'enc' ? encodeURIComponent(s) : mode.value === 'encu' ? encodeURI(s) : decodeURIComponent(s.replace(/\+/g, ' '))), { sample: 'https://gooners.app/busca?q=proteção patrimonial&uf=SP', prefill: true, controls: (run) => (mode = sel([['enc', 'Codificar componente (encodeURIComponent)'], ['encu', 'Codificar URL completa (encodeURI)'], ['dec', 'Decodificar']], { onchange: run })) });
+      textTool(root, (s) => (mode.value === 'enc' ? encodeURIComponent(s) : mode.value === 'encu' ? encodeURI(s) : decodeURIComponent(s.replace(/\+/g, ' '))), { sample: 'https://monolito123.github.io/Gooners/busca?q=proteção patrimonial&uf=SP', prefill: true, controls: (run) => (mode = sel([['enc', 'Codificar componente (encodeURIComponent)'], ['encu', 'Codificar URL completa (encodeURI)'], ['dec', 'Decodificar']], { onchange: run })) });
     } });
 
   add({ id: 'texto-binario', name: 'Texto ↔ binário / hexadecimal', cat: 'conversores', icon: 'cpu', desc: 'Converta texto para binário, hexadecimal, octal ou decimal (UTF-8).', keys: 'binario hex ascii bytes utf8',
@@ -1662,7 +1669,7 @@
 
   add({ id: 'markdown-html', name: 'Editor Markdown com preview', cat: 'dev', icon: 'file-code', desc: 'Escreva em Markdown, veja a prévia ao vivo e exporte o HTML.', keys: 'markdown md html editor preview readme converter',
     render(root) {
-      const input = area({ class: 'inp mono', style: 'min-height:320px', value: '# Título\n\nTexto com **negrito**, *itálico* e [link](https://gooners.app).\n\n- Item 1\n- Item 2\n\n| Coluna | Valor |\n|---|---|\n| A | 1 |\n\n```js\nconsole.log("Gooners");\n```' });
+      const input = area({ class: 'inp mono', style: 'min-height:320px', value: '# Título\n\nTexto com **negrito**, *itálico* e [link](https://monolito123.github.io/Gooners/).\n\n- Item 1\n- Item 2\n\n| Coluna | Valor |\n|---|---|\n| A | 1 |\n\n```js\nconsole.log("Gooners");\n```' });
       const frame = h('iframe', { class: 'md-frame', sandbox: '', title: 'Pré-visualização' }); let html = '';
       function run() {
         if (!window.marked) return;
@@ -1678,7 +1685,7 @@
   add({ id: 'gerador-meta-tags', name: 'Gerador de meta tags SEO', cat: 'dev', icon: 'tags', desc: 'Gere title, description, Open Graph e Twitter Card com prévia do Google e das redes.', keys: 'seo meta tags open graph og twitter card google snippet title description',
     render(root) {
       const f = { title: inp({ value: 'Gooners — Ferramentas online grátis' }), desc: area({ value: 'Dezenas de ferramentas online gratuitas: texto, geradores, validadores, conversores e calculadoras. Tudo no navegador, sem cadastro.', style: 'min-height:80px' }),
-        url: inp({ value: 'https://gooners.app/' }), img: inp({ placeholder: 'https://…/imagem-1200x630.jpg' }), site: inp({ value: 'Gooners' }), tw: inp({ placeholder: '@usuario' }) };
+        url: inp({ value: 'https://monolito123.github.io/Gooners/' }), img: inp({ placeholder: 'https://…/imagem-1200x630.jpg' }), site: inp({ value: 'Gooners' }), tw: inp({ placeholder: '@usuario' }) };
       const counters = { title: h('span', { class: 'badge' }), desc: h('span', { class: 'badge' }) };
       const preview = h('div', { class: 'serp' }), code = area({ readOnly: true, class: 'inp mono', style: 'min-height:260px' });
       const lim = (el, n, lo, hi) => { el.textContent = `${n} caracteres`; el.className = 'badge ' + (n >= lo && n <= hi ? 'ok' : 'warn'); };

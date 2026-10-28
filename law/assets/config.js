@@ -1,8 +1,9 @@
-/* Configuração da Gooners Law — edite com os dados reais do escritório. */
+/* Gerado por scripts/build-law.mjs a partir de scripts/site.config.json — edite lá. */
 window.LAW_CONFIG = {
-  email: 'contato@gooners.law',      // e-mail que recebe os contatos do formulário
-  whatsapp: '',                      // DDI+DDD+número, ex.: '5511999999999' (vazio = botão usa e-mail)
-  cidade: 'São Paulo · Atendimento em todo o Brasil e no exterior',
-  horario: 'Segunda a sexta, 9h às 18h',
-  newsRefreshMinutes: 3,             // intervalo de atualização automática das notícias
+  "email": "felipe@gooners.com.br",
+  "whatsapp": "5561994032833",
+  "telefone": "(61) 99403-2833",
+  "cidade": "Atendimento online em todo o Brasil e no exterior",
+  "horario": "Segunda a sexta, das 9h às 18h",
+  "newsRefreshMinutes": 3
 };

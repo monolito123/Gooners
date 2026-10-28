@@ -18,7 +18,14 @@
   function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); }
   async function copy(text) { try { await navigator.clipboard.writeText(text); toast('Link copiado'); } catch { prompt('Copie o link:', text); } }
   async function share(title, url) { if (navigator.share) { try { await navigator.share({ title, url }); return; } catch (e) { if (e.name === 'AbortError') return; } } copy(url); }
-  window.LawUI = { toast, esc, store, share, ic };
+  const wa = (text) => `https://wa.me/${CFG.whatsapp}?text=${encodeURIComponent(text)}`;
+  const waBtn = (label, text) => `<a class="btn btn-wa sm" href="${esc(wa(text))}" target="_blank" rel="noopener">${ic('message-circle')}${label}</a>`;
+  window.LawUI = { toast, esc, store, share, ic, wa };
+  // Botões de copiar (telefone, e-mail, mensagens)
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-copy]'); if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copiado: ' + b.dataset.copy.slice(0, 40)); } catch { prompt('Copie:', b.dataset.copy); }
+  });
 
   // ---------- navegação ----------
   const nav = $('#nav'), toTop = $('#toTop');
@@ -140,7 +147,7 @@
       store.set('diagnostico', { score, label, recs: recs.map((r) => r[0]), t: Date.now() });
       quiz.innerHTML = `<div class="result"><div class="score-ring" style="--p:${score};--c:${color}"><div><span><b>${score}</b><small>índice de<br>exposição</small></span></div></div>
         <div><h3 style="color:${color}">${label}</h3><p>${text}</p><ul>${recs.map(([t, d]) => `<li><b>${t}:</b> ${d}</li>`).join('')}</ul>
-        <div class="hero-cta"><a href="#contato" class="btn btn-gold" id="quizCta">Falar com um especialista</a><button class="btn btn-line" data-restart>Refazer diagnóstico</button></div>
+        <div class="hero-cta"><a href="#contato" class="btn btn-gold" id="quizCta">Falar com um especialista</a>${waBtn('Enviar resultado pelo WhatsApp', `Olá! Fiz o diagnóstico patrimonial no site da Gooners Law.\nÍndice de exposição: ${score}/100 (${label}).\nPontos de atenção: ${recs.map((r) => r[0]).join(', ')}.\nGostaria de conversar.`)}<button class="btn btn-line" data-restart>Refazer diagnóstico</button></div>
         <p class="disclaimer">Resultado indicativo, gerado no seu navegador, que não substitui uma consulta jurídica.</p></div></div>`;
       $('#quizCta').addEventListener('click', () => {
         const f = $('#contactForm'); if (!f) return;
@@ -165,7 +172,8 @@
         <div class="${save >= 0 ? 'best' : ''}"><small>Holding${doa ? ' + doação' : ''}</small><b>${brl(hol.total)}</b><span>${pct(hol.total)} do patrimônio · ${doa ? 'sucessão já organizada' : 'quotas ainda inventariadas'}</span></div></div>
         <div class="bars">${bar('ITCMD (inventário)', inv.itcmd)}${bar('Honorários + custas', inv.hon + inv.cus)}${bar('ITCMD (holding)', hol.itcmd, 1)}${bar('Implementação' + (doa ? '' : ' + quotas'), hol.impl + hol.rest, 1)}</div>
         <div class="saving">${save >= 0 ? 'Economia estimada: ' + brl(save) : 'Neste cenário, o inventário custa ' + brl(-save) + ' a menos'}</div>
-        <p class="disclaimer">${doa ? 'Com a doação de quotas em vida, evita-se o inventário desses bens e o período em que o patrimônio fica bloqueado.' : 'Sem doação em vida, a holding organiza a gestão, mas as quotas ainda serão inventariadas (estimado aqui com metade dos honorários e das custas).'} Considere também a governança e a redução de conflitos.</p>`;
+        <p class="disclaimer">${doa ? 'Com a doação de quotas em vida, evita-se o inventário desses bens e o período em que o patrimônio fica bloqueado.' : 'Sem doação em vida, a holding organiza a gestão, mas as quotas ainda serão inventariadas (estimado aqui com metade dos honorários e das custas).'} Considere também a governança e a redução de conflitos.</p>
+        <div class="sim-actions">${waBtn('Discutir esta simulação no WhatsApp', `Olá! Simulei no site da Gooners Law um patrimônio de ${brl(P)} (ITCMD ${(it * 100).toFixed(0)}%).\nInventário estimado: ${brl(inv.total)} · Holding${doa ? ' + doação' : ''}: ${brl(hol.total)}.\nGostaria de avaliar o meu caso.`)}</div>`;
     };
     suc.addEventListener('input', run); run();
   }
@@ -183,7 +191,8 @@
         <div><span>Alíquota (Lei 14.754/2023)</span><b>15%</b></div><div><span>Imposto bruto</span><b>${brl(gross)}</b></div>
         <div><span>Dedução do imposto pago no exterior (limitada)</span><b>− ${brl(credit)}</b></div>
         <div class="total"><span>IRPF devido no ano</span><b>${brl(due)}</b></div></div>
-        <p class="disclaimer">${annual ? 'Nesse enquadramento, o lucro é tributado anualmente, mesmo sem distribuição.' : 'Com renda ativa própria de pelo menos 60%, fora de jurisdições favorecidas e regimes privilegiados, a tributação ocorre na distribuição do lucro à pessoa física.'}</p>`;
+        <p class="disclaimer">${annual ? 'Nesse enquadramento, o lucro é tributado anualmente, mesmo sem distribuição.' : 'Com renda ativa própria de pelo menos 60%, fora de jurisdições favorecidas e regimes privilegiados, a tributação ocorre na distribuição do lucro à pessoa física.'}</p>
+        <div class="sim-actions">${waBtn('Revisar minha estrutura offshore', `Olá! Simulei no site da Gooners Law a tributação de uma offshore (Lei 14.754/2023): IRPF estimado de ${brl(due)} no ano. Gostaria de revisar a minha estrutura.`)}</div>`;
     };
     off.addEventListener('input', run); run();
   }
@@ -196,6 +205,10 @@
     const sync = () => { const n = boxes.filter((b) => b.checked).length, p = Math.round((n / boxes.length) * 100); $('#ckPct').textContent = p + '%'; $('#ckBar').style.width = p + '%'; };
     boxes.forEach((b) => { b.checked = !!state[b.dataset.k]; b.addEventListener('change', () => { state[b.dataset.k] = b.checked; store.set('checklist', state); sync(); }); });
     $('#ckReset').addEventListener('click', () => { boxes.forEach((b) => (b.checked = false)); store.set('checklist', {}); sync(); });
+    $('#ckSend').addEventListener('click', () => {
+      const have = boxes.filter((b) => b.checked).map((b) => '✔ ' + b.nextElementSibling.textContent), miss = boxes.filter((b) => !b.checked).map((b) => '• ' + b.nextElementSibling.textContent);
+      window.open(wa(`Olá! Estou organizando a documentação para uma holding familiar (${Math.round((have.length / boxes.length) * 100)}% pronta).\n\nJá tenho:\n${have.join('\n') || '—'}\n\nAinda falta:\n${miss.join('\n') || '—'}`), '_blank', 'noopener');
+    });
     $('#ckPrint').addEventListener('click', () => { document.body.classList.add('print-checklist'); print(); setTimeout(() => document.body.classList.remove('print-checklist'), 500); });
     sync();
   }
@@ -203,12 +216,6 @@
   // ---------- contato e agendamento ----------
   const form = $('#contactForm');
   if (form) {
-    $('#contactInfo').innerHTML = [
-      CFG.email && [ic('mail'), `<a href="mailto:${esc(CFG.email)}">${esc(CFG.email)}</a>`],
-      CFG.whatsapp && [ic('message-circle'), `<a href="https://wa.me/${esc(CFG.whatsapp)}" target="_blank" rel="noopener">WhatsApp</a>`],
-      CFG.cidade && [ic('map-pin'), esc(CFG.cidade)],
-      CFG.horario && [ic('clock'), esc(CFG.horario)],
-    ].filter(Boolean).map(([i, t]) => `<li>${i}<span>${t}</span></li>`).join('');
     // Próximo dia útil como sugestão; fins de semana não são aceitos
     const d = new Date(); do d.setDate(d.getDate() + 1); while (d.getDay() % 6 === 0);
     const iso = (x) => new Date(x - x.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
@@ -229,9 +236,10 @@
       e.preventDefault(); if (!valid()) return;
       const v = data();
       const body = `Nome: ${v.nome}\nE-mail: ${v.email}\nTelefone: ${v.tel || '-'}\nAssunto: ${v.assunto}\nPreferência: ${dateLabel(v)}, às ${v.hora} (${v.modo})\n\n${v.msg}`;
-      if (via === 'wa' && CFG.whatsapp) window.open(`https://wa.me/${CFG.whatsapp}?text=${encodeURIComponent(body)}`, '_blank', 'noopener');
+      if (via === 'wa') window.open(wa(body), '_blank', 'noopener');
       else location.href = `mailto:${CFG.email}?subject=${encodeURIComponent('[Gooners Law] ' + v.assunto + ' — agendamento')}&body=${encodeURIComponent(body)}`;
-      say(via === 'wa' && !CFG.whatsapp ? 'WhatsApp ainda não configurado: abrimos seu e-mail com a mensagem pronta.' : 'Solicitação preparada! Conclua o envio no aplicativo aberto. Confirmaremos o horário por retorno.');
+      say(via === 'wa' ? `Mensagem pronta no WhatsApp ${CFG.telefone}. Conclua o envio no aplicativo.` : `E-mail pronto para ${CFG.email}. Conclua o envio no seu aplicativo de e-mail.`);
+      const fb = $('#formFallback'); fb.hidden = false; $('#fbText').value = body; $('#fbCopy').dataset.copy = body;
     });
     $('#icsBtn').addEventListener('click', () => {
       if (!valid()) return;

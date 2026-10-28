@@ -9,9 +9,15 @@ const ROOT = new URL('../', import.meta.url).pathname;
 const cfg = JSON.parse(readFileSync(ROOT + 'scripts/site.config.json', 'utf8'));
 const SITE_URL = (process.env.SITE_URL || cfg.siteUrl).replace(/\/?$/, '/');
 const LAW_URL = SITE_URL + 'law/';
+const C = cfg.contact;
+const WA = (text) => `https://wa.me/${C.whatsapp}${text ? '?text=' + encodeURIComponent(text) : ''}`;
+// config.js é gerado a partir de scripts/site.config.json (fonte única dos dados de contato)
+writeFileSync(ROOT + 'law/assets/config.js', `/* Gerado por scripts/build-law.mjs a partir de scripts/site.config.json — edite lá. */
+window.LAW_CONFIG = ${JSON.stringify({ email: C.email, whatsapp: C.whatsapp, telefone: C.phoneDisplay, cidade: C.atendimento, horario: C.horario, newsRefreshMinutes: 3 }, null, 2)};
+`);
 const NOW = new Date();
 const hash = (f) => createHash('md5').update(readFileSync(ROOT + f)).digest('hex').slice(0, 8);
-const V = { css: hash('law/assets/law.css'), js: hash('law/assets/law.js'), news: hash('law/assets/news.js'), cfg: hash('law/assets/config.js') };
+const V = { css: hash('law/assets/law.css'), js: hash('law/assets/law.js'), news: hash('law/assets/news.js'), get cfg() { return hash('law/assets/config.js'); } };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ld = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`;
 // Links internos explícitos (pasta/ → pasta/index.html) funcionam em qualquer hospedagem estática
@@ -93,7 +99,18 @@ ${extraHead}${jsonld.map(ld).join('\n')}
 <main id="conteudo" tabindex="-1">
 ${body}
 </main>
+${page === 'home' ? '' : `<section class="cta-band" aria-labelledby="cta-band-h">
+  <div class="wrap cta-band-inner">
+    <div><p class="kicker">Atendimento reservado</p><h2 id="cta-band-h">Fale com a Gooners Law</h2><p>Explique o seu caso em poucas linhas. Respondemos por WhatsApp ou e-mail, em sigilo profissional.</p></div>
+    <div class="cta-band-actions">
+      <a class="btn btn-gold" href="${WA('Olá! Vim pelo site da Gooners Law e gostaria de falar sobre o meu caso.')}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp ${C.phoneDisplay}</a>
+      <a class="btn btn-line-light" href="mailto:${C.email}">${ic('mail')}${C.email}</a>
+      <a class="btn btn-line-light" href="${L}#contato">${ic('calendar-check')}Agendar consulta</a>
+    </div>
+  </div>
+</section>`}
 <footer class="foot">
+<a class="wa-float" href="${WA('Olá! Vim pelo site da Gooners Law.')}" target="_blank" rel="noopener" aria-label="Conversar no WhatsApp ${C.phoneDisplay}"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.21h.01c5.46 0 9.91-4.45 9.91-9.91A9.85 9.85 0 0 0 12.04 2Zm5.8 14.04c-.24.68-1.42 1.32-1.95 1.36-.5.05-.97.23-3.27-.68-2.77-1.09-4.52-3.92-4.66-4.1-.13-.18-1.11-1.48-1.11-2.82 0-1.34.7-2 .95-2.27.24-.27.53-.34.71-.34l.51.01c.16.01.38-.06.6.46.23.54.77 1.88.84 2.02.07.13.11.29.02.47-.09.18-.13.29-.27.45-.13.16-.28.35-.4.47-.13.13-.27.28-.12.55.16.27.7 1.15 1.5 1.86 1.03.92 1.9 1.2 2.17 1.34.27.13.43.11.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.23.6-.14.25.09 1.58.75 1.85.88.27.14.45.2.52.32.06.11.06.66-.18 1.35Z"/></svg><span>WhatsApp</span></a>
   <div class="foot-inner">
     <div class="foot-brand">
       <a href="${L}" class="logo"><img src="${L}assets/icon.svg" width="32" height="32" alt=""><span>Gooners <em>Law</em></span></a>
@@ -103,6 +120,11 @@ ${body}
     <div><h3>Atuação</h3><ul>${AREAS.map((a) => `<li><a href="${L}#area-${slug(a.title)}">${a.title}</a></li>`).join('')}</ul></div>
     <div><h3>Conteúdo</h3><ul><li><a href="${L}noticias/">Notícias jurídicas</a></li><li><a href="${L}artigos/">Artigos</a></li><li><a href="${L}glossario/">Glossário jurídico</a></li>${ARTICLES.map((a) => `<li><a href="${L}artigos/${a.slug}/">${esc(a.title.split(':')[0])}</a></li>`).join('')}</ul></div>
     <div><h3>Ferramentas</h3><ul><li><a href="${L}#simuladores">Diagnóstico patrimonial</a></li><li><a href="${L}#simuladores">Inventário × holding</a></li><li><a href="${L}#simuladores">Tributação offshore</a></li><li><a href="${L}#simuladores">Checklist da holding</a></li><li><a href="${L}#offshore">Comparador de jurisdições</a></li><li><a href="${H}">Gooners: ferramentas online</a></li></ul></div>
+    <div class="foot-contact"><h3>Contato</h3><ul>
+      <li><a href="${WA('Olá! Vim pelo site da Gooners Law e gostaria de agendar uma conversa.')}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp ${C.phoneDisplay}</a></li>
+      <li><a href="mailto:${C.email}">${ic('mail')}${C.email}</a></li>
+      <li>${ic('clock')}${C.horario}</li>
+      <li>${ic('globe')}${C.atendimento}</li></ul></div>
   </div>
   <div class="foot-legal">
     <p>Conteúdo de caráter exclusivamente informativo, que não constitui aconselhamento jurídico, fiscal ou financeiro nem promessa de resultado. Cada caso exige análise individual por profissional habilitado. Publicidade informativa nos termos do Código de Ética e Disciplina da OAB e do Provimento CFOAB nº 205/2021. As notícias pertencem aos respectivos veículos e são exibidas com link para a fonte original.</p>
@@ -121,6 +143,9 @@ ${body}
 
 const ORG = { '@context': 'https://schema.org', '@type': 'LegalService', '@id': LAW_URL + '#org', name: 'Gooners Law', url: LAW_URL, logo: LAW_URL + 'assets/icon-512.png', image: LAW_URL + 'assets/og-law.png',
   description: 'Assistência jurídica especializada em proteção patrimonial, holdings, planejamento sucessório e assessoria offshore.', areaServed: { '@type': 'Country', name: 'Brasil' }, inLanguage: 'pt-BR',
+  email: C.email, telephone: C.phoneE164,
+  contactPoint: [{ '@type': 'ContactPoint', contactType: 'customer service', email: C.email, telephone: C.phoneE164, availableLanguage: ['Portuguese', 'English', 'Spanish'], areaServed: 'BR' }],
+  openingHoursSpecification: [{ '@type': 'OpeningHoursSpecification', dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], opens: '09:00', closes: '18:00' }],
   knowsAbout: ['Proteção patrimonial', 'Holding familiar', 'Planejamento sucessório', 'Estruturação offshore', 'Lei 14.754/2023', 'Trusts', 'ITCMD', 'Compliance fiscal internacional'],
   hasOfferCatalog: { '@type': 'OfferCatalog', name: 'Áreas de atuação', itemListElement: AREAS.map((a) => ({ '@type': 'Offer', itemOffered: { '@type': 'Service', name: a.title, description: a.text } })) } };
 const crumbLd = (items) => ({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: items.map(([name, url], i) => ({ '@type': 'ListItem', position: i + 1, name, item: url })) });
@@ -138,7 +163,7 @@ const crumbs = (items) => `<nav class="crumbs" aria-label="Você está em"><ol>$
       <p class="kicker">Proteção patrimonial · Estruturação offshore · Sucessão</p>
       <h1>Seu patrimônio merece <em>arquitetura jurídica</em>, não improviso.</h1>
       <p class="sub">Assessoria técnica para famílias, empresários e investidores que querem organizar, proteger e transmitir patrimônio no Brasil e no exterior, com conformidade fiscal e segurança jurídica.</p>
-      <div class="hero-cta"><a href="#simuladores" class="btn btn-gold">Fazer diagnóstico gratuito</a><a href="#contato" class="btn btn-line-light">Agendar consulta</a></div>
+      <div class="hero-cta"><a href="#simuladores" class="btn btn-gold">Fazer diagnóstico gratuito</a><a href="${WA('Olá! Vim pelo site da Gooners Law e gostaria de agendar uma consulta.')}" class="btn btn-line-light" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp ${C.phoneDisplay}</a></div>
       <ul class="pillars">
         <li>${ic('shield')}<div><b>Planejamento lícito</b><span>Estruturas preventivas, com propósito negocial.</span></div></li>
         <li>${ic('globe')}<div><b>Visão internacional</b><span>Jurisdições e veículos analisados caso a caso.</span></div></li>
@@ -239,7 +264,7 @@ const crumbs = (items) => `<nav class="crumbs" aria-label="Você está em"><ol>$
     <div class="panel" id="checklist" role="tabpanel" aria-labelledby="tab-checklist" data-panel="checklist" hidden>
       <div class="check-head"><div><h3>Documentos para estruturar uma holding familiar</h3><p>Marque o que você já tem. O progresso fica salvo neste navegador.</p></div><div class="progress"><span id="ckPct">0%</span><div class="bar"><i id="ckBar"></i></div></div></div>
       <div class="check-grid" id="ckList">${CHECKLIST.map(([g, items], gi) => `<fieldset><legend>${g}</legend>${items.map((it, ii) => `<label><input type="checkbox" data-k="${gi}-${ii}"><span>${it}</span></label>`).join('')}</fieldset>`).join('')}</div>
-      <div class="check-actions"><button class="btn btn-navy sm" id="ckPrint">${ic('printer')}Imprimir lista</button><button class="btn btn-line sm" id="ckReset">Recomeçar</button><a class="btn btn-gold sm" href="#contato">Enviar para análise</a></div>
+      <div class="check-actions"><button class="btn btn-navy sm" id="ckPrint">${ic('printer')}Imprimir lista</button><button class="btn btn-line sm" id="ckReset">Recomeçar</button><button class="btn btn-wa sm" id="ckSend">${ic('message-circle')}Enviar lista pelo WhatsApp</button></div>
     </div>
   </div>
 </section>
@@ -271,7 +296,13 @@ const crumbs = (items) => `<nav class="crumbs" aria-label="Você está em"><ol>$
       <p class="kicker">Atendimento reservado</p>
       <h2 id="h-contact">Agende uma consulta</h2>
       <p>Escolha o melhor dia e horário e conte, em linhas gerais, o que você precisa. As informações são tratadas com sigilo profissional e em conformidade com a LGPD.</p>
-      <ul class="contact-info" id="contactInfo"></ul>
+      <ul class="contact-info">
+        <li>${ic('message-circle')}<a href="${WA('Olá! Vim pelo site da Gooners Law e gostaria de agendar uma consulta.')}" target="_blank" rel="noopener">WhatsApp ${C.phoneDisplay}</a><button class="copy-btn" type="button" data-copy="${C.phoneDisplay}" aria-label="Copiar telefone">${ic('copy')}</button></li>
+        <li>${ic('mail')}<a href="mailto:${C.email}">${C.email}</a><button class="copy-btn" type="button" data-copy="${C.email}" aria-label="Copiar e-mail">${ic('copy')}</button></li>
+        <li>${ic('clock')}<span>${C.horario}</span></li>
+        <li>${ic('globe')}<span>${C.atendimento}</span></li>
+      </ul>
+      <a class="btn btn-gold" href="${WA('Olá! Vim pelo site da Gooners Law e gostaria de agendar uma consulta.')}" target="_blank" rel="noopener">${ic('message-circle')}Conversar agora no WhatsApp</a>
     </div>
     <form id="contactForm" class="contact-form" novalidate>
       <label>Nome<input name="nome" required autocomplete="name"></label>
@@ -289,6 +320,7 @@ const crumbs = (items) => `<nav class="crumbs" aria-label="Você está em"><ol>$
         <button class="btn btn-line-light" type="button" id="icsBtn">${ic('calendar-check')}Salvar na agenda</button>
       </div>
       <p class="form-msg full" id="formMsg" role="status"></p>
+      <div class="form-fallback full" id="formFallback" hidden><p>Se o aplicativo não abriu, copie a mensagem e envie para <b>${C.email}</b> ou pelo WhatsApp <b>${C.phoneDisplay}</b>.</p><textarea id="fbText" rows="5" readonly aria-label="Mensagem pronta"></textarea><button class="btn btn-line-light sm" type="button" id="fbCopy" data-copy="">${ic('copy')}Copiar mensagem</button></div>
     </form>
   </div>
 </section>`;
@@ -375,7 +407,7 @@ for (const a of ARTICLES) {
   ${crumbs([['Gooners Law', L], ['Artigos', '../'], [a.title.split(':')[0]]])}
   <header class="art-head"><span class="tag">${a.tag}</span><h1>${esc(a.title)}</h1><p class="lead">${esc(a.desc)}</p>
     <div class="art-byline"><span>Equipe Gooners Law</span><span>·</span><time datetime="${published}">${new Date(published + 'T12:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}</time><span>·</span><span>${a.minutes} min de leitura</span>
-    <button class="btn btn-line sm" id="shareArticle">${ic('share-2')}Compartilhar</button></div></header>
+    <span class="art-share"><a class="btn btn-line sm" href="https://wa.me/?text=${encodeURIComponent(a.title + ' — ' + url)}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp</a><button class="btn btn-line sm" id="shareArticle">${ic('share-2')}Compartilhar</button></span></div></header>
   <div class="art-layout">
     <nav class="toc" aria-label="Neste artigo"><p>Neste artigo</p><ol>${a.sections.map(([t]) => `<li><a href="#${slug(t)}">${t}</a></li>`).join('')}</ol></nav>
     <div class="prose">

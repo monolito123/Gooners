@@ -1,1 +1,12 @@
-{ "siteUrl": "https://monolito123.github.io/Gooners/", "articlesPublished": "2026-10-28" }
+{
+  "siteUrl": "https://monolito123.github.io/Gooners/",
+  "articlesPublished": "2026-10-28",
+  "contact": {
+    "email": "felipe@gooners.com.br",
+    "whatsapp": "5561994032833",
+    "phoneDisplay": "(61) 99403-2833",
+    "phoneE164": "+55-61-99403-2833",
+    "horario": "Segunda a sexta, das 9h às 18h",
+    "atendimento": "Atendimento online em todo o Brasil e no exterior"
+  }
+}
