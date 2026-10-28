@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/m_find" android:icon="@drawable/ic_search" android:title="Buscar" app:showAsAction="always" />
+    <item android:id="@+id/m_night" android:icon="@drawable/ic_night" android:title="Modo noturno" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_toc" android:title="Sumário" />
+    <item android:id="@+id/m_text_size" android:title="Tamanho do texto" />
+    <item android:id="@+id/m_to_pdf" android:title="Converter para PDF" />
+    <item android:id="@+id/m_print" android:title="Imprimir / salvar como PDF (layout fiel)" />
+    <item android:id="@+id/m_edit" android:title="Editar como novo documento" />
+    <item android:id="@+id/m_share" android:title="Compartilhar" />
+    <item android:id="@+id/m_saveas" android:title="Salvar cópia…" />
+    <item android:id="@+id/m_other" android:title="Abrir com outro app" />
+</menu>

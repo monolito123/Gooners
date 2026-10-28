@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GPDF" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#A5B4FC</item>
+        <item name="colorOnPrimary">#1E1B4B</item>
+        <item name="colorPrimaryContainer">#3730A3</item>
+        <item name="colorOnPrimaryContainer">#E0E7FF</item>
+        <item name="colorSecondary">#C7D2FE</item>
+        <item name="colorOnSecondary">#1E1B4B</item>
+        <item name="colorSecondaryContainer">#312E81</item>
+        <item name="colorOnSecondaryContainer">#E0E7FF</item>
+        <item name="colorTertiary">#F87171</item>
+        <item name="android:colorBackground">#0C0D10</item>
+        <item name="colorSurface">#131418</item>
+        <item name="android:statusBarColor">#0C0D10</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m" xmlns:tools="http://schemas.android.com/tools">false</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35" xmlns:tools="http://schemas.android.com/tools">true</item>
+        <item name="android:navigationBarColor">#0C0D10</item>
+    </style>
+</resources>

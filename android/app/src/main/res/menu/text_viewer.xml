@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/m_find" android:icon="@drawable/ic_search" android:title="Buscar" app:showAsAction="always" />
+    <item android:id="@+id/m_edit" android:icon="@drawable/ic_edit" android:title="Editar" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_size" android:title="Tamanho da fonte" />
+    <item android:id="@+id/m_mono" android:checkable="true" android:title="Fonte monoespaçada" />
+    <item android:id="@+id/m_numbers" android:checkable="true" android:title="Números de linha" />
+    <item android:id="@+id/m_json" android:title="Formatar JSON" />
+    <item android:id="@+id/m_goto" android:title="Ir para a linha" />
+    <item android:id="@+id/m_to_pdf" android:title="Converter para PDF" />
+    <item android:id="@+id/m_share" android:title="Compartilhar" />
+    <item android:id="@+id/m_other" android:title="Abrir com outro app" />
+</menu>

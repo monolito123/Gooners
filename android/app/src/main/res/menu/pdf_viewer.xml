@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/m_search" android:icon="@drawable/ic_search" android:title="Buscar" app:showAsAction="always" />
+    <item android:id="@+id/m_theme" android:icon="@drawable/ic_night" android:title="Modo de leitura" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_share" android:icon="@drawable/ic_share" android:title="Compartilhar" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_toc" android:title="Sumário" />
+    <item android:id="@+id/m_bookmarks" android:title="Marcadores" />
+    <item android:id="@+id/m_goto" android:title="Ir para a página" />
+    <item android:id="@+id/m_organize" android:title="Organizar páginas" />
+    <item android:id="@+id/m_form" android:title="Preencher formulário" />
+    <item android:id="@+id/m_tts" android:title="Ler em voz alta" />
+    <item android:id="@+id/m_copy" android:title="Copiar texto da página" />
+    <item android:id="@+id/m_ocr" android:title="Reconhecer texto (OCR) da página" />
+    <item android:id="@+id/m_tools" android:title="Mais ferramentas…" />
+    <item android:id="@+id/m_saveas" android:title="Salvar como…" />
+    <item android:id="@+id/m_print" android:title="Imprimir" />
+    <item android:id="@+id/m_fullscreen" android:title="Tela cheia" />
+    <item android:id="@+id/m_info" android:title="Propriedades" />
+    <item android:id="@+id/m_other" android:title="Abrir com outro app" />
+</menu>

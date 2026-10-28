@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/m_open" android:icon="@drawable/ic_folder" android:title="Abrir arquivo" app:showAsAction="always" />
+    <item android:id="@+id/m_theme" android:title="Tema do app" />
+    <item android:id="@+id/m_screen" android:checkable="true" android:title="Manter a tela ligada ao ler" />
+    <item android:id="@+id/m_clear" android:title="Limpar recentes" />
+    <item android:id="@+id/m_formats" android:title="Formatos suportados" />
+    <item android:id="@+id/m_about" android:title="Sobre" />
+</menu>

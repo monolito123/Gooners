@@ -1,0 +1,67 @@
+name: App Android (APK)
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    env:
+      KEYSTORE_B64: ${{ secrets.GPDF_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Opcional: com os secrets GPDF_KEYSTORE_BASE64, GPDF_KEYSTORE_PASSWORD, GPDF_KEY_ALIAS e GPDF_KEY_PASSWORD
+      # o APK sai sempre com a mesma assinatura (atualizações instalam por cima). Sem eles, usa a chave de debug.
+      - name: Chave de assinatura
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "GPDF_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Testes
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Gerar APK
+        env:
+          GPDF_KEYSTORE_PASSWORD: ${{ secrets.GPDF_KEYSTORE_PASSWORD }}
+          GPDF_KEY_ALIAS: ${{ secrets.GPDF_KEY_ALIAS }}
+          GPDF_KEY_PASSWORD: ${{ secrets.GPDF_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk GoonersPDF.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GoonersPDF-apk
+          path: android/GoonersPDF.apk
+
+      # Mantém sempre o APK mais recente para download na aba "Releases" do repositório.
+      - name: Publicar na release "apk-latest"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-latest --yes --cleanup-tag || true
+          gh release create apk-latest GoonersPDF.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Gooners PDF — build ${GITHUB_SHA::7}" \
+            --notes "APK gerado automaticamente a partir de ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Android 5.0 ou superior. Baixe GoonersPDF.apk e permita a instalação de fontes desconhecidas."

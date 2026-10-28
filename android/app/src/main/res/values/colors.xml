@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#4F46E5</color>
+    <color name="brand_dark">#3730A3</color>
+    <color name="brand_soft">#E0E7FF</color>
+    <color name="page_bg">#E5E7EB</color>
+    <color name="bar_bg">#F2FFFFFF</color>
+    <color name="launcher_bg">#4F46E5</color>
+    <color name="pdf_red">#DC2626</color>
+    <color name="word_blue">#2563EB</color>
+    <color name="excel_green">#059669</color>
+    <color name="ppt_orange">#EA580C</color>
+    <color name="ebook_brown">#92400E</color>
+    <color name="image_purple">#7C3AED</color>
+    <color name="text_gray">#475569</color>
+</resources>

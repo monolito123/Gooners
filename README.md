@@ -7,6 +7,10 @@ Dois sites estáticos, indexáveis por buscadores e prontos para o GitHub Pages:
 | `/` | **Gooners**: 62 ferramentas online gratuitas em 8 categorias (texto, geradores, validadores, consultas, conversores, calculadoras, desenvolvedor, tempo e produtividade). Cada ferramenta tem sua própria página. |
 | `/law/` | **Gooners Law**: assistência jurídica em proteção patrimonial e assessoria offshore, com simuladores, portal de notícias jurídicas em tempo real, glossário e artigos. |
 
+## App Android
+
+A pasta [`android/`](android/README.md) contém o **Gooners PDF**, leitor, editor e conversor de PDF e documentos para Android. O APK mais recente fica em *Releases → apk-latest*.
+
 ## Rodar localmente
 
 ```bash
