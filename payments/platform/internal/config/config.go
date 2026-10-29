@@ -66,6 +66,7 @@ type Config struct {
 	TerminalTLS    *TLSFiles // CA = terminal CA
 	PixWebhookAddr string    // mutual-TLS listener for the PSP's webhooks
 	PixWebhookTLS  *TLSFiles // CA = the PSP's client CA
+	MetricsAddr    string    // internal listener for GET /metrics (Prometheus); empty disables it
 
 	Routes             []Route
 	CardPresentTimeout time.Duration
@@ -116,7 +117,7 @@ func Load() (*Config, error) {
 		Env: env("PLATFORM_ENV", Sandbox), DatabaseURL: os.Getenv("DATABASE_URL"), AcquirerID: env("ACQUIRER_ID", "12345678"),
 		HTTPAddr: env("HTTP_ADDR", ":8080"), HTTPTLS: tlsEnv("HTTP_TLS"),
 		TerminalAddr: os.Getenv("TERMINAL_ADDR"), TerminalTLS: tlsEnv("TERMINAL_TLS"),
-		PixWebhookAddr: os.Getenv("PIX_WEBHOOK_ADDR"), PixWebhookTLS: tlsEnv("PIX_WEBHOOK_TLS"),
+		PixWebhookAddr: os.Getenv("PIX_WEBHOOK_ADDR"), PixWebhookTLS: tlsEnv("PIX_WEBHOOK_TLS"), MetricsAddr: os.Getenv("METRICS_ADDR"),
 		PixBaseURL: os.Getenv("PIX_BASE_URL"), PixTokenURL: os.Getenv("PIX_TOKEN_URL"), PixClientID: os.Getenv("PIX_CLIENT_ID"),
 		PixClientSecret: os.Getenv("PIX_CLIENT_SECRET"), PixKey: os.Getenv("PIX_KEY"), PixTLS: tlsEnv("PIX_TLS"),
 		PixWebhookPublicURL: os.Getenv("PIX_WEBHOOK_PUBLIC_URL"), PayoutBaseURL: os.Getenv("PAYOUT_BASE_URL"),

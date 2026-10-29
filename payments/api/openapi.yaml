@@ -374,6 +374,10 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/DisputeStatus"
+        - name: merchant_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/Id"
       responses:
         "200":
           description: A page of disputes
@@ -777,6 +781,60 @@ paths:
                     type: string
                     enum: [active, revoked]
         "501":
+          $ref: "#/components/responses/Problem"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/terminals/{terminal_id}/revoke:
+    post:
+      tags: [merchants]
+      operationId: revokeTerminal
+      summary: Revoke a terminal (lost, stolen or decommissioned device)
+      description: |
+        The terminal's certificate stops authenticating and its terminal ID takes no further
+        authorizations. Revocation is permanent and recorded in the audit trail; register a new
+        terminal for a replacement device. Sends terminal.revoked.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: terminal_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Z0-9]{8}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        "200":
+          description: Terminal revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [terminal_id, merchant_id, status]
+                properties:
+                  terminal_id:
+                    type: string
+                  object:
+                    const: terminal
+                  merchant_id:
+                    $ref: "#/components/schemas/Id"
+                  type:
+                    type: string
+                  status:
+                    const: revoked
+        "409":
           $ref: "#/components/responses/Problem"
         "4XX":
           $ref: "#/components/responses/Problem"
@@ -1613,9 +1671,11 @@ components:
           const: dispute
         payment_intent_id:
           $ref: "#/components/schemas/Id"
+        merchant_id:
+          $ref: "#/components/schemas/Id"
         scheme:
           type: string
-          enum: [visa, mastercard]
+          enum: [visa, mastercard, elo]
         network_case_id:
           type: string
         reason_code:
@@ -1633,10 +1693,17 @@ components:
           $ref: "#/components/schemas/Timestamp"
         ledger:
           type: object
+          description: |
+            What the chargeback took from the merchant: from_balance came out of the available
+            balance, owed_by_merchant is the shortfall booked as owed and recovered from later credits.
           properties:
             held_from_account:
               $ref: "#/components/schemas/Id"
             amount:
+              $ref: "#/components/schemas/MinorUnits"
+            from_balance:
+              $ref: "#/components/schemas/MinorUnits"
+            owed_by_merchant:
               $ref: "#/components/schemas/MinorUnits"
         auto_evidence:
           type: object
@@ -1644,6 +1711,12 @@ components:
         recommendation:
           type: string
           enum: [represent, accept, refund]
+        evidence:
+          type: object
+          description: The evidence attached with POST /v1/disputes/{id}/evidence.
+          additionalProperties: true
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
 
     AccountHolder:
       type: object
@@ -1913,6 +1986,11 @@ components:
         status:
           type: string
           enum: [kyb_in_review, action_required, active, restricted, closed]
+          description: |
+            Only active merchants take payments and receive payouts. A restricted merchant's balance
+            is held; refunds, disputes and MED returns still debit it.
+        status_reason:
+          type: string
         kyb:
           type: object
           additionalProperties: true

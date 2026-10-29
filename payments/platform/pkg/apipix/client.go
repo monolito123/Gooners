@@ -265,6 +265,27 @@ func (c *Client) Devolver(ctx context.Context, e2eid, id string, req DevolucaoRe
 	return &out, nil
 }
 
+// ListPix pages through GET /pix for Pix received in [inicio, fim) and returns them all.
+// Daily reconciliation uses it to find Pix whose webhook never arrived.
+func (c *Client) ListPix(ctx context.Context, inicio, fim time.Time) ([]Pix, error) {
+	var all []Pix
+	for page := 0; ; page++ {
+		q := url.Values{}
+		q.Set("inicio", inicio.UTC().Format(time.RFC3339))
+		q.Set("fim", fim.UTC().Format(time.RFC3339))
+		q.Set("paginacao.paginaAtual", fmt.Sprint(page))
+		q.Set("paginacao.itensPorPagina", "1000")
+		var out PixList
+		if err := c.do(ctx, http.MethodGet, "/pix?"+q.Encode(), nil, &out, http.StatusOK); err != nil {
+			return nil, err
+		}
+		all = append(all, out.Pix...)
+		if page+1 >= out.Parametros.Paginacao.QuantidadeDePaginas || len(out.Pix) == 0 {
+			return all, nil
+		}
+	}
+}
+
 // GetDevolucao reads a devolução.
 func (c *Client) GetDevolucao(ctx context.Context, e2eid, id string) (*Devolucao, error) {
 	var out Devolucao

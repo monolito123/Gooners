@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +93,7 @@ func (s *Sim) Handler() http.Handler {
 	api := func(pattern string, h http.HandlerFunc) { mux.HandleFunc(pattern, s.auth(h)) }
 	api("PUT /api/v2/cob/{txid}", s.putCob)
 	api("GET /api/v2/cob/{txid}", s.getCob)
+	api("GET /api/v2/pix", s.listPix)
 	api("GET /api/v2/pix/{e2eid}", s.getPix)
 	api("PUT /api/v2/pix/{e2eid}/devolucao/{id}", s.putDevolucao)
 	api("GET /api/v2/pix/{e2eid}/devolucao/{id}", s.getDevolucao)
@@ -101,6 +103,7 @@ func (s *Sim) Handler() http.Handler {
 	api("GET /api/v2/pagamentos/pix/{id}", s.getTransfer)
 	mux.HandleFunc("POST /sim/pagar/{txid}", s.simPay)
 	mux.HandleFunc("POST /sim/devolucao/{e2eid}/{id}/liquidar", s.simSettleDevolucao)
+	mux.HandleFunc("POST /sim/med/{e2eid}", s.simMED)
 	return mux
 }
 
@@ -227,6 +230,50 @@ func (s *Sim) getPix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+// listPix serves GET /pix?inicio&fim with paginacao.paginaAtual / paginacao.itensPorPagina.
+func (s *Sim) listPix(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	inicio, err1 := time.Parse(time.RFC3339, q.Get("inicio"))
+	fim, err2 := time.Parse(time.RFC3339, q.Get("fim"))
+	if err1 != nil || err2 != nil || !fim.After(inicio) {
+		problem(w, http.StatusBadRequest, "ConsultaInvalida", "Consulta inválida", "inicio e fim são obrigatórios (RFC 3339) e fim deve ser posterior a inicio",
+			apipix.Violacao{Razao: "período inválido", Propriedade: "inicio"})
+		return
+	}
+	page, size := atoi(q.Get("paginacao.paginaAtual"), 0), atoi(q.Get("paginacao.itensPorPagina"), 100)
+	if size < 1 || size > 1000 {
+		size = 100
+	}
+	s.mu.Lock()
+	var all []apipix.Pix
+	for _, p := range s.pix {
+		at, err := time.Parse(time.RFC3339, p.Horario)
+		if err == nil && !at.Before(inicio) && at.Before(fim) {
+			all = append(all, *p)
+		}
+	}
+	s.mu.Unlock()
+	sort.Slice(all, func(i, j int) bool { return all[i].Horario+all[i].EndToEndID < all[j].Horario+all[j].EndToEndID })
+	var out apipix.PixList
+	out.Parametros.Inicio, out.Parametros.Fim = q.Get("inicio"), q.Get("fim")
+	out.Parametros.Paginacao = apipix.Paginacao{PaginaAtual: page, ItensPorPagina: size, QuantidadeDePaginas: max(1, (len(all)+size-1)/size), QuantidadeTotalDeItens: len(all)}
+	if lo := page * size; lo < len(all) {
+		out.Pix = all[lo:min(lo+size, len(all))]
+	}
+	if out.Pix == nil {
+		out.Pix = []apipix.Pix{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func atoi(s string, d int) int {
+	var n int
+	if _, err := fmt.Sscan(s, &n); err != nil {
+		return d
+	}
+	return n
 }
 
 func (s *Sim) putDevolucao(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +424,9 @@ func (s *Sim) simPay(w http.ResponseWriter, r *http.Request) {
 	cob.Status = apipix.CobConcluida
 	cob.Pix = append(cob.Pix, *p)
 	hook := s.webhooks[cob.Chave]
+	if r.URL.Query().Get("webhook") == "false" {
+		hook = "" // a lost notification: only reconciliation (GET /pix) will find this Pix
+	}
 	pc := *p
 	s.mu.Unlock()
 	if hook != "" {
@@ -414,6 +464,41 @@ func (s *Sim) simSettleDevolucao(w http.ResponseWriter, r *http.Request) {
 		_ = s.deliver(r.Context(), hook, pc)
 	}
 	writeJSON(w, http.StatusOK, pc)
+}
+
+// simMED returns part or all of a received Pix under the MED, as the payer's PSP would
+// after a fraud claim: the devolução appears on the Pix with natureza MED_FRAUDE (or the
+// natureza given) already DEVOLVIDO, and the webhook fires.
+func (s *Sim) simMED(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Valor    string `json:"valor"`
+		Natureza string `json:"natureza"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if in.Natureza == "" {
+		in.Natureza = apipix.NaturezaMEDFraude
+	}
+	s.mu.Lock()
+	p, ok := s.pix[r.PathValue("e2eid")]
+	if !ok {
+		s.mu.Unlock()
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if in.Valor == "" {
+		in.Valor = p.Valor
+	}
+	now := s.cfg.Now().UTC().Format(time.RFC3339)
+	d := apipix.Devolucao{ID: "med" + randHex(8), RtrID: s.e2e("D"), Valor: in.Valor, Natureza: in.Natureza, Status: apipix.DevolucaoDevolvido}
+	d.Horario.Solicitacao, d.Horario.Liquidacao = now, now
+	p.Devolucoes = append(p.Devolucoes, d)
+	hook := s.webhooks[p.Chave]
+	pc := *p
+	s.mu.Unlock()
+	if hook != "" {
+		_ = s.deliver(r.Context(), hook, pc)
+	}
+	writeJSON(w, http.StatusOK, d)
 }
 
 // deliver POSTs {webhookUrl}/pix with mutual TLS, retrying a few times like a PSP would.

@@ -1,7 +1,8 @@
 // Command smoke starts the real binaries (schemesim, pixsim, platform) as separate processes
 // with a fresh dev PKI, then drives a card tap, a decline, a Pix payment and a payout through
-// the public API, the terminal path and the PSP's mutual-TLS webhook. It exits non-zero on
-// any failure. Needs DATABASE_URL pointing to an empty database.
+// the public API, the terminal path and the PSP's mutual-TLS webhook. Then it runs the
+// operator commands (chargeback import, card and Pix reconciliation) and scrapes /metrics.
+// It exits non-zero on any failure. Needs DATABASE_URL pointing to an empty database.
 //
 //	DATABASE_URL=postgres://… go run ./cmd/smoke
 package main
@@ -86,7 +87,7 @@ func main() {
 	run(filepath.Join(bin, "devpki"), "-out", pki)
 	p := func(f string) string { return filepath.Join(pki, f) }
 
-	schemeAddr, pixAddr, apiAddr, hookAddr := freePort(), freePort(), freePort(), freePort()
+	schemeAddr, pixAddr, apiAddr, hookAddr, metricsAddr := freePort(), freePort(), freePort(), freePort(), freePort()
 	var procs []*exec.Cmd
 	defer func() {
 		for _, c := range procs {
@@ -112,7 +113,7 @@ func main() {
 		"PIX_TLS_KEY=" + p("platform-client.key"), "PAYOUT_BASE_URL=https://" + pixAddr + "/api/v2",
 		"PIX_WEBHOOK_ADDR=" + hookAddr, "PIX_WEBHOOK_TLS_CA=" + p("ca.pem"), "PIX_WEBHOOK_TLS_CERT=" + p("platform-server.pem"),
 		"PIX_WEBHOOK_TLS_KEY=" + p("platform-server.key"), "PIX_WEBHOOK_PUBLIC_URL=https://" + hookAddr,
-		"BOOTSTRAP_TENANT=" + tenant, "BOOTSTRAP_CAPITAL=100000000",
+		"BOOTSTRAP_TENANT=" + tenant, "BOOTSTRAP_CAPITAL=100000000", "METRICS_ADDR=" + metricsAddr,
 	}
 	procs = append(procs, start(env, "platform", "serve"))
 	waitTCP(apiAddr)
@@ -158,11 +159,11 @@ func main() {
 		_ = json.Unmarshal(out, &r)
 		return r
 	}
-	if r := tap("12990"); r["status"] != "approved" {
-		fail("tap approve: %v", r)
-	} else {
-		ok("tap R$ 129,90 approved, code %s, settlement %v", r["authorization_code"], r["settlement"].(map[string]any)["mode"])
+	approved := tap("12990")
+	if approved["status"] != "approved" {
+		fail("tap approve: %v", approved)
 	}
+	ok("tap R$ 129,90 approved, code %s, settlement %v", approved["authorization_code"], approved["settlement"].(map[string]any)["mode"])
 	if r := tap("4551"); r["status"] != "declined" || r["decline_code"] != "insufficient_funds" {
 		fail("tap decline: %v", r)
 	}
@@ -205,9 +206,61 @@ func main() {
 	}
 	ok("payout of R$ %d,%02d paid via Pix, E2E %s", avail/100, avail%100, po["end_to_end_id"])
 
-	if out, err := exec.Command(filepath.Join(bin, "platform"), "verify-ledger").CombinedOutput(); err != nil {
-		fail("verify-ledger: %v %s", err, out)
+	// ---- operations, through the operator commands ----
+	cli := func(args ...string) []byte {
+		cmd := exec.Command(filepath.Join(bin, "platform"), args...)
+		cmd.Env = append(os.Environ(), env...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			fail("platform %s: %v\n%s", strings.Join(args, " "), err, stderr.String())
+		}
+		return out
 	}
+	rrn, code := approved["rrn"].(string), approved["authorization_code"].(string)
+	cb := filepath.Join(dir, "chargebacks.csv")
+	_ = os.WriteFile(cb, []byte("event,scheme,network_case_id,reason_code,category,amount,rrn,auth_code,evidence_due_at\n"+
+		"opened,visa,SMOKE-CASE-1,10.4,fraud,12990,"+rrn+","+code+","+time.Now().Add(20*24*time.Hour).UTC().Format(time.RFC3339)+"\n"), 0o644)
+	cli("disputes-import", "-tenant", tenant, "-file", cb)
+	cli("disputes-import", "-tenant", tenant, "-file", cb) // applied once
+	var disputes []map[string]any
+	_ = json.Unmarshal(cli("disputes-list", "-tenant", tenant), &disputes)
+	if len(disputes) != 1 || disputes[0]["status"] != "evidence_required" || disputes[0]["ledger"].(map[string]any)["owed_by_merchant"].(float64) != 12990 {
+		fail("disputes after import: %v", disputes)
+	}
+	ok("chargeback imported once; the merchant was paid out, so R$ 129,90 is booked as owed")
+
+	report := filepath.Join(dir, "settlement.csv")
+	_ = os.WriteFile(report, []byte("record_type,brand,rrn,auth_code,amount,interchange,scheme_fees,net,case_id\n"+
+		"sale,visa,"+rrn+","+code+",12990,208,16,12766,\nchargeback,visa,"+rrn+",,12990,,,-12990,SMOKE-CASE-1\n"), 0o644)
+	var run map[string]any
+	_ = json.Unmarshal(cli("recon-card", "-tenant", tenant, "-report", "SMOKE-REPORT-1", "-file", report), &run)
+	if run["status"] != "balanced" {
+		fail("card reconciliation: %v", run)
+	}
+	ok("card settlement report reconciled: %v", run["summary"])
+	brt := time.FixedZone("BRT", -3*3600)
+	_ = json.Unmarshal(cli("recon-pix", "-tenant", tenant, "-date", time.Now().In(brt).Format("2006-01-02")), &run)
+	if run["status"] != "balanced" || run["summary"].(map[string]any)["psp_pix"].(float64) != 1 {
+		fail("pix reconciliation: %v", run)
+	}
+	ok("Pix day reconciled against GET /pix: %v", run["summary"])
+
+	resp, err = http.Get("http://" + metricsAddr + "/metrics")
+	if err != nil {
+		fail("metrics: %v", err)
+	}
+	scrape, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 1`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
+		if !strings.Contains(string(scrape), want) {
+			fail("metrics lack %s:\n%s", want, scrape)
+		}
+	}
+	ok("/metrics exposes authorizations, open disputes and safeguarding headroom")
+
+	cli("verify-ledger")
 	ok("ledger invariants L1–L5 hold")
 	fmt.Println("SMOKE OK")
 }

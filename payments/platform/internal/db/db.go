@@ -89,3 +89,17 @@ func IsUniqueViolation(err error) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && pe.Code == "23505"
 }
+
+// TryLease takes or renews the lease called name for holder until ttl from now. It reports
+// whether holder has the lease; another holder's lease is taken only once it expired.
+func TryLease(ctx context.Context, pool *pgxpool.Pool, name, holder string, ttl time.Duration) (bool, error) {
+	var got string
+	err := pool.QueryRow(ctx, `INSERT INTO job_leases (name, holder, expires_at) VALUES ($1, $2, now() + $3::interval)
+		ON CONFLICT (name) DO UPDATE SET holder = EXCLUDED.holder, expires_at = EXCLUDED.expires_at
+		WHERE job_leases.expires_at < now() OR job_leases.holder = EXCLUDED.holder
+		RETURNING holder`, name, holder, fmt.Sprintf("%d milliseconds", ttl.Milliseconds())).Scan(&got)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && got == holder, err
+}

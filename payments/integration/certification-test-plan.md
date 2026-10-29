@@ -24,6 +24,8 @@ These are the scenarios card hosts and PSPs ask an acquirer or receiving user to
 | C16 | Message encoding | Every sample message of the specification unpacks and repacks byte for byte | `internal/iso8583` (`TestGenericKnownBytes`, `TestRoundTripAllDialects`, `TestBCDOddLengthsAndTrack2`, `TestEBCDICText`, `FuzzUnpack`) | n/a | round-trip report |
 | C17 | No card data in logs | PAN, track 2, PIN block and EMV data masked in every dump | `TestDumpMasksCardData` | grep the logs | log sample |
 | C18 | EMV data | Only allowed tags forwarded in DE 55; the PAN tag never | `internal/emv` `TestFilterForDE55` | n/a | DE 55 dump |
+| C19 | Settlement report | Sales, refunds, chargebacks and reversals matched; interchange and scheme fees trued up; unmatched cash in suspense; a report posts once; a sale settles once | `internal/e2e` `TestOperations` (settlement report) | `platform recon-card` | recon run, journal |
+| C20 | Chargeback lifecycle | Merchant debited at intake (shortfall booked as owed and recovered); refunds refused while open; evidence and representment; won credits back; deadline accepts | `TestOperations` (disputes) | `platform disputes-import` | dispute record, journals, webhooks |
 
 ## Pix (PSP homologation)
 
@@ -37,6 +39,8 @@ These are the scenarios card hosts and PSPs ask an acquirer or receiving user to
 | P6 | Devolução | `PUT /pix/{e2eid}/devolucao/{id}` idempotent on `id`; over-refund refused; settles on the DEVOLVIDO webhook | `TestChargePayWebhookRefund`, `TestEndToEnd` | devolução JSON, journals |
 | P7 | Error responses | Problem details with `violacoes` surfaced to the caller | `TestProblemDetails` | error log |
 | P8 | Payout | Idempotent transfer; failed destination returns the money to the wallet | `TestTransfers`, `TestEndToEnd` | payout record, journals |
+| P9 | Daily reconciliation | `GET /pix` for the day, paged; a Pix whose webhook was lost is credited once | `TestOperations` (Pix) | recon run |
+| P10 | MED return | A devolução with `natureza` `MED_FRAUDE` debits the merchant once and marks the payment refunded | `TestOperations` (MED) | journal, webhook |
 
 ## Platform-wide
 
@@ -48,3 +52,6 @@ These are the scenarios card hosts and PSPs ask an acquirer or receiving user to
 | G4 | Webhook signatures (Standard Webhooks) | `internal/webhooks` `TestSpecVector`; `TestEndToEnd` |
 | G5 | Environment guards (no plain TCP or template dialects outside the sandbox; no software keys in production) | `internal/config` tests |
 | G6 | The real binaries together over sockets and mutual TLS | `go run ./cmd/smoke` (CI) |
+| G7 | Merchant status enforced (no payments or payouts unless active); revoked terminals and API keys refused; every change audited | `TestOperations` (lifecycle, revocation) |
+| G8 | Periodic jobs run on one replica at a time | `TestOperations` (jobs lease) |
+| G9 | Operator commands and `/metrics` against the real binaries | `go run ./cmd/smoke` (chargeback import, card and Pix reconciliation, scrape) |

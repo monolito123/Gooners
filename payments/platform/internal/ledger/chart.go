@@ -20,6 +20,9 @@ const (
 	AccExpenseSchemeFees   = "expense.scheme_fees"
 	AccExpenseFraudLoss    = "expense.fraud_loss"
 	AccEquityCapital       = "equity.capital"
+	// AccReconSuspense holds settlement cash that reconciliation could not match, until an
+	// operator allocates it. It may swing either way and should be zero after resolution.
+	AccReconSuspense = "liability.recon_suspense"
 )
 
 // SchemeReceivable is owed by a scheme (brand) for cleared transactions.
@@ -58,6 +61,7 @@ func (l *Ledger) BootstrapTenant(ctx context.Context, tenantID, currency string)
 		{ID: AccExpenseSchemeFees, Code: "expense.scheme_fees", NormalSide: Debit, Shards: 64},
 		{ID: AccExpenseFraudLoss, Code: "expense.fraud_loss", NormalSide: Debit},
 		{ID: AccEquityCapital, Code: "equity.capital", NormalSide: Credit},
+		{ID: AccReconSuspense, Code: "liability.recon_suspense", NormalSide: Credit, AllowNegative: true},
 	}
 	for _, b := range Brands {
 		accts = append(accts,

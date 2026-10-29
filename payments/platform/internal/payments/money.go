@@ -124,6 +124,9 @@ func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, a
 	if err != nil {
 		return nil, err
 	}
+	if err := requireActive(m); err != nil {
+		return nil, err // restricted merchants' funds stay held
+	}
 	avail, err := s.ledger.Balance(ctx, tenantID, ledger.MerchantWallet(m.ID))
 	if err != nil {
 		return nil, err
@@ -217,6 +220,13 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 	}
 	if s.cfg.Now().After(expires) {
 		return nil, fmt.Errorf("%w: quote expired at %s", ErrExpired, expires.UTC().Format(time.RFC3339))
+	}
+	m, err := s.GetMerchant(ctx, tenantID, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireActive(m); err != nil {
+		return nil, err // restricted after the quote was issued
 	}
 	var lines []advanceLine
 	_ = json.Unmarshal(detail, &lines)
@@ -347,10 +357,19 @@ func (s *Service) ReleaseDue(ctx context.Context, day time.Time) (int, error) {
 	return n, nil
 }
 
-// RecordSchemeSettlement posts cash received from a scheme (from the sponsor's or the
-// scheme's settlement report) against the scheme receivable.
-func (s *Service) RecordSchemeSettlement(ctx context.Context, tenantID, brand, reportID string, amount int64) error {
-	return s.post(ctx, tenantID, "scheme-settlement:"+reportID, "scheme_settlement", reportID, ledger.SchemeSettlement(brand, amount))
+// RecordSchemeSettlement posts cash received from a scheme against the scheme receivable,
+// by hand. ReconcileCardReport is the normal path; this one is for reports that cannot be
+// imported line by line, and it is recorded in the audit trail.
+func (s *Service) RecordSchemeSettlement(ctx context.Context, tenantID, brand, reportID string, amount int64, actor string) error {
+	if actor == "" {
+		return invalid("an actor is required")
+	}
+	if err := s.post(ctx, tenantID, "scheme-settlement:"+reportID, "scheme_settlement", reportID, ledger.SchemeSettlement(brand, amount)); err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		return audit(ctx, tx, tenantID, actor, "settlement.manual", reportID, map[string]any{"brand": brand, "amount": amount})
+	})
 }
 
 // WebhookEndpoint is the API view of a webhook endpoint (the secret is returned once).

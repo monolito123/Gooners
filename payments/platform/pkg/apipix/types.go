@@ -92,12 +92,40 @@ type Pix struct {
 	Devolucoes  []Devolucao `json:"devolucoes,omitempty"`
 }
 
+// Paginacao is the paging block of list responses.
+type Paginacao struct {
+	PaginaAtual            int `json:"paginaAtual"`
+	ItensPorPagina         int `json:"itensPorPagina"`
+	QuantidadeDePaginas    int `json:"quantidadeDePaginas"`
+	QuantidadeTotalDeItens int `json:"quantidadeTotalDeItens"`
+}
+
+// PixList is the response of GET /pix (PixConsultados).
+type PixList struct {
+	Parametros struct {
+		Inicio    string    `json:"inicio"`
+		Fim       string    `json:"fim"`
+		Paginacao Paginacao `json:"paginacao"`
+	} `json:"parametros"`
+	Pix []Pix `json:"pix"`
+}
+
 // DevolucaoRequest is the body of PUT /pix/{e2eid}/devolucao/{id}.
 type DevolucaoRequest struct {
 	Valor     string `json:"valor"`
 	Natureza  string `json:"natureza,omitempty"` // ORIGINAL or RETIRADA
 	Descricao string `json:"descricao,omitempty"`
 }
+
+// Devolução natures. MED returns are initiated by the payer's PSP under the Mecanismo
+// Especial de Devolução (BE08 operational failure, FR01 well-founded suspicion of fraud),
+// not by the receiver, and arrive in the devolucoes of the original Pix.
+const (
+	NaturezaOriginal       = "ORIGINAL"
+	NaturezaRetirada       = "RETIRADA"
+	NaturezaMEDOperacional = "MED_OPERACIONAL"
+	NaturezaMEDFraude      = "MED_FRAUDE"
+)
 
 // Devolução statuses.
 const (

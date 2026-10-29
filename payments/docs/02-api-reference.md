@@ -522,6 +522,8 @@ The CVC is used for one verification and never stored (PCI DSS v4.0.1 requiremen
 
 `POST /v1/disputes/{id}/accept` accepts liability. The held amount is debited for good ([04 §3.4](04-serverless-backend.md#34-posting-catalogue)).
 
+The amount is taken from the merchant when the chargeback arrives, because the scheme debits the acquirer at once. If the available balance is short, the difference is booked as owed by the merchant (`ledger.owed_by_merchant`) and recovered from its next credits. While a dispute is open, refunds on the payment are refused with `409`: the cardholder already has the money back. `GET /v1/disputes` filters by `status` and `merchant_id`. A dispute still in `evidence_required` at `evidence_due_at` is accepted automatically, after a `dispute.evidence_due_soon` warning 48 hours before. Operations files representments with the sponsor and imports the outcomes ([operations runbook §4.6](../integration/operations-runbook.md#46-chargebacks)).
+
 ---
 
 ## 6. Accounts, sub-ledgers and transfers
@@ -768,6 +770,10 @@ Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal'
 
 Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the terminal PKI runs inside the platform. Until then that variant returns `501`.
 
+`POST /v1/terminals/{terminal_id}/revoke` with `{ "reason": "device lost" }` revokes a terminal for good: its certificate stops authenticating and its terminal ID takes no further authorizations. The call is recorded in the audit trail and sends `terminal.revoked`.
+
+A merchant takes payments and receives payouts only while `active`. Risk can make it `restricted` (new payments and payouts refused with `409 merchant_not_active`, balance held) and lift it again; `closed` is final. The status and its reason are on `GET /v1/merchants/{id}` ([operations runbook §4.2](../integration/operations-runbook.md#42-restricting-and-reactivating-a-merchant)).
+
 ---
 
 ## 9. Settlements and proofs
@@ -876,6 +882,9 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `settlement.published` | Daily statement signed and published to Nostr |
 | `payment_method.updated` | Network token lifecycle update (new expiry, reissued card) |
 | `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding |
+| `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
+| `terminal.revoked` | A terminal was revoked (lost device, merchant closed) |
+| `payment_intent.med_returned` | A Pix was returned to the payer under the MED; the merchant was debited |
 | `device.revoked` | A device key was removed from the authorization list |
 | `account.reserve.changed` | Risk changed the merchant's reserve |
 
@@ -925,5 +934,6 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | POST | `/v1/merchants` | api | `merchants:write` | Key | |
 | POST | `/v1/merchants/{id}/devices` | api | `merchants:write` | Key | Root-signed kind 17710 |
 | POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
+| POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
 | GET | `/v1/settlements/{id}` · `/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | |
 | POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |

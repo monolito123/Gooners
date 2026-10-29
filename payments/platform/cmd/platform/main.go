@@ -7,7 +7,23 @@
 //	platform apikey -tenant UUID -name N    create an API key (printed once)
 //	platform verify-ledger                  check ledger invariants L1–L5 (exit 1 on violation)
 //	platform release-due [-date YYYY-MM-DD] release receivables due on a date
-//	platform settle -tenant UUID -brand visa -report ID -amount CENTS   record a scheme settlement
+//	platform settle -tenant UUID -brand visa -report ID -amount CENTS -actor A   record a scheme settlement by hand
+//
+// Operations (payments/integration/operations-runbook.md). Every command that changes
+// access or money needs -actor, the operator's SSO identity, for the audit trail:
+//
+//	platform merchant-status -tenant UUID -merchant ID -status active|restricted|closed -reason R -actor A
+//	platform terminal-revoke -tenant UUID -terminal ID -reason R -actor A
+//	platform apikey-list -tenant UUID
+//	platform apikey-revoke -tenant UUID -id ak_… -reason R -actor A
+//	platform disputes-import -tenant UUID -file chargebacks.csv
+//	platform disputes-list -tenant UUID [-status S]
+//	platform write-off -tenant UUID -merchant ID -reason R -actor A
+//	platform recon-card -tenant UUID -report ID -date YYYY-MM-DD -file report.csv
+//	platform recon-pix -tenant UUID [-date YYYY-MM-DD]
+//	platform recon-exceptions -tenant UUID
+//	platform recon-resolve -tenant UUID -id N -resolution R -actor A
+//	platform recon-allocate -tenant UUID -amount CENTS -to ACCOUNT -reason R -actor A
 package main
 
 import (
@@ -33,7 +49,9 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/config"
 	"github.com/monolito123/Gooners/payments/platform/internal/db"
+	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
+	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
@@ -49,7 +67,7 @@ var log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle")
+		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -69,6 +87,10 @@ func main() {
 	case "settle":
 		err = settle(ctx, os.Args[2:])
 	default:
+		if cmd, ok := opsCommands[os.Args[1]]; ok {
+			err = cmd(ctx, os.Args[2:])
+			break
+		}
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
 	if err != nil {
@@ -206,6 +228,24 @@ func buildRoutes(c *config.Config) ([]*authswitch.Route, []*scheme.Pool, error) 
 	return routes, pools, nil
 }
 
+// pixClients builds the API Pix client and the payout sender, when configured.
+func pixClients(c *config.Config) (*apipix.Client, pixout.Sender, error) {
+	if c.PixBaseURL == "" {
+		return nil, nil, nil
+	}
+	pixTLS, err := loadTLS(c.PixTLS, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pix tls: %w", err)
+	}
+	pix := apipix.New(apipix.Config{BaseURL: c.PixBaseURL, TokenURL: c.PixTokenURL, ClientID: c.PixClientID, ClientSecret: c.PixClientSecret,
+		Scopes: []string{"cob.write", "cob.read", "pix.write", "pix.read", "webhook.write", "webhook.read"}, TLS: pixTLS, Logger: log})
+	var sender pixout.Sender
+	if c.PayoutBaseURL != "" {
+		sender = pixout.NewHTTPSender(pixout.HTTPConfig{BaseURL: c.PayoutBaseURL, Token: pix.Token, TLS: pixTLS})
+	}
+	return pix, sender, nil
+}
+
 func serve(ctx context.Context) error {
 	c, err := config.Load()
 	if err != nil {
@@ -242,16 +282,8 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	deps := payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Switch: sw, Vault: v, Decryptor: dec, Logger: log}
-	if c.PixBaseURL != "" {
-		pixTLS, err := loadTLS(c.PixTLS, false)
-		if err != nil {
-			return fmt.Errorf("pix tls: %w", err)
-		}
-		deps.Pix = apipix.New(apipix.Config{BaseURL: c.PixBaseURL, TokenURL: c.PixTokenURL, ClientID: c.PixClientID, ClientSecret: c.PixClientSecret,
-			Scopes: []string{"cob.write", "cob.read", "pix.write", "pix.read", "webhook.write", "webhook.read"}, TLS: pixTLS, Logger: log})
-		if c.PayoutBaseURL != "" {
-			deps.Payout = pixout.NewHTTPSender(pixout.HTTPConfig{BaseURL: c.PayoutBaseURL, Token: deps.Pix.Token, TLS: pixTLS})
-		}
+	if deps.Pix, deps.Payout, err = pixClients(c); err != nil {
+		return err
 	}
 	if len(c.ReceiptsSecret) == 32 {
 		k, err := nostr.KeysFromSecret(c.ReceiptsSecret)
@@ -280,16 +312,10 @@ func serve(ctx context.Context) error {
 	srv := api.New(api.Config{Env: c.Env}, svc, pool, log)
 	disp := &webhooks.Dispatcher{Pool: pool, Logger: log}
 	go disp.Run(ctx, time.Second)
-	go every(ctx, time.Minute, func() {
-		if n, err := svc.ReleaseDue(ctx, time.Now()); err != nil {
-			log.Error("release due", "err", err)
-		} else if n > 0 {
-			log.Info("released receivables", "count", n)
-		}
-		if deps.Payout != nil {
-			_ = svc.ReconcilePayouts(ctx)
-		}
-	})
+	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])
+	go every(ctx, time.Minute, func() { svc.RunPeriodic(ctx, holder) })
+	svc.RegisterMetrics(metrics.Default)
+	metrics.Default.Logger = log
 
 	servers := []*http.Server{{Addr: c.HTTPAddr, Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}}
 	if c.HTTPTLS != nil {
@@ -312,6 +338,11 @@ func serve(ctx context.Context) error {
 		}
 		t.MinVersion = tls.VersionTLS12 // PSPs' webhook clients may still negotiate TLS 1.2
 		servers = append(servers, &http.Server{Addr: c.PixWebhookAddr, Handler: srv.PixWebhookHandler(), TLSConfig: t, ReadHeaderTimeout: 5 * time.Second})
+	}
+	if c.MetricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", metrics.Default.Handler())
+		servers = append(servers, &http.Server{Addr: c.MetricsAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second})
 	}
 	errc := make(chan error, len(servers))
 	for _, s := range servers {
@@ -379,12 +410,21 @@ func settle(ctx context.Context, args []string) error {
 	brand := fs.String("brand", "visa", "scheme")
 	report := fs.String("report", "", "settlement report ID (idempotency key)")
 	amount := fs.Int64("amount", 0, "amount received, centavos")
+	actor := fs.String("actor", "", "operator identity, kept in the audit trail")
 	_ = fs.Parse(args)
-	if *tenant == "" || *report == "" || *amount <= 0 {
-		return errors.New("-tenant, -report and -amount are required")
+	if *tenant == "" || *report == "" || *amount <= 0 || *actor == "" {
+		return errors.New("-tenant, -report, -amount and -actor are required (recon-card is the normal path)")
 	}
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
-		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount)
+		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
 	})
+}
+
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return "platform"
+	}
+	return h
 }

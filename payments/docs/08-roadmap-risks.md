@@ -36,7 +36,7 @@ gantt
   BaaS card issuing                      :p3c, 2028-09, 9M
 ```
 
-**Where Phase 0 stands.** The integration layer exists as a tested reference implementation in [`platform/`](../platform): the ISO 8583 switch with sessions, reversals and store-and-forward; the ledger; Pix through API Pix with webhooks and payouts; receipts; the HTTP API; and simulators of the card host and the PSP. What remains for Phases 0 and 1 is counterparty work (dialect transcription, homologation, certification) and the production key-custody adapters ([`integration/`](../integration)).
+**Where Phase 0 stands.** The integration layer exists as a tested reference implementation in [`platform/`](../platform): the ISO 8583 switch with sessions, reversals and store-and-forward; the ledger; Pix through API Pix with webhooks, payouts, daily reconciliation and MED returns; receipts; the HTTP API; the operations layer (merchant lifecycle, revocations, chargebacks, settlement reconciliation, audit trail, metrics, [runbook](../integration/operations-runbook.md)); and simulators of the card host and the PSP. What remains for Phases 0 and 1 is counterparty work (dialect transcription, homologation, certification) and the production key-custody adapters ([`integration/`](../integration)).
 
 | Phase | Exit criteria |
 |-------|---------------|
@@ -102,5 +102,5 @@ L = likelihood, I = impact (L / M / H).
 - [ ] Provider-loss game day passed in production with no lost writes.
 - [ ] PCI DSS ROC, MPoC listing (vendor or own) and 3DS certification in hand.
 - [ ] Penetration test of the apps, APIs and CDE, with all high findings fixed.
-- [ ] Runbooks for every alert, and on-call rotations staffed.
+- [ ] Runbooks for every alert, and on-call rotations staffed. (The alerts and their first responses are in the [operations runbook](../integration/operations-runbook.md#3-alerts); the rotation is not.)
 - [ ] `npm run check` green in CI for this specification.

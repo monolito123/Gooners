@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
+	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 )
@@ -51,6 +53,15 @@ type principal struct {
 	tenantID string
 	scopes   map[string]bool
 	terminal string // set when authenticated by a terminal certificate
+	keyID    string // set when authenticated by an API key
+}
+
+// actor names the caller in the audit trail.
+func (p principal) actor() string {
+	if p.terminal != "" {
+		return "terminal:" + p.terminal
+	}
+	return "api:" + p.keyID
 }
 
 type ctxKey struct{}
@@ -67,11 +78,12 @@ func (s *Server) Handler() http.Handler {
 		if idem {
 			h = s.idempotent(h)
 		}
-		mux.Handle(pattern, s.authenticate(scope, h))
+		mux.Handle(pattern, instrument(pattern, s.authenticate(scope, h)))
 	}
 	route("POST /v1/merchants", "merchants:write", true, s.createMerchant)
 	route("GET /v1/merchants/{id}", "merchants:write", false, s.getMerchant)
 	route("POST /v1/terminals", "merchants:write", true, s.registerTerminal)
+	route("POST /v1/terminals/{id}/revoke", "merchants:write", true, s.revokeTerminal)
 	route("POST /v1/payment-intents", "payments:write", true, s.createIntent)
 	route("GET /v1/payment-intents/{id}", "payments:read", false, s.getIntent)
 	route("POST /v1/payment-intents/{id}/confirm", "payments:write", true, s.confirmIntent)
@@ -84,6 +96,10 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/accounts/{id}/entries", "accounts:read", false, s.entries)
 	route("POST /v1/payouts/quotes", "payouts:write", true, s.quote)
 	route("POST /v1/payouts", "payouts:write", true, s.payout)
+	route("GET /v1/disputes", "disputes:write", false, s.listDisputes)
+	route("GET /v1/disputes/{id}", "disputes:write", false, s.getDispute)
+	route("POST /v1/disputes/{id}/evidence", "disputes:write", true, s.disputeEvidence)
+	route("POST /v1/disputes/{id}/accept", "disputes:write", true, s.acceptDispute)
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
 	return s.recover(s.requestID(mux))
 }
@@ -107,6 +123,41 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------- middleware
+
+var (
+	mRequests = metrics.Default.Counter("goonerspay_http_requests_total", "API requests by route and status code.", "route", "code")
+	mSeconds  = metrics.Default.Counter("goonerspay_http_request_seconds_total", "Time spent serving API requests, by route.", "route")
+)
+
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.code == 0 {
+		w.code = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// instrument counts requests per route pattern (never per raw path, which holds IDs).
+func instrument(pattern string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(sw, r)
+		mRequests.Inc(pattern, strconv.Itoa(sw.code))
+		mSeconds.Add(time.Since(start).Seconds(), pattern)
+	})
+}
 
 func (s *Server) requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +226,7 @@ func (s *Server) authenticate(scope string, next http.HandlerFunc) http.Handler 
 			problem(w, r, http.StatusUnauthorized, "unauthorized", "Invalid API key", "")
 			return
 		}
-		p := principal{tenantID: tenant, scopes: map[string]bool{}}
+		p := principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}
 		for _, sc := range scopes {
 			p.scopes[sc] = true
 		}
@@ -292,6 +343,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusNotFound, "not-found", "Not found", err.Error())
 	case errors.Is(err, payments.ErrInvalid):
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", err.Error())
+	case errors.Is(err, payments.ErrMerchantInactive):
+		problem(w, r, http.StatusConflict, "merchant-not-active", "The merchant is not active", err.Error())
 	case errors.Is(err, payments.ErrConflict):
 		problem(w, r, http.StatusConflict, "conflict", "Conflict", err.Error())
 	case errors.Is(err, payments.ErrFunds):

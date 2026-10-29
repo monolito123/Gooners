@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/monolito123/Gooners/payments/platform/dialects"
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
@@ -60,6 +62,8 @@ type stack struct {
 	hooks    chan delivered
 	hookSec  string
 	dispatch *webhooks.Dispatcher
+	svc      *payments.Service
+	pool     *pgxpool.Pool
 }
 
 type delivered struct {
@@ -123,6 +127,7 @@ func newStack(t *testing.T) *stack {
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Logger: log,
 	})
 	st.ledger = ledger.New(pool, log)
+	st.svc, st.pool = svc, pool
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {
 		t.Fatal(err)
 	}

@@ -80,12 +80,12 @@ Run with `PLATFORM_ENV=certification`. The platform refuses plain TCP and unveri
 
 Go through [certification-test-plan.md](certification-test-plan.md) with the sponsor's test cards. Every scenario there already runs against `schemesim`, so differences seen on the test host point to a dialect or field-mapping difference, not to switch logic.
 
-## Step 5: settlement and reconciliation
+## Step 5: settlement, chargebacks and reconciliation
 
-The sponsor pays the platform per its schedule (credit D+30 per installment, debit D+1). For each settlement report:
+The sponsor pays the platform per its schedule (credit D+30 per installment, debit D+1) and reports chargebacks as they arrive. Write one converter per sponsor from its report and chargeback formats to the platform's two import formats ([operations runbook §2](operations-runbook.md#2-import-formats)). That converter is the only sponsor-specific code. Then:
 
-1. Parse the report (format from the sponsor) and match each line to an authorization by RRN and authorization code. Unmatched lines go to an exception queue.
-2. Post the cash received per brand: `platform settle -tenant … -brand visa -report <report id> -amount <centavos>`. The report ID is the idempotency key, so reprocessing a file never double-posts.
+1. **Settlement report:** `platform recon-card -tenant … -report <report id> -date … -file report.csv`. Each line is matched to an authorization by RRN and authorization code, to a refund, or to a dispute by case ID. One journal per report posts the cash received, clears the scheme receivables and payables, and trues up interchange and scheme fees against the estimates booked at capture. The report ID is the idempotency key, so a report is never posted twice. Unmatched lines wait in `liability.recon_suspense` as exceptions, and captures no report has settled after two days are flagged too ([runbook §5](operations-runbook.md#5-reconciliation-exceptions)).
+2. **Chargebacks:** `platform disputes-import -tenant … -file chargebacks.csv` opens disputes (debiting the merchant at once) and applies outcomes (`won`, `lost`, `pre_arbitration`). Merchants answer through `POST /v1/disputes/{id}/evidence`. Operations files the representments with the sponsor ([runbook §4.6](operations-runbook.md#46-chargebacks)).
 3. Investigate any difference between the report's net and the ledger's `scheme_receivable` balance for that date (invariant 3 of [01 §8.3](../docs/01-acquiring-engine.md#83-reconciliation-invariants)).
 
-Receivables not advanced instantly are released to merchants on their settlement date by the scheduler (`platform release-due` does the same on demand).
+`platform settle` still posts a settlement total by hand (audited) for a report that cannot be imported line by line. Receivables not advanced instantly are released to merchants on their settlement date by the scheduler (`platform release-due` does the same on demand).

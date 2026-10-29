@@ -153,6 +153,7 @@ type Merchant struct {
 	RootNpub   string       `json:"root_npub,omitempty"`
 	Plan       pricing.Plan `json:"plan"`
 	Status     string       `json:"status"`
+	StatusNote string       `json:"status_reason,omitempty"`
 	rootPubHex string
 	document   string
 	pixKey     string
@@ -213,7 +214,7 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 	m := &Merchant{Object: "merchant"}
 	var plan []byte
-	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status)
+	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -227,7 +228,7 @@ func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 	return m, nil
 }
 
-const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status`
+const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, '')`
 
 // GetMerchant loads a merchant.
 func (s *Service) GetMerchant(ctx context.Context, tenantID, id string) (*Merchant, error) {
@@ -250,8 +251,12 @@ type Terminal struct {
 // RegisterTerminal creates a terminal ID (DE 41). Certificate issuance after attestation is
 // the job of the terminal PKI (docs/05 §2.4); certFingerprint binds the terminal to it.
 func (s *Service) RegisterTerminal(ctx context.Context, tenantID, merchantID, typ, certFingerprint string) (*Terminal, error) {
-	if _, err := s.GetMerchant(ctx, tenantID, merchantID); err != nil {
+	m, err := s.GetMerchant(ctx, tenantID, merchantID)
+	if err != nil {
 		return nil, err
+	}
+	if m.Status != MerchantActive && m.Status != MerchantKYBInReview {
+		return nil, fmt.Errorf("%w: merchant %s is %s", ErrMerchantInactive, m.ID, m.Status)
 	}
 	if typ == "" {
 		typ = "mpoc_cots"

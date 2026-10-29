@@ -15,17 +15,19 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/authswitch` | Canonical authorization → ISO 8583; response-code policy with Visa categories and Mastercard advice codes; timeout → reversal with store-and-forward (0400, then 0420 advices); partial reversals (DE 95); idempotent replays; expected-margin routing with cascade only when nothing reached the network | [01 §3–§6](../docs/01-acquiring-engine.md#6-smart-transaction-routing) |
 | `internal/ledger` | Serializable, idempotent double-entry posting; shards for hot accounts; no-negative rule; outbox; invariant verifier L1–L5 | [04 §3](../docs/04-serverless-backend.md#3-ledger) |
 | `pkg/brcode` | Pix BR Code encoder/decoder with CRC16, checked against the Banco Central's published examples | [02 §4.4](../docs/02-api-reference.md#44-pix) |
-| `pkg/apipix` | Client for the Banco Central **API Pix** standard (v2): OAuth2 client credentials over mutual TLS, `cob`, `pix`, `devolucao`, `webhook`; mTLS webhook handler | [integration/pix.md](../integration/pix.md) |
+| `pkg/apipix` | Client for the Banco Central **API Pix** standard (v2): OAuth2 client credentials over mutual TLS, `cob`, `pix` (including the paged `GET /pix` list), `devolucao`, `webhook`; mTLS webhook handler | [integration/pix.md](../integration/pix.md) |
 | `internal/pixout` | Seam for outgoing Pix (not covered by API Pix), with a generic partner-bank adapter | [integration/pix.md](../integration/pix.md) |
 | `pkg/nostr`, `internal/receipts` | NIP-01 / BIP-340 / NIP-44 v2 / NIP-59, reproducing the JavaScript examples byte for byte; receipt issuer (claim key, merchant copy, customer copy) and relay publisher | [03](../docs/03-nostr-layer.md) |
 | `internal/vault` | PANs under per-record AES-256-GCM data keys wrapped by a KEK; HMAC fingerprints | [04 §4.2](../docs/04-serverless-backend.md#42-key-management) |
 | `internal/carddata` | Seam for terminal data decryption (payment HSM), plus a development format | [04 §4.3](../docs/04-serverless-backend.md#43-end-to-end-encryption) |
 | `internal/pricing` | MDR, cost estimates, ANBIMA national holidays, DU/252 advance fees | [07 §1.3](../docs/07-enhancements.md#13-pricing-an-advance) |
 | `internal/payments`, `internal/api` | Business flows and the HTTP API: API keys with scopes, terminal certificates, idempotency keys, Problem Details | [02](../docs/02-api-reference.md) |
+| `internal/payments` (operations) | Merchant lifecycle, terminal and API key revocation with an audit trail; chargebacks (intake, evidence, outcomes, deadlines, shortfall recovery); settlement-report and daily Pix reconciliation with true-ups, suspense and an exception queue; MED returns; periodic jobs under a lease | [runbook](../integration/operations-runbook.md) |
+| `internal/metrics` | Prometheus text exposition: request, authorization and dispute counters; backlog, exception, safeguarding-headroom and shortfall gauges | [runbook §3](../integration/operations-runbook.md#3-alerts) |
 | `internal/webhooks` | Standard Webhooks delivery with retries; matches the spec's test vector | [02 §10](../docs/02-api-reference.md#10-webhooks) |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
 
-Binaries (`cmd/`): `platform` (serve, migrate, apikey, verify-ledger, release-due, settle), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator) and `smoke` (runs all of them together).
+Binaries (`cmd/`): `platform` (serve, migrate, apikey, verify-ledger, release-due, settle, and the operator commands below), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator) and `smoke` (runs all of them together).
 
 ## Quick start
 
@@ -64,7 +66,7 @@ go run ./cmd/tapsim -key $KEY -merchant mer_… -terminal T… -amount 12990 \
 
 It answers 0800 sign-on and echo, sends host-initiated echoes on request, and refuses financial messages before sign-on (`-require-sign-on`).
 
-**`pixsim`** implements the PSP side of API Pix (OAuth2, `PUT/GET /cob/{txid}`, `GET /pix/{e2eid}`, `PUT/GET /pix/{e2eid}/devolucao/{id}`, `PUT/GET /webhook/{chave}`) with mutual TLS, the generic transfer contract of `internal/pixout`, and two control endpoints: `POST /sim/pagar/{txid}` (a payer pays) and `POST /sim/devolucao/{e2eid}/{id}/liquidar` (a refund settles). Both send the webhook to `{webhookUrl}/pix` over mutual TLS.
+**`pixsim`** implements the PSP side of API Pix (OAuth2, `PUT/GET /cob/{txid}`, `GET /pix` with paging, `GET /pix/{e2eid}`, `PUT/GET /pix/{e2eid}/devolucao/{id}`, `PUT/GET /webhook/{chave}`) with mutual TLS, the generic transfer contract of `internal/pixout`, and three control endpoints: `POST /sim/pagar/{txid}` (a payer pays; `?webhook=false` loses the notification), `POST /sim/devolucao/{e2eid}/{id}/liquidar` (a refund settles) and `POST /sim/med/{e2eid}` (the payer's PSP returns the Pix under the MED). They send the webhook to `{webhookUrl}/pix` over mutual TLS.
 
 ## Configuration
 
@@ -85,6 +87,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `CARDDATA_DEV_KEY_HEX` | Development terminal format: **sandbox and certification only** |
 | `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page |
 | `BOOTSTRAP_TENANT`, `BOOTSTRAP_CAPITAL` | Create a tenant's accounts at start; opening capital in the sandbox only |
+| `METRICS_ADDR` | Internal listener for `GET /metrics` (Prometheus). Keep it off the public network |
 
 | Guard | sandbox | certification | production |
 |-------|:-------:|:-------------:|:----------:|
@@ -95,7 +98,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 
 ## Implemented API surface
 
-Implemented and covered by the end-to-end tests: `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `POST /v1/webhook-endpoints`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
+Implemented and covered by the end-to-end tests: `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
 
 Specified but not built yet. The API answers these explicitly rather than half-working:
 
@@ -104,7 +107,8 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 | Card-not-present (`confirm` with a card) | `501` | EMVCo-certified 3DS server, network tokens ([01 §4–§5](../docs/01-acquiring-engine.md#4-emv-3-d-secure-card-not-present)) |
 | Split payments | `422 splits_not_supported` | Multi-recipient capture journals |
 | `/oauth2/token` (mTLS-bound tokens), `/v1/auth/nostr` (NIP-98) | API keys with scopes | Token service at the edge |
-| Disputes, `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers`, settlement proofs, webhook replay | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
+| Pre-dispute alerts (Visa RDR, Ethoca), arbitration | Handled by operations at the sponsor | Alert feeds through the sponsor |
+| `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers`, settlement proofs, webhook replay | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
 | CSR signing on `/v1/terminals` | `501` | Terminal PKI after attestation |
 
 ## Verification
@@ -119,6 +123,20 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 - Nostr cross-vectors with the JavaScript implementation;
 - webhook signatures against the spec's vector;
 - configuration guards;
-- the full API flow, ending with L1–L5 and verified webhook signatures.
+- the full API flow, ending with L1–L5 and verified webhook signatures;
+- operations: merchant lifecycle and revocations with their audit rows, a chargeback larger than the balance (booked as owed, recovered after the win), merchant acceptance and deadline expiry, a settlement report with true-ups, suspense, duplicate and replay protection, a lost Pix webhook healed by reconciliation, a MED return applied once, the jobs lease and the metrics.
 
-CI (`.github/workflows/payments-platform.yml`) adds staticcheck, short fuzzing, the multi-process smoke test, govulncheck, and the Docker image build.
+CI (`.github/workflows/payments-platform.yml`) adds staticcheck, short fuzzing, the multi-process smoke test (which also runs the operator commands and scrapes `/metrics`), govulncheck, and the Docker image build.
+
+## Operations
+
+Operators run the platform with subcommands of the same binary, in the same environment as `serve`. Commands that change access or money take `-actor` (the operator's SSO identity) and `-reason`, recorded in `ops_audit`. [The runbook](../integration/operations-runbook.md) has the daily schedule, the import formats, the alerts and the procedures.
+
+| Command | Does |
+|---------|------|
+| `merchant-status` | KYB approval or rejection, restriction, reactivation, closure |
+| `terminal-revoke`, `apikey-list`, `apikey-revoke` | Lost devices and leaked keys |
+| `disputes-import`, `disputes-list`, `write-off` | Chargeback notices from the sponsor; what a closed merchant could not repay |
+| `recon-card`, `recon-pix`, `recon-exceptions`, `recon-allocate`, `recon-resolve` | Settlement-report and daily Pix reconciliation, and the exception queue |
+
+`serve` runs the periodic jobs every minute on one replica at a time (scheduled releases, payout outcomes, dispute deadlines, shortfall recovery, and the previous day's Pix reconciliation after 06:00 Brasília time).

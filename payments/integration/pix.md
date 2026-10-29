@@ -55,14 +55,19 @@ type Sender interface {
 
 `pixout.HTTPSender` implements a small generic contract (`POST /pagamentos/pix`, `GET /pagamentos/pix/{id}`), which is what `pixsim` serves. For a real bank, write an adapter that maps `Transfer` to the bank's request (amount as `"123.45"`, key type and key, idempotency header or field), maps its statuses to `EM_PROCESSAMENTO`, `REALIZADO` and `NAO_REALIZADO`, and returns `pixout.ErrRejected` for definitive refusals. Network errors leave the payout `processing`, and `ReconcilePayouts` resolves it with `Get`. The ledger never pays twice: the wallet is debited once, by the payout's own idempotency key.
 
+### Reconciliation and MED returns
+
+Every day at 06:00 (Brasília time) the platform lists the previous day's Pix with `GET /pix?inicio=…&fim=…` (paged with `paginacao.paginaAtual`) and replays each one through the same path as the webhook. That path re-reads the Pix with `GET /pix/{e2eid}` and is idempotent, so a missed webhook is credited and nothing is credited twice. Pix without a known `txid`, amounts that differ from the charge, and credits the PSP does not list become exceptions. `platform recon-pix -tenant … -date …` runs the same thing on demand.
+
+Devoluções the platform did not request, with `natureza` `MED_OPERACIONAL` (BE08) or `MED_FRAUDE` (FR01), are returns made by the payer's PSP under the Mecanismo Especial de Devolução. They debit the merchant (whatever its balance cannot cover is booked as owed and recovered from later credits), mark the payment refunded and send `payment_intent.med_returned` ([runbook §4.7](operations-runbook.md#47-pix-returned-under-the-med)). `pixsim` can play one: `POST /sim/med/{e2eid}`.
+
 ### Gaps to close before production volume
 
 | Gap | What to add |
 |-----|-------------|
-| **MED** (Mecanismo Especial de Devolução) returns started by the payer's PSP appear as devoluções with `natureza` `MED_OPERACIONAL` / `MED_FRAUDE`, which the platform did not request | Handle them in `applyDevolucoes`: debit the merchant (or `merchant_recoverable`), open a risk case |
-| Daily reconciliation | List `GET /pix?inicio=…&fim=…` and compare with captured intents and ledger postings |
 | Due-date charges (`cobv`), Pix Automático (`rec`, `cobr`) | Same client pattern, new endpoints of the same standard |
-| Static QR codes for offline sale (docs/03 §7.2) | `brcode.Encode` already supports static codes. Add their reconciliation by `txid` |
+| Static QR codes for offline sale (docs/03 §7.2) | `brcode.Encode` already supports static codes. Allocate their Pix (they arrive without a charge `txid`) by the code's `txid` field |
+| MED claims against the platform as the payer's PSP | Only relevant with outgoing Pix volume under Model B |
 
 ## Model B: direct SPI participant (future)
 

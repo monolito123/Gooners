@@ -151,7 +151,11 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 	if in.Installments > 1 && in.InstallmentType != "merchant" && in.InstallmentType != "issuer" {
 		return nil, invalid("installments above 1 need type merchant or issuer")
 	}
-	if _, err := s.GetMerchant(ctx, tenantID, in.MerchantID); err != nil {
+	m, err := s.GetMerchant(ctx, tenantID, in.MerchantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireActive(m); err != nil {
 		return nil, err
 	}
 	if len(in.StatementDescriptor) > 22 {
@@ -246,8 +250,8 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 	if err != nil {
 		return nil, err
 	}
-	if m.Status != "active" {
-		return nil, fmt.Errorf("%w: merchant is %s", ErrConflict, m.Status)
+	if err := requireActive(m); err != nil {
+		return nil, err
 	}
 	if err := s.claim(ctx, tenantID, pi.ID, StatusProcessing, StatusRequiresPaymentMethod); err != nil {
 		return nil, err
@@ -310,6 +314,7 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 			out.Status = "pin_required"
 		}
 		fail(code)
+		mAuthorizations.Inc(out.Status)
 		s.notify(ctx, tenantID, "payment_intent.failed", map[string]any{"id": pi.ID, "decline_code": code})
 		return out, nil
 	}
@@ -319,6 +324,7 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 		return nil, err
 	}
 	out.Status = "approved"
+	mAuthorizations.Inc(out.Status)
 	out.Settlement = settle
 	out.Receipt = s.issueReceipt(ctx, tenantID, pi, m, map[string]any{
 		"type": "card", "brand": brand, "funding": funding, "last4": stored.Last4, "entry_mode": "contactless", "cvm": "no_cvm",
@@ -417,11 +423,14 @@ func (s *Service) ConfirmPix(ctx context.Context, tenantID, id string) (*Intent,
 	if pi.Status == StatusRequiresAction {
 		return pi, nil // idempotent: the same QR
 	}
-	if err := s.claim(ctx, tenantID, id, StatusProcessing, StatusRequiresPaymentMethod); err != nil {
-		return nil, err
-	}
 	m, err := s.GetMerchant(ctx, tenantID, pi.MerchantID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireActive(m); err != nil {
+		return nil, err
+	}
+	if err := s.claim(ctx, tenantID, id, StatusProcessing, StatusRequiresPaymentMethod); err != nil {
 		return nil, err
 	}
 	txid := strings.ReplaceAll(strings.ToLower(pi.ID[3:]), "_", "") + "px" // 26 + 2 = 28 alphanumerics, derived from the intent
@@ -502,6 +511,7 @@ func (s *Service) OnPix(ctx context.Context, hint apipix.Pix) error {
 		return err
 	}
 	if tag.RowsAffected() == 1 {
+		mPixReceived.Inc()
 		pi.e2e = p.EndToEndID
 		s.issueReceipt(ctx, tenantID, pi, m, map[string]any{"type": "pix", "end_to_end_id": p.EndToEndID}, nil, "")
 		s.notify(ctx, tenantID, "payment_intent.captured", map[string]any{"id": pi.ID, "object": "payment_intent", "status": StatusCaptured, "amount": amount, "currency": pi.Currency, "merchant_id": pi.MerchantID})
@@ -509,10 +519,19 @@ func (s *Service) OnPix(ctx context.Context, hint apipix.Pix) error {
 	return nil
 }
 
-// applyDevolucoes settles Pix refunds whose final status arrived with the webhook.
+// applyDevolucoes settles Pix refunds whose final status arrived with the webhook, and
+// applies returns the payer's PSP made under the MED.
 func (s *Service) applyDevolucoes(ctx context.Context, pi *Intent, p *apipix.Pix) error {
 	for _, d := range p.Devolucoes {
 		if d.Status != apipix.DevolucaoDevolvido && d.Status != apipix.DevolucaoNaoRealizado {
+			continue
+		}
+		if d.Natureza == apipix.NaturezaMEDFraude || d.Natureza == apipix.NaturezaMEDOperacional {
+			if d.Status == apipix.DevolucaoDevolvido {
+				if err := s.applyMED(ctx, pi, p.EndToEndID, d); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		var refundID string
@@ -540,6 +559,56 @@ func (s *Service) applyDevolucoes(ctx context.Context, pi *Intent, p *apipix.Pix
 			s.notify(ctx, pi.tenantID, "refund.failed", map[string]any{"id": refundID, "payment_intent_id": pi.ID})
 		}
 	}
+	return nil
+}
+
+// applyMED debits the merchant for a Pix the payer's PSP returned under the Mecanismo
+// Especial de Devolução. The money already left the platform's account, so whatever the
+// merchant's balance cannot cover is booked as owed (and recovered by RecoverShortfalls).
+func (s *Service) applyMED(ctx context.Context, pi *Intent, e2e string, d apipix.Devolucao) error {
+	amount, err := apipix.ParseValor(d.Valor)
+	if err != nil {
+		return err
+	}
+	key := "med:" + e2e + ":" + d.ID
+	var done bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM journals WHERE tenant_id = $1 AND idempotency_key = $2)`, pi.tenantID, key).Scan(&done); err != nil || done {
+		return err
+	}
+	for attempt := 0; ; attempt++ {
+		avail, err := s.ledger.Balance(ctx, pi.tenantID, ledger.MerchantWallet(pi.MerchantID))
+		if err != nil {
+			return err
+		}
+		w := min(max(avail, 0), amount)
+		ps := []ledger.Posting{}
+		if w > 0 {
+			ps = append(ps, ledger.Posting{Account: ledger.MerchantWallet(pi.MerchantID), Direction: ledger.Debit, Amount: w},
+				ledger.Posting{Account: ledger.AccSafeguardingReserve, Direction: ledger.Credit, Amount: w})
+		}
+		if r := amount - w; r > 0 {
+			ps = append(ps, ledger.Posting{Account: ledger.MerchantRecoverable(pi.MerchantID), Direction: ledger.Debit, Amount: r},
+				ledger.Posting{Account: ledger.AccSettlementBank, Direction: ledger.Credit, Amount: r})
+		}
+		err = s.post(ctx, pi.tenantID, key, "pix_med_return", pi.ID, ps)
+		if errors.Is(err, ledger.ErrIdempotencyConflict) {
+			return nil // posted by a concurrent delivery with the balance it saw
+		}
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrFunds) || attempt == 2 {
+			return err
+		}
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET amount_refunded = LEAST(amount_captured, amount_refunded + $3),
+		status = CASE WHEN amount_refunded + $3 >= amount_captured THEN 'refunded' ELSE 'partially_refunded' END, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2`, pi.tenantID, pi.ID, amount); err != nil {
+		return err
+	}
+	mMED.Inc(d.Natureza)
+	s.log.Warn("pix returned under MED", "payment_intent", pi.ID, "e2e", e2e, "natureza", d.Natureza, "amount", amount)
+	s.notify(ctx, pi.tenantID, "payment_intent.med_returned", map[string]any{"id": pi.ID, "object": "payment_intent", "amount": amount, "natureza": d.Natureza, "devolucao_id": d.ID})
 	return nil
 }
 
@@ -648,6 +717,15 @@ func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amoun
 	}
 	if amount > pi.AmountCaptured-pi.AmountRefunded {
 		return nil, invalid("amount exceeds the refundable balance")
+	}
+	var disputed bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM disputes WHERE tenant_id = $1 AND payment_intent_id = $2 AND status IN ('evidence_required', 'represented', 'pre_arbitration'))`,
+		tenantID, piID).Scan(&disputed); err != nil {
+		return nil, err
+	}
+	if disputed {
+		// The chargeback already returns the money to the cardholder; a refund would pay twice.
+		return nil, fmt.Errorf("%w: the payment has an open dispute", ErrConflict)
 	}
 	// Reserve the refundable amount atomically, so two concurrent refunds cannot exceed it.
 	tag, err := s.pool.Exec(ctx, `UPDATE payment_intents SET amount_refunded = amount_refunded + $3, updated_at = now()

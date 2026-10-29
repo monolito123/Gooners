@@ -343,7 +343,12 @@ The worked example is a R$ 129,90 Visa credit tap. The merchant's MDR is 3.19% (
 | `safeguard_release` | `settlement_bank` 12415 | `safeguarding_reserve` 12415 | The liability left, so the reserve shrinks back to own cash |
 | `scheme_settlement` (D+30) | `settlement_bank` 12766 | `scheme_receivable.visa` 12766 | Closes the receivable |
 | `refund` | `merchant_wallet.m` | `scheme_payable.visa` | Funded from the merchant's balance ([02 §4.6](02-api-reference.md#46-capture-cancel-refund)) |
-| `chargeback` | `merchant_wallet.m` (or `merchant_recoverable.m` for the shortfall) | `scheme_payable.visa` | Reversed by `chargeback_won` |
+| `chargeback` | `merchant_wallet.m` (or `merchant_recoverable.m` for the shortfall) | `scheme_payable.visa` | The wallet part also releases its safeguarding (`safeguard_release`) |
+| `chargeback_won` | `scheme_receivable.visa` | `merchant_wallet.m` | The scheme owes the money back until a settlement's reversal line; safeguarded at once |
+| `shortfall_recovery` | `merchant_wallet.m` | `merchant_recoverable.m` | Collects what a merchant owes from its next credits, automatically |
+| `shortfall_write_off` | `expense.fraud_loss` | `merchant_recoverable.m` | Operator decision, audited |
+| `pix_med_return` | `merchant_wallet.m` (or `merchant_recoverable.m`) | `safeguarding_reserve` (or `settlement_bank` for the shortfall) | A Pix the payer's PSP returned under the MED |
+| `scheme_settlement` (report) | `settlement_bank` · `scheme_payable` (refunds, chargebacks) · true-ups | `scheme_receivable` (sales, reversals) · true-ups | One journal per settlement report; unmatched cash goes to `recon_suspense` ([runbook §2.1](../integration/operations-runbook.md#21-settlement-report)) |
 | `reserve_hold` / `reserve_release` | `merchant_wallet.m` / `merchant_reserve.m` | `merchant_reserve.m` / `merchant_wallet.m` | Risk-driven |
 | `interchange_true_up` | `expense.interchange` or `scheme_receivable` | the other | Estimated interchange at capture vs actual at settlement |
 

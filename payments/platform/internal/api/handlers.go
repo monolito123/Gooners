@@ -117,6 +117,67 @@ func (s *Server) registerTerminal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
+func (s *Server) revokeTerminal(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p := from(r.Context())
+	t, err := s.svc.RevokeTerminal(r.Context(), p.tenantID, r.PathValue("id"), in.Reason, p.actor())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+func (s *Server) listDisputes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	ds, err := s.svc.ListDisputes(r.Context(), from(r.Context()).tenantID, q.Get("status"), q.Get("merchant_id"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if ds == nil {
+		ds = []*payments.Dispute{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": ds, "has_more": false, "next_cursor": nil})
+}
+
+func (s *Server) getDispute(w http.ResponseWriter, r *http.Request) {
+	d, err := s.svc.GetDispute(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) disputeEvidence(w http.ResponseWriter, r *http.Request) {
+	var in payments.EvidenceInput
+	if !decode(w, r, &in) {
+		return
+	}
+	d, err := s.svc.SubmitEvidence(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) acceptDispute(w http.ResponseWriter, r *http.Request) {
+	d, err := s.svc.AcceptDispute(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
 func (s *Server) createIntent(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		payments.IntentInput
