@@ -1,6 +1,6 @@
 {
   "name": "@sma/app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "SMA messenger: post-quantum E2EE chat over Nostr relays (web/PWA + Android via Capacitor).",
   "type": "module",
