@@ -1,0 +1,92 @@
+name: SMA messenger (testes e APK)
+
+on:
+  push:
+    paths: ['messenger/**', '.github/workflows/messenger.yml']
+  pull_request:
+    paths: ['messenger/**', '.github/workflows/messenger.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: messenger-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            messenger/reference/package-lock.json
+            messenger/app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Biblioteca de criptografia (tipos + testes)
+        working-directory: messenger/reference
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+      - name: App web (tipos + build)
+        working-directory: messenger/app
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Teste ponta a ponta (dois navegadores + relay local)
+        working-directory: messenger/app
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+
+      - name: APK de debug
+        working-directory: messenger/app
+        run: |
+          npx cap sync android
+          cd android && ./gradlew --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sma-debug-apk
+          path: messenger/app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      # Opcional: APK de release assinado. Configure os secrets SMA_KEYSTORE_BASE64,
+      # SMA_KEYSTORE_PASSWORD, SMA_KEY_ALIAS e SMA_KEY_PASSWORD para ativar.
+      - name: APK de release assinado
+        if: ${{ github.event_name != 'pull_request' }}
+        working-directory: messenger/app/android
+        env:
+          KEYSTORE_B64: ${{ secrets.SMA_KEYSTORE_BASE64 }}
+          SMA_KEYSTORE_PASSWORD: ${{ secrets.SMA_KEYSTORE_PASSWORD }}
+          SMA_KEY_ALIAS: ${{ secrets.SMA_KEY_ALIAS }}
+          SMA_KEY_PASSWORD: ${{ secrets.SMA_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "Sem keystore configurado: pulando o release."; exit 0; fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/sma.keystore"
+          SMA_KEYSTORE_FILE="$RUNNER_TEMP/sma.keystore" ./gradlew --no-daemon assembleRelease
+          rm -f "$RUNNER_TEMP/sma.keystore"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          name: sma-release-apk
+          path: messenger/app/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: ignore

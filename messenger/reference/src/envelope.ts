@@ -65,10 +65,15 @@ export function routingTag(tagKey: Uint8Array, epoch: number): Uint8Array {
   return hmac(sha256, tagKey, concatBytes(utf8ToBytes('SMA/v1/tag'), u64be(epoch))).subarray(0, TAG_BYTES);
 }
 
-/** Tags a receiver must watch: previous, current and next epoch (clock skew, delays). */
-export function watchTags(tagKey: Uint8Array, nowMs: number, epochSeconds = EPOCH_SECONDS): string[] {
+/**
+ * Tags a receiver must watch: previous, current and next epoch (clock skew, delays), plus
+ * `backlogEpochs` older ones when catching up after being offline.
+ */
+export function watchTags(tagKey: Uint8Array, nowMs: number, epochSeconds = EPOCH_SECONDS, backlogEpochs = 0): string[] {
   const e = epochOf(nowMs, epochSeconds);
-  return [e - 1, e, e + 1].map((x) => toHex(routingTag(tagKey, x)));
+  const out: string[] = [];
+  for (let x = e - 1 - backlogEpochs; x <= e + 1; x++) out.push(toHex(routingTag(tagKey, x)));
+  return out;
 }
 
 // ─── Frame ──────────────────────────────────────────────────────────────────────

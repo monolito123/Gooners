@@ -29,6 +29,12 @@ jobs:
         run: |
           node scripts/build-law.mjs
           node scripts/build.mjs
+      # Mensageiro SMA (messenger/app), publicado em /messenger/. Não bloqueia o site se falhar.
+      - name: Gerar o mensageiro SMA
+        continue-on-error: true
+        run: |
+          (cd messenger/reference && npm ci --no-audit --no-fund)
+          (cd messenger/app && npm ci --no-audit --no-fund && npm run build)
       # O GitHub Pages serve o branch gh-pages; cada execução o substitui pelo site recém-gerado.
       - name: Publicar no branch gh-pages
         env:
@@ -36,6 +42,7 @@ jobs:
         run: |
           mkdir _site
           cp -r index.html 404.html assets categorias contato ferramentas favoritos law manifest.webmanifest robots.txt sitemap.xml sw.js .nojekyll _site/
+          if [ -f messenger/app/dist/index.html ]; then mkdir -p _site/messenger && cp -r messenger/app/dist/. _site/messenger/; fi
           cd _site
           git init -q -b gh-pages
           git config user.name "github-actions[bot]"

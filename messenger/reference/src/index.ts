@@ -7,6 +7,7 @@ export * from './payload.ts';
 export * from './ratchet.ts';
 export * from './handshake.ts';
 export * from './session.ts';
+export * from './contact.ts';
 export * from './transport/types.ts';
 export * from './transport/memory.ts';
 export * from './transport/failover.ts';

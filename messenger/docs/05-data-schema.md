@@ -8,7 +8,7 @@ L2     Padding (inside the AEAD)  plaintext ‖ 0x80 ‖ 0x00…   → frame len
 L3     Content (protobuf)         sma.v1.Content { message_id, sent_at_ms, oneof body {...} }
 ```
 
-The canonical schema is [`proto/sma.proto`](../proto/sma.proto). The reference implementation loads that file at runtime, so the schema documented here is the one the tests run against.
+The canonical schema is [`proto/sma.proto`](../proto/sma.proto). The reference implementation compiles it to static code (`reference/src/schema.static.js`, `npm run gen:schema`, no `eval`, so it runs under a strict CSP), and a test fails if the generated code is out of date.
 
 **Why L0/L1 is not protobuf or JSON.** Protobuf field keys, JSON property names, length prefixes and version bytes are all plaintext structure that identifies the protocol and the message type. The outer layers are fixed binary layouts whose type is implied by the routing tag, and every variable-length or typed field is inside an AEAD.
 

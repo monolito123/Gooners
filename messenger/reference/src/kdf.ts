@@ -102,6 +102,7 @@ export const KEY_LABELS = {
   backupLocator: 'backup/locator',
   inboxTagKey: 'inbox/tag-key',
   deviceLinkKey: 'device/link-key',
+  contactCapsuleKey: 'contact/capsule-key',
 } as const;
 export type KeyLabel = (typeof KEY_LABELS)[keyof typeof KEY_LABELS];
 

@@ -7,7 +7,7 @@ Architecture, protocol specification and a tested TypeScript reference implement
 - shows hosts only **opaque, bucket-padded frames** (`tag[16] ‖ ciphertext`, 4 KiB … 1 MiB), with rotating unlinkable tags and no cleartext type, version, sender or key id;
 - roots identity in a **24-word recovery phrase**; passphrases (Argon2id) and hardware keys (Secure Enclave, Keystore, passkeys) only unlock the local vault.
 
-> Status: design plus executable reference. The cryptography is **not audited**, and the pure-JS core is not constant-time. See [07-roadmap.md](docs/07-roadmap.md) for the path to production.
+> Status: design, executable reference and a working app (web + Android APK, text chat over Nostr; see [app/README.md](app/README.md)). The cryptography is **not audited**, and the pure-JS core is not constant-time. See [07-roadmap.md](docs/07-roadmap.md) for the path to production.
 
 ## Contents
 
@@ -21,7 +21,8 @@ Architecture, protocol specification and a tested TypeScript reference implement
 | [docs/05-data-schema.md](docs/05-data-schema.md) | **Module 5**: byte layouts, protobuf schema, JSON examples, file chunking |
 | [docs/06-reference-implementation.md](docs/06-reference-implementation.md) | **Module 6**: code walkthrough of the three requested examples, tests, benchmarks |
 | [docs/07-roadmap.md](docs/07-roadmap.md) | Phases, security programme, risk register |
-| [proto/sma.proto](proto/sma.proto) | Canonical wire schema (used by the reference at runtime) |
+| [proto/sma.proto](proto/sma.proto) | Canonical wire schema (compiled to static code with `npm run gen:schema`) |
+| [app/](app) | **The app**: web/PWA and Android APK (Capacitor), chatting over Nostr relays |
 | [reference/](reference) | TypeScript reference implementation |
 
 ## Quick start
@@ -31,7 +32,7 @@ Needs Node.js ≥ 22.18 (runs TypeScript directly, no build step).
 ```bash
 cd messenger/reference
 npm ci
-npm test                  # 63 tests incl. RFC 9106 / BIP-39 vectors and hpke-js interop
+npm test                  # 72 tests incl. RFC 9106 / BIP-39 vectors and hpke-js interop
 npm run example:keys      # Argon2id + recovery phrase → identity keys
 npm run example:encrypt   # ML-KEM-768 + X25519 (X-Wing) + AES-256-GCM
 npm run example:pack      # pack into a frame, send via Telegram Bot API (offline fake by default)

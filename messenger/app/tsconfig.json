@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@noble/*": [
+        "../reference/node_modules/@noble/*"
+      ],
+      "@scure/*": [
+        "../reference/node_modules/@scure/*"
+      ],
+      "protobufjs": [
+        "../reference/node_modules/protobufjs"
+      ],
+      "long": [
+        "../reference/node_modules/long"
+      ],
+      "protobufjs/*": [
+        "../reference/node_modules/protobufjs/*"
+      ]
+    }
+  },
+  "include": [
+    "src"
+  ]
+}

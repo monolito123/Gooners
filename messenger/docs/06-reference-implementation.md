@@ -9,13 +9,13 @@
 | `@noble/hashes` | 2.4.0 | SHA-2, SHA-3, HKDF, HMAC, Argon2id |
 | `@noble/ciphers` | 2.4.0 | AES-256-GCM, XChaCha20-Poly1305 |
 | `@scure/bip39` | 2.4.0 | Recovery phrase |
-| `protobufjs` | 8.8.1 | Loads `proto/sma.proto` at runtime |
+| `protobufjs` | 8.8.1 | Minimal runtime for the static code generated from `proto/sma.proto` (`protobufjs-cli`, dev only) |
 | `@hpke/core`, `@hpke/hybridkem-x-wing` | 1.9.0 / 0.7.0 | **Tests only**: independent HPKE+X-Wing implementation for interop checks |
 
 ```bash
 cd messenger/reference
 npm ci
-npm test            # 63 tests: KATs, interop, protocol and transport behaviour
+npm test            # 72 tests: KATs, interop, protocol, contact exchange and transport behaviour
 npm run typecheck   # tsc --noEmit, strict
 npm run example:keys      # 1. Argon2id + recovery phrase → keys
 npm run example:encrypt   # 2. ML-KEM-768 + X25519 (X-Wing) + AES-256-GCM

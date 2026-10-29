@@ -117,7 +117,13 @@ message Locator {
     string blossom = 3;            // https://<server>/<sha256-hex>
     string https = 4;              // any static host (S3/R2 presigned URL, GitHub release)
     bytes webrtc_peer = 5;         // fingerprint of an online peer that holds the blob
+    NostrLocator nostr = 6;        // newest event carrying this tag on any of these relays
   }
+}
+
+message NostrLocator {
+  repeated string relays = 1;
+  bytes tag = 2;                   // 16 bytes, published as the event's indexed "z" tag (hex)
 }
 
 // ═══ L2 plaintext ════════════════════════════════════════════════════════════════
@@ -142,6 +148,7 @@ message Content {
     DeviceSync device_sync = 20;
     PrekeyRefresh prekey_refresh = 21;
     PluginMessage plugin = 22;
+    ContactCard contact_card = 23; // sender's own card, sent with the first message of a session
   }
 }
 

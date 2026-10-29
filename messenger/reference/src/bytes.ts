@@ -56,14 +56,22 @@ export function fromHex(hex: string): Uint8Array {
   return out;
 }
 
-/** RFC 4648 §5 base64url without padding: safe in URLs, JSON and Telegram/Nostr text fields. */
+/**
+ * RFC 4648 §5 base64url without padding: safe in URLs, JSON and Telegram/Nostr text fields.
+ * Uses btoa/atob so the same code runs in Node, browsers and Android WebViews.
+ */
 export function toBase64Url(b: Uint8Array): string {
-  return Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('base64url');
+  let bin = '';
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 export function fromBase64Url(s: string): Uint8Array {
-  if (/[^A-Za-z0-9_-]/.test(s)) throw new Error('invalid base64url');
-  return new Uint8Array(Buffer.from(s, 'base64url'));
+  if (/[^A-Za-z0-9_-]/.test(s) || s.length % 4 === 1) throw new Error('invalid base64url');
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 /**
