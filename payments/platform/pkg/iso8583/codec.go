@@ -357,6 +357,10 @@ func unpackField(f *FieldSpec, r *reader) (string, error) {
 	if err := validateClass(f.Class, v); err != nil {
 		return "", err
 	}
+	if f.Class == ClassB && len(v)%2 != 0 {
+		// Hex-as-text binary fields must hold whole bytes, as Pack requires.
+		return "", fmt.Errorf("binary value must have an even number of hex digits")
+	}
 	if f.Type == Fixed && f.Class != ClassN && f.Class != ClassB && f.Class != ClassZ {
 		v = strings.TrimRight(v, " ")
 	}

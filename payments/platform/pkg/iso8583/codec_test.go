@@ -160,6 +160,17 @@ func TestValidation(t *testing.T) {
 	}
 }
 
+// Found by fuzzing in CI: a hex-as-ASCII binary field with an odd number of digits must be
+// rejected on unpack, not accepted and then refused on repack.
+func TestUnpackRejectsOddHexInBinaryField(t *testing.T) {
+	codec := iso8583.NewCodec(dialects.MustLoad(dialects.Generic))
+	// MTI 0100, bitmap with only bit 55 set, DE 55 length 003 and three hex digits.
+	msg := []byte("0100" + "0000000000000200" + "003" + "9F2")
+	if _, err := codec.Unpack(msg); err == nil {
+		t.Fatal("odd hex digit count accepted in DE 55")
+	}
+}
+
 func TestUnpackRejectsTruncatedAndTrailing(t *testing.T) {
 	codec := iso8583.NewCodec(dialects.MustLoad(dialects.Generic))
 	b, _ := codec.Pack(authRequest())
