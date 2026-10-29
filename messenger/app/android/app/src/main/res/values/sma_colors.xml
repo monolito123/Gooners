@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same colour as the web app surface (light). Shows behind the status and navigation bars. -->
+    <color name="sma_window_background">#FFFFFF</color>
+</resources>

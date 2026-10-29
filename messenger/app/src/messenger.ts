@@ -145,6 +145,12 @@ export class Messenger {
     );
   }
 
+  /** Called when the app returns to the foreground. */
+  resume(): void {
+    void this.resubscribe(true);
+    void this.flushOutbox();
+  }
+
   lock(): void {
     for (const t of this.timers) clearInterval(t);
     this.pool.close();

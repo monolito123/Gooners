@@ -2,6 +2,8 @@
  * SMA web app. Hash routes once unlocked: #/ (chats), #/chat/<fp>, #/invite, #/add,
  * #/contact/<fp>, #/settings. Using real history entries lets the Android back button work.
  */
+import { App } from '@capacitor/app';
+import { Share } from '@capacitor/share';
 import { generateRecoveryPhrase, recoveryPhraseToSeed } from '../../reference/src/index.ts';
 import { h, icon, formatTime, toast } from './dom.ts';
 import { MAX_TEXT, type Message, Messenger, extractInviteCode } from './messenger.ts';
@@ -10,6 +12,8 @@ import { canScanQr, qrCanvas, scanQr } from './qr.ts';
 import { Vault, vaultExists } from './vault.ts';
 
 const WEB_URL = 'https://monolito123.github.io/Gooners/messenger/';
+// Tells public/boot-check.js that the bundle parsed and started (old WebViews fail before this).
+(globalThis as { __smaBooted?: boolean }).__smaBooted = true;
 const root = document.getElementById('app')!;
 let app: Messenger | null = null;
 let pendingInvite = extractInviteCode(location.hash);
@@ -422,6 +426,26 @@ function renderContact(fp: string): void {
   );
 }
 
+/** Clipboard API, with the execCommand fallback that Android WebViews still need. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = h('textarea', { class: 'offscreen', value: text, readOnly: true });
+    document.body.append(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+    return ok;
+  }
+}
+
 function inviteLink(): string {
   const base = isNative || location.protocol === 'file:' ? WEB_URL : `${location.origin}${location.pathname}`;
   return `${base}#c=${app!.inviteCode()}`;
@@ -429,19 +453,13 @@ function inviteLink(): string {
 
 function renderInvite(): void {
   const link = inviteLink();
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      toast('Link copiado.');
-    } catch {
-      toast('Não consegui copiar; selecione o texto e copie manualmente.');
-    }
-  };
+  const copy = async () => toast((await copyText(link)) ? 'Link copiado.' : 'Não consegui copiar; selecione o texto e copie manualmente.');
   const share = async () => {
     try {
-      await navigator.share({ title: 'Meu convite SMA', text: 'Fale comigo com criptografia pós-quântica:', url: link });
+      // Native share sheet in the APK, Web Share API in browsers.
+      await Share.share({ title: 'Meu convite SMA', text: 'Fale comigo no SMA (criptografia pós-quântica):', url: link, dialogTitle: 'Compartilhar convite' });
     } catch {
-      /* cancelled */
+      /* cancelled or unavailable */
     }
   };
   show(
@@ -455,7 +473,7 @@ function renderInvite(): void {
         h('p', {}, 'Peça para a outra pessoa escanear o QR ou abrir o link no SMA.'),
         qrCanvas(link, 280),
         h('p', { class: 'mono linkbox' }, link),
-        h('div', { class: 'row-buttons' }, h('button', { onclick: copy }, icon('copy'), 'Copiar link'), 'share' in navigator ? h('button', { onclick: share }, icon('share'), 'Compartilhar') : null),
+        h('div', { class: 'row-buttons' }, h('button', { onclick: copy }, icon('copy'), 'Copiar link'), isNative || 'share' in navigator ? h('button', { onclick: share }, icon('share'), 'Compartilhar') : null),
         h('p', { class: 'muted' }, 'Quem tiver este convite pode iniciar uma conversa com você. O convite só aponta para seu cartão cifrado nos relays; ninguém sem ele consegue lê-lo.'),
         h('button', { class: 'ghost', onclick: async () => toast((await app!.publishCard()) ? 'Cartão publicado nos relays.' : 'Nenhum relay aceitou o cartão agora.') }, 'Publicar cartão de novo'),
       ),
@@ -559,7 +577,19 @@ function renderSettings(): void {
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 
+/** Android: Back walks the hash history, and on the first screen sends the app to the background. */
+function wireNativeShell(): void {
+  if (!isNative) return;
+  void App.addListener('backButton', ({ canGoBack }) => {
+    if (canGoBack) history.back();
+    else void App.minimizeApp();
+  }).catch(() => {});
+  // Relays may have dropped while in the background: catch up and flush pending sends.
+  void App.addListener('resume', () => app?.resume()).catch(() => {});
+}
+
 async function boot(): Promise<void> {
+  wireNativeShell();
   if (!isNative && 'serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
