@@ -474,6 +474,7 @@ function renderInvite(): void {
         qrCanvas(link, 280),
         h('p', { class: 'mono linkbox' }, link),
         h('div', { class: 'row-buttons' }, h('button', { onclick: copy }, icon('copy'), 'Copiar link'), isNative || 'share' in navigator ? h('button', { onclick: share }, icon('share'), 'Compartilhar') : null),
+        h('p', { class: `cardstatus ${app!.cardStatus}` }, { publishing: 'Publicando seu cartão nos relays…', published: '✓ Seu cartão está nos relays: o convite já funciona.', failed: '⚠ Nenhum relay aceitou seu cartão ainda. Verifique a conexão e toque em "Publicar cartão de novo".' }[app!.cardStatus]),
         h('p', { class: 'muted' }, 'Quem tiver este convite pode iniciar uma conversa com você. O convite só aponta para seu cartão cifrado nos relays; ninguém sem ele consegue lê-lo.'),
         h('button', { class: 'ghost', onclick: async () => toast((await app!.publishCard()) ? 'Cartão publicado nos relays.' : 'Nenhum relay aceitou o cartão agora.') }, 'Publicar cartão de novo'),
       ),

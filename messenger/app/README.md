@@ -31,6 +31,7 @@ npm run build                             # gera dist/
 npm run serve                             # http://localhost:8080
 npm run relay                             # relay Nostr local em ws://localhost:7777 (para testes)
 npm run test:e2e                          # dois navegadores conversando via relay local (precisa do Playwright)
+npm run test:live [url]                   # teste ao vivo na publicação, com os relays públicos (publica eventos de teste)
 ```
 
 Para usar o relay local, abra *Configurações* e troque os relays por `ws://localhost:7777`.

@@ -89,6 +89,8 @@ export class Messenger {
   private subscribedEpoch = -1;
   private watchedCount = 0;
   private flushing = false;
+  /** Whether our contact card (what invites point to) is on at least one relay. */
+  cardStatus: 'publishing' | 'published' | 'failed' = 'publishing';
   onChange: () => void = () => {};
 
   private constructor(state: AppState, vault: Vault) {
@@ -131,8 +133,10 @@ export class Messenger {
     this.pool.setRelays(this.state.relays);
     this.pool.onEvent((_relay, e) => this.onEvent(e));
     this.maybeRotatePrekey();
-    await this.resubscribe(true);
+    // Card first: an invite shared right after sign-up must already resolve. Nothing here
+    // waits for slow relays (one may never send EOSE); each step finishes on its own.
     void this.publishCard();
+    void this.resubscribe(true);
     void this.flushOutbox();
     this.timers.push(
       setInterval(() => void this.flushOutbox(), 15_000),
@@ -213,8 +217,12 @@ export class Messenger {
     const tag = toHex(cardLocatorTag(key));
     const card = createContactCard(this.endpoint, this.state.name, this.state.relays);
     const event = signEvent(KIND_CARD, toBase64Url(sealCard(key, card)), [['d', tag], ['z', tag]], cardSigningKey(key));
-    const res = await this.pool.publish(event, this.state.relays);
-    return res.some((r) => r.ok);
+    this.cardStatus = 'publishing';
+    this.onChange();
+    const ok = (await this.pool.publish(event, this.state.relays)).filter((r) => r.ok).length;
+    this.cardStatus = ok ? 'published' : 'failed';
+    this.onChange();
+    return ok > 0;
   }
 
   /** Accepts an invite link, a "#c=..." fragment or the bare code. */
@@ -231,20 +239,24 @@ export class Messenger {
     if (fp === this.fingerprint) throw new Error('Este é o seu próprio convite.');
     const author = toHex(schnorr.getPublicKey(cardSigningKey(capsule.capsuleKey)));
     const tag = toHex(capsule.tag);
-    const events = await this.pool.query([{ kinds: [KIND_CARD], authors: [author], '#d': [tag] }], capsule.relays);
-    events.sort((a, b) => b.created_at - a.created_at);
-    for (const e of events) {
-      try {
-        const cardBytes = openCard(capsule.capsuleKey, fromBase64Url(e.content));
-        const parsed = parseContactCard(cardBytes, { expectedFingerprint: capsule.fingerprint });
-        const c = this.upsertContact(fp, parsed.displayName, toBase64Url(cardBytes), parsed.relays);
-        this.changed();
-        return c;
-      } catch {
-        /* stale or forged event: try the next one */
+    // The card may still be propagating if the invite was shared seconds after sign-up.
+    for (const waitMs of [0, 3000, 6000, 10_000]) {
+      if (waitMs) await new Promise((r) => setTimeout(r, waitMs));
+      const events = await this.pool.query([{ kinds: [KIND_CARD], authors: [author], '#d': [tag] }], capsule.relays);
+      events.sort((a, b) => b.created_at - a.created_at);
+      for (const e of events) {
+        try {
+          const cardBytes = openCard(capsule.capsuleKey, fromBase64Url(e.content));
+          const parsed = parseContactCard(cardBytes, { expectedFingerprint: capsule.fingerprint });
+          const c = this.upsertContact(fp, parsed.displayName, toBase64Url(cardBytes), parsed.relays);
+          this.changed();
+          return c;
+        } catch {
+          /* stale or forged event: try the next one */
+        }
       }
     }
-    throw new Error('Não encontrei o cartão deste convite nos relays. Peça um convite novo ou tente mais tarde.');
+    throw new Error('Não encontrei o cartão deste convite nos relays. Peça para a pessoa abrir o SMA e tente de novo.');
   }
 
   private upsertContact(fp: string, name: string, card: string | null, relays: string[]): Contact {

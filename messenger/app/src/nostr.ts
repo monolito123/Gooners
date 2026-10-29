@@ -260,15 +260,20 @@ export class RelayPool {
   }
 
   /** One-shot query: collects matching events until every relay sends EOSE (or times out). */
-  async query(filters: Filter[], urls: string[], timeoutMs = 8000): Promise<NostrEvent[]> {
+  async query(filters: Filter[], urls: string[], timeoutMs = 8000, graceMs = 1500): Promise<NostrEvent[]> {
     const id = `q${Math.random().toString(36).slice(2, 10)}`;
     const got = new Map<string, NostrEvent>();
+    // Once something matched, give the other relays only `graceMs` more (one may never EOSE).
+    let early: () => void = () => {};
+    const firstHit = new Promise<void>((resolve) => (early = resolve));
     const collector: Listener = (_r, e) => {
-      if (matches(filters, e)) got.set(e.id, e);
+      if (!matches(filters, e)) return;
+      if (got.size === 0) setTimeout(early, graceMs);
+      got.set(e.id, e);
     };
     this.collectors.add(collector);
     try {
-      await Promise.all(urls.map((u) => this.relay(u).subscribe(id, filters, timeoutMs)));
+      await Promise.race([Promise.all(urls.map((u) => this.relay(u).subscribe(id, filters, timeoutMs))), firstHit]);
     } finally {
       this.unsubscribe(id);
       this.collectors.delete(collector);

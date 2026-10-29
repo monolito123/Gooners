@@ -12,7 +12,8 @@
     "test:e2e": "node --test test/e2e.test.mjs",
     "typecheck": "tsc --noEmit -p .",
     "android:sync": "npm run build && cap sync android",
-    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug"
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "test:live": "node test/live-smoke.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

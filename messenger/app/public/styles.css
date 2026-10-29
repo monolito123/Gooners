@@ -160,3 +160,7 @@ summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 
 .offscreen { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .boot-error { max-width: 480px; margin: 3rem auto; padding: 0 16px; }
+.cardstatus { font-weight: 600; font-size: .9rem; }
+.cardstatus.published { color: var(--ok); }
+.cardstatus.failed { color: var(--danger); }
+.cardstatus.publishing { color: var(--muted); }
