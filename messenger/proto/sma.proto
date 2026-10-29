@@ -1,0 +1,319 @@
+// SMA wire schema, version 1.
+//
+// Layering (outermost first). Only layer 0 is visible to a transport host:
+//
+//   L0  Transport frame    tag[16] ‖ opaque bytes; total length ∈ FRAME_BUCKETS.
+//                          Fixed binary layout, NOT protobuf (protobuf field keys would be
+//                          a plaintext fingerprint). See docs/05-data-schema.md §2.
+//   L1  Cryptographic body PreKeyMessage | RatchetMessage | SealedBox | SenderKeyMessage.
+//                          Fixed binary layouts, chosen by what the routing tag maps to.
+//   L2  Plaintext          `Content` below, ISO/IEC 7816-4 padded, then encrypted by L1.
+//
+// Everything in this file is either (a) encrypted before it touches a transport, or
+// (b) public by design (PrekeyBundle, DeviceCertificate) and then always wrapped in
+// `SignedBlob` so signatures cover exact bytes rather than a re-encoding.
+//
+// Conventions: fingerprints are SHA-256 over a composite public key (32 bytes);
+// "composite" keys/signatures are Ed25519 ‖ ML-DSA-65 (1984 / 3373 bytes);
+// X-Wing keys/ciphertexts are 1216 / 1120 bytes; times are Unix milliseconds.
+
+syntax = "proto3";
+
+package sma.v1;
+
+// ═══ Signed public objects ═══════════════════════════════════════════════════════
+
+// The composite signature covers `body` under a per-type context label ("prekey-bundle",
+// "device-cert", ...), see compositeSign() in reference/src/sign.ts.
+message SignedBlob {
+  bytes body = 1;        // serialized PrekeyBundle / DeviceCertificate / GroupControl / ...
+  bytes signer = 2;      // composite public key (1984 bytes) or fingerprint (32) if implied
+  bytes signature = 3;   // composite signature (3373 bytes)
+}
+
+message PrekeyBundle {
+  uint32 version = 1;
+  bytes identity_key = 2;          // composite public key
+  bytes identity_kem_key = 3;      // X-Wing public key; long-term, implicit PQ auth of the owner
+  SignedPrekey signed_prekey = 4;  // medium-term X-Wing key; rotated weekly
+  repeated SignedBlob devices = 5; // DeviceCertificate, one per linked device
+  uint64 published_at_ms = 6;
+}
+
+message SignedPrekey {
+  uint32 id = 1;
+  bytes public_key = 2;            // X-Wing
+  uint64 created_at_ms = 3;
+  uint64 expires_at_ms = 4;
+}
+
+// Single-use X-Wing key handed out inside one invite (QR / link) only. Without a server
+// there is no safe way to hand one-time keys to strangers, so they ride on invites.
+message OneTimePrekey {
+  uint32 id = 1;
+  bytes public_key = 2;
+  uint64 expires_at_ms = 3;
+}
+
+message DeviceCertificate {
+  bytes device_id = 1;             // 16 random bytes
+  bytes device_signing_key = 2;    // composite; may be hardware-bound (Secure Enclave ML-DSA-65)
+  bytes device_kem_key = 3;        // X-Wing
+  uint64 issued_at_ms = 4;
+  uint64 expires_at_ms = 5;
+  string label = 6;                // "iPhone", encrypted at rest; shown only to the owner's devices
+  uint32 capabilities = 7;         // bitset: 1=calls, 2=history-sync, 4=plugins
+}
+
+// ═══ Contact exchange ════════════════════════════════════════════════════════════
+
+// What a QR code or invite link encodes. Must stay small (QR v10-L holds ~270 bytes), so
+// it pins the identity and points at the full, encrypted ContactCard.
+message ContactCapsule {
+  uint32 version = 1;
+  bytes fingerprint = 2;           // 32 bytes, pins identity_key in the card
+  bytes capsule_key = 3;           // 32 bytes, AES-256-GCM key of the ContactCard blob
+  repeated Locator card_locators = 4;
+  uint64 expires_at_ms = 5;
+}
+
+// Encrypted under ContactCapsule.capsule_key, stored on any blob transport.
+message ContactCard {
+  SignedBlob bundle = 1;           // PrekeyBundle
+  bytes inbox_tag_key = 2;         // 32 bytes; lets the holder derive the owner's inbox tags
+  repeated MailboxAddress inboxes = 3;
+  SignedBlob one_time_prekey = 4;  // OneTimePrekey, present only in single-use invites
+  string display_name = 5;
+  bytes avatar_sha256 = 6;
+  repeated Locator avatar_locators = 7;
+}
+
+message MailboxAddress {
+  oneof kind {
+    NostrMailbox nostr = 1;
+    TelegramMailbox telegram = 2;
+    MatrixMailbox matrix = 3;
+  }
+}
+
+message NostrMailbox {
+  repeated string relays = 1;      // wss:// URLs; senders write to ≥ 2 of them
+}
+
+message TelegramMailbox {
+  int64 chat_id = 1;               // private channel/supergroup used as the mailbox
+  string invite_link = 2;          // t.me/+... for MTProto clients to join
+}
+
+message MatrixMailbox {
+  string room_id = 1;
+  string homeserver = 2;
+}
+
+message Locator {
+  oneof where {
+    string telegram = 1;           // "mtproto:<chat_id>:<message_id>" or "bot:<file_id>"
+    string ipfs_cid = 2;           // CIDv1, raw codec, sha2-256
+    string blossom = 3;            // https://<server>/<sha256-hex>
+    string https = 4;              // any static host (S3/R2 presigned URL, GitHub release)
+    bytes webrtc_peer = 5;         // fingerprint of an online peer that holds the blob
+  }
+}
+
+// ═══ L2 plaintext ════════════════════════════════════════════════════════════════
+
+message Content {
+  bytes message_id = 1;            // 16 random bytes; dedupe across redundant transports
+  uint64 sent_at_ms = 2;           // sender's clock, display only (not trusted for ordering)
+  uint32 expire_after_s = 3;       // disappearing timer, 0 = keep
+  bytes reply_to = 4;              // message_id being answered
+  bytes group_id = 5;              // 32 bytes for group traffic, empty for 1:1
+  oneof body {
+    Text text = 10;
+    FileManifest file = 11;
+    CallSignal call = 12;
+    GroupKeyDistribution group_key = 13;
+    Receipt receipt = 14;
+    Reaction reaction = 15;
+    Edit edit = 16;
+    Delete delete = 17;
+    Typing typing = 18;
+    GroupControl group_control = 19;
+    DeviceSync device_sync = 20;
+    PrekeyRefresh prekey_refresh = 21;
+    PluginMessage plugin = 22;
+  }
+}
+
+message Text {
+  string body = 1;
+  repeated Mention mentions = 2;
+}
+
+message Mention {
+  uint32 start = 1;                // UTF-16 offset
+  uint32 length = 2;
+  bytes fingerprint = 3;
+}
+
+// Large media never rides in a message: it is chunked, each chunk encrypted with a
+// per-file key and stored as a blob; the message carries only this manifest.
+message FileManifest {
+  string mime_type = 1;
+  string file_name = 2;
+  uint64 size = 3;                 // plaintext bytes
+  bytes file_key = 4;              // 32 random bytes, AES-256-GCM
+  bytes nonce_prefix = 5;          // 8 random bytes; chunk nonce = prefix ‖ u32be(index)
+  uint32 chunk_size = 6;           // plaintext bytes per chunk; every chunk is padded to it
+  repeated BlobRef chunks = 7;
+  bytes plaintext_sha256 = 8;
+  bytes thumbnail = 9;             // ≤ 2 KiB JPEG/WebP, inline
+  uint32 width = 10;
+  uint32 height = 11;
+  uint32 duration_ms = 12;
+}
+
+message BlobRef {
+  bytes ciphertext_sha256 = 1;     // integrity check and content address
+  repeated Locator locators = 2;   // ≥ 2 independent hosts for availability
+}
+
+message CallSignal {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    OFFER = 1;
+    ANSWER = 2;
+    ICE_CANDIDATES = 3;
+    RINGING = 4;
+    HANGUP = 5;
+    REJECT = 6;
+    BUSY = 7;
+    RENEGOTIATE = 8;
+    MEDIA_KEY_UPDATE = 9;
+  }
+  bytes call_id = 1;               // 16 random bytes
+  Type type = 2;
+  string sdp = 3;                  // OFFER / ANSWER / RENEGOTIATE
+  repeated IceCandidate candidates = 4;
+  bytes media_key_seed = 5;        // 32 bytes; SFrame keys = HKDF(seed, role, epoch)
+  uint32 key_epoch = 6;
+  bool video = 7;
+  uint64 expires_at_ms = 8;        // offers are ignored after this (default now + 60 s)
+  string reason = 9;
+}
+
+message IceCandidate {
+  string candidate = 1;
+  string sdp_mid = 2;
+  uint32 sdp_m_line_index = 3;
+  string username_fragment = 4;
+}
+
+// Sender Keys: each member's symmetric chain for one group epoch. Always delivered
+// pairwise over the 1:1 PQ ratchet, never broadcast.
+message GroupKeyDistribution {
+  bytes group_id = 1;
+  uint32 epoch = 2;                // membership epoch (bumps on every add/remove)
+  uint32 key_id = 3;
+  uint32 iteration = 4;            // chain position of chain_key
+  bytes chain_key = 5;             // 32 bytes
+  bytes signing_key = 6;           // composite public key for this sender key
+}
+
+message GroupControl {
+  bytes group_id = 1;
+  uint32 epoch = 2;                // new epoch this change produces
+  bytes parent_hash = 3;           // SHA-256 of the previous GroupControl: forms a hash chain
+  oneof op {
+    GroupCreate create = 10;
+    MemberChange add = 11;
+    MemberChange remove = 12;
+    GroupMetadata metadata = 13;
+  }
+}
+
+message GroupCreate {
+  repeated bytes members = 1;      // fingerprints
+  repeated bytes admins = 2;
+  GroupMetadata metadata = 3;
+}
+
+message MemberChange {
+  repeated bytes members = 1;
+}
+
+message GroupMetadata {
+  string title = 1;
+  bytes avatar_sha256 = 2;
+  repeated Locator avatar_locators = 3;
+}
+
+message Receipt {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    DELIVERED = 1;
+    READ = 2;
+  }
+  Type type = 1;
+  repeated bytes message_ids = 2;
+}
+
+message Reaction {
+  bytes target_id = 1;
+  string emoji = 2;
+  bool remove = 3;
+}
+
+message Edit {
+  bytes target_id = 1;
+  Text text = 2;
+}
+
+message Delete {
+  repeated bytes target_ids = 1;
+}
+
+message Typing {
+  bool started = 1;
+}
+
+// Sent only between a user's own devices.
+message DeviceSync {
+  oneof kind {
+    SignedBlob new_device = 1;     // DeviceCertificate
+    bytes revoked_device_id = 2;
+    bytes contacts_snapshot_sha256 = 3;
+    BlobRef history_snapshot = 4;
+  }
+}
+
+message PrekeyRefresh {
+  SignedBlob bundle = 1;           // PrekeyBundle with a rotated signed prekey
+}
+
+// Mini-dApp traffic. The host app only routes it; the plugin defines `payload`.
+message PluginMessage {
+  string plugin_id = 1;            // reverse-DNS id, e.g. "org.example.split-bill"
+  uint32 schema_version = 2;
+  bytes payload = 3;
+}
+
+message PluginManifest {
+  string id = 1;
+  string name = 2;
+  string version = 3;              // semver
+  bytes developer_key = 4;         // composite public key
+  repeated string permissions = 5; // "conversation.send", "storage.kv:1MiB", "payments.request"
+  bytes bundle_sha256 = 6;         // WASM/JS bundle, content-addressed
+  repeated Locator bundle_locators = 7;
+}
+
+// Encrypted with the backup key (derived from the recovery phrase, never a passphrase).
+message BackupManifest {
+  uint32 version = 1;
+  uint64 created_at_ms = 2;
+  repeated BlobRef contacts = 3;
+  repeated BlobRef groups = 4;
+  repeated BlobRef history = 5;
+  // Ratchet state is deliberately absent: restoring it would reuse message keys.
+}
