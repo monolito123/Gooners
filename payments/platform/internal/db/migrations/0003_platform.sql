@@ -157,11 +157,13 @@ CREATE TABLE webhook_deliveries (
   body         TEXT        NOT NULL,
   attempts     INT         NOT NULL DEFAULT 0,
   next_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   delivered_at TIMESTAMPTZ,
+  abandoned_at TIMESTAMPTZ,                       -- after 72 h of failures; replay with POST /v1/webhook-endpoints/{id}/replay
   last_status  INT,
   UNIQUE (endpoint_id, message_id)
 );
-CREATE INDEX webhook_deliveries_due ON webhook_deliveries (next_at) WHERE delivered_at IS NULL;
+CREATE INDEX webhook_deliveries_due ON webhook_deliveries (next_at) WHERE delivered_at IS NULL AND abandoned_at IS NULL;
 
 CREATE TABLE idempotency_keys (
   tenant_id     UUID        NOT NULL,

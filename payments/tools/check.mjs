@@ -34,7 +34,13 @@ const bad = (m) => {
 const check = (cond, m) => (cond ? ok(m) : bad(m));
 
 const docsDir = join(root, 'docs');
-const docFiles = [join(root, 'README.md'), ...readdirSync(docsDir).filter((f) => f.endsWith('.md')).sort().map((f) => join(docsDir, f))];
+const integrationDir = join(root, 'integration');
+const docFiles = [
+  join(root, 'README.md'),
+  ...readdirSync(docsDir).filter((f) => f.endsWith('.md')).sort().map((f) => join(docsDir, f)),
+  ...(existsSync(integrationDir) ? readdirSync(integrationDir).filter((f) => f.endsWith('.md')).sort().map((f) => join(integrationDir, f)) : []),
+  ...(existsSync(join(root, 'platform', 'README.md')) ? [join(root, 'platform', 'README.md')] : []),
+];
 const docs = docFiles.map((path) => ({ path, rel: relative(root, path), text: readFileSync(path, 'utf8') }));
 const exDir = join(root, 'nostr', 'examples');
 const examples = Object.fromEntries(readdirSync(exDir).filter((f) => f.endsWith('.json')).map((f) => [f, JSON.parse(readFileSync(join(exDir, f), 'utf8'))]));
@@ -369,6 +375,14 @@ for (const d of docs) {
 }
 ok(`${links} relative links and anchors checked`);
 check(relative(repoRoot, root) === 'payments', 'spec lives in <repo>/payments');
+
+// The ledger migration shipped with the platform is the DDL of docs/04 §3.2.
+const migration = join(root, 'platform', 'internal', 'db', 'migrations', '0001_ledger.sql');
+if (existsSync(migration)) {
+  const ddl = d04.match(/```sql\n([\s\S]*?)```/)[1];
+  const body = readFileSync(migration, 'utf8').split('\n').filter((l) => !l.startsWith('-- 0001') && !l.startsWith('-- PostgreSQL-compatible')).join('\n').trim();
+  check(body === ddl.trim(), 'platform migration 0001_ledger.sql equals the DDL in docs/04 §3.2');
+}
 
 // ---------------------------------------------------------------- 7. External tools
 if (!fast) {

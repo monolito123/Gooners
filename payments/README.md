@@ -9,7 +9,7 @@ Architecture and engineering specification (REA / PRD) for a Brazil-first mercha
 - A **design system** whose colour claims are computed, not asserted.
 - Three re-scoped enhancements: a **risk-priced instant liquidity engine**, **zero-knowledge selective disclosure** for merchants, and an **on-device fraud shield**.
 
-> **Status: specification.** Not legal advice. The regulatory reading in [00 §7](docs/00-executive-summary.md#7-regulatory-posture-brazil-first) must be confirmed by counsel. "InfinityPay+" is a working title: it is close to *InfinitePay* (CloudWalk), so pick a distinct brand before public use. The platform's hosts use the reserved `.example` domain.
+> **Status: specification plus a tested reference implementation.** [`platform/`](platform) is the Go implementation of the integration layer (ISO 8583 switch, ledger, Pix through API Pix, receipts, API), with simulators of the card host and the Pix PSP. [`integration/`](integration) explains how to connect it to a sponsor acquirer, Visa, Mastercard and a bank for Pix. Not legal advice. The regulatory reading in [00 §7](docs/00-executive-summary.md#7-regulatory-posture-brazil-first) must be confirmed by counsel. "InfinityPay+" is a working title: it is close to *InfinitePay* (CloudWalk), so pick a distinct brand before public use. The platform's hosts use the reserved `.example` domain.
 
 ## What changed from the brief
 
@@ -41,6 +41,8 @@ Seven premises of the original brief would fail regulation, certification or phy
 | [nostr/examples/](nostr/examples) | Real signed events, gift wraps, a settlement statement and Merkle proofs, from public test keys |
 | [design/tokens.json](design/tokens.json) | Design tokens (W3C DTCG format) |
 | [tools/](tools) | Example generator and the specification checker |
+| [platform/](platform) | **Reference implementation (Go)**: ISO 8583 codec and dialects, scheme sessions, authorization switch with reversals, ledger, Pix (BR Code, API Pix, webhook, payouts), Nostr receipts, vault, HTTP API, simulators, Docker stack |
+| [integration/](integration) | **Integration kit**: sponsor acquirer, Visa, Mastercard, Pix with a bank, key custody (HSM) adapters, certification test plan |
 
 ## Verify the specification
 
@@ -62,6 +64,8 @@ npm run gen            # regenerate nostr/examples (deterministic: same bytes ev
 - every contrast ratio and colour-vision ΔE in the design module, from `tokens.json`;
 - every prefixed ID is a valid ULID, every npub decodes to a published test key, and every relative link and heading anchor resolves;
 - the OpenAPI file lints clean (Redocly), all Mermaid diagrams render in Chromium, and the ledger DDL runs on PostgreSQL with the posting catalogue and invariants L1–L5.
+
+The platform has its own suite: `cd payments/platform && go test -race ./...` (unit tests, the switch against the host simulator, Pix over mutual TLS against the PSP simulator, the ledger on PostgreSQL, and the full API flow), plus `go run ./cmd/smoke`, which runs the real binaries together. Both run in CI (`.github/workflows/payments-platform.yml`).
 
 The ledger check earned its keep while this spec was written: it caught a posting sequence that paid Pix out of an unfunded settlement account ([04 §3.4](docs/04-serverless-backend.md#34-posting-catalogue)).
 

@@ -17,11 +17,19 @@ function loadPlaywright() {
   return null;
 }
 
-const docsDir = join(here, '..', 'docs');
 const blocks = [];
-for (const f of readdirSync(docsDir).filter((x) => x.endsWith('.md')).sort()) {
-  const text = readFileSync(join(docsDir, f), 'utf8');
-  for (const m of text.matchAll(/```mermaid\n([\s\S]*?)```/g)) blocks.push({ file: f, src: m[1], line: text.slice(0, m.index).split('\n').length + 1 });
+for (const dir of ['docs', 'integration']) {
+  const abs = join(here, '..', dir);
+  let files = [];
+  try {
+    files = readdirSync(abs).filter((x) => x.endsWith('.md')).sort();
+  } catch {
+    continue;
+  }
+  for (const f of files) {
+    const text = readFileSync(join(abs, f), 'utf8');
+    for (const m of text.matchAll(/```mermaid\n([\s\S]*?)```/g)) blocks.push({ file: `${dir}/${f}`, src: m[1], line: text.slice(0, m.index).split('\n').length + 1 });
+  }
 }
 
 const pw = loadPlaywright();

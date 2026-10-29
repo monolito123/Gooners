@@ -131,9 +131,14 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 	}
 	var jobs []job
 	err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT w.id, e.url, e.secret, w.message_id, w.type, w.body, w.attempts, w.next_at
+		// Deliveries that kept failing for maxAge are abandoned (the partner replays them).
+		if _, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET abandoned_at = now()
+			WHERE delivered_at IS NULL AND abandoned_at IS NULL AND created_at < now() - $1::interval`, fmt.Sprintf("%d seconds", int(maxAge.Seconds()))); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT w.id, e.url, e.secret, w.message_id, w.type, w.body, w.attempts, w.created_at
 			FROM webhook_deliveries w JOIN webhook_endpoints e ON e.id = w.endpoint_id
-			WHERE w.delivered_at IS NULL AND w.next_at <= now() ORDER BY w.id LIMIT 50 FOR UPDATE OF w SKIP LOCKED`)
+			WHERE w.delivered_at IS NULL AND w.abandoned_at IS NULL AND w.next_at <= now() ORDER BY w.id LIMIT 50 FOR UPDATE OF w SKIP LOCKED`)
 		if err != nil {
 			return err
 		}

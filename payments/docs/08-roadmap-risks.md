@@ -36,6 +36,8 @@ gantt
   BaaS card issuing                      :p3c, 2028-09, 9M
 ```
 
+**Where Phase 0 stands.** The integration layer exists as a tested reference implementation in [`platform/`](../platform): the ISO 8583 switch with sessions, reversals and store-and-forward; the ledger; Pix through API Pix with webhooks and payouts; receipts; the HTTP API; and simulators of the card host and the PSP. What remains for Phases 0 and 1 is counterparty work (dialect transcription, homologation, certification) and the production key-custody adapters ([`integration/`](../integration)).
+
 | Phase | Exit criteria |
 |-------|---------------|
 | 0 | Ledger invariants L1–L5 green in staging for 30 days; sandbox used by 3 design partners; receipts claimable end to end |
