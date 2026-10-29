@@ -1,0 +1,36 @@
+{
+  "name": "@sma/reference",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference implementation of the SMA post-quantum E2EE protocol (X-Wing, ML-DSA-65, Argon2id, hybrid KEM ratchet).",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "example:keys": "node examples/01-derive-keys.ts",
+    "example:encrypt": "node examples/02-hybrid-encrypt.ts",
+    "example:pack": "node examples/03-pack-and-send.ts",
+    "demo": "node examples/04-chat-demo.ts",
+    "bench": "node examples/05-benchmark.ts",
+    "gen:schema": "node scripts/gen-schema.mjs"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@noble/post-quantum": "0.7.1",
+    "@scure/bip39": "2.4.0",
+    "protobufjs": "8.8.1"
+  },
+  "devDependencies": {
+    "@hpke/core": "1.9.0",
+    "@hpke/hybridkem-x-wing": "0.7.0",
+    "@types/node": "22.20.5",
+    "protobufjs-cli": "^2.7.1",
+    "typescript": "5.9.3"
+  }
+}

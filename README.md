@@ -6,6 +6,7 @@ Dois sites estáticos, indexáveis por buscadores e prontos para o GitHub Pages:
 |---|---|
 | `/` | **Gooners**: 62 ferramentas online gratuitas em 8 categorias (texto, geradores, validadores, consultas, conversores, calculadoras, desenvolvedor, tempo e produtividade). Cada ferramenta tem sua própria página. |
 | `/law/` | **Gooners Law**: assistência jurídica em proteção patrimonial e assessoria offshore, com simuladores, portal de notícias jurídicas em tempo real, glossário e artigos. |
+| `/messenger/` | **SMA**: arquitetura, especificação do protocolo e implementação de referência (TypeScript, testada) de um mensageiro sem servidores com criptografia pós-quântica (X-Wing/ML-KEM-768, ML-DSA-65). Não é publicado no site; veja [`messenger/README.md`](messenger/README.md). |
 
 ## Rodar localmente
 

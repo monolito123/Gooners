@@ -1,0 +1,10 @@
+{
+  "appId": "br.com.gooners.sma",
+  "appName": "SMA",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}

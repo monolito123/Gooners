@@ -1,0 +1,31 @@
+{
+  "name": "@sma/app",
+  "version": "0.1.1",
+  "private": true,
+  "description": "SMA messenger: post-quantum E2EE chat over Nostr relays (web/PWA + Android via Capacitor).",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "relay": "node test/local-relay.mjs",
+    "test:e2e": "node --test test/e2e.test.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "android:sync": "npm run build && cap sync android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "test:live": "node test/live-smoke.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/share": "^8.0.3",
+    "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "ws": "8.22.0"
+  }
+}
