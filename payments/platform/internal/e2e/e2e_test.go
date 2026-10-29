@@ -118,9 +118,9 @@ func newStack(t *testing.T) *stack {
 
 	dec, _ := carddata.NewDev(st.devKey)
 	signer, _ := nostr.GenerateKeys()
-	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.ipplus.example"}, payments.Deps{
+	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example"}, payments.Deps{
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
-		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.ipplus.example/c"}, Logger: log,
+		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Logger: log,
 	})
 	st.ledger = ledger.New(pool, log)
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {

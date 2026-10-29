@@ -41,7 +41,7 @@ The platform treats every relay the way the SMA messenger does ([`messenger/docs
 
 **Collision check.** On 2026-10-29 the NIPs repository's kind table had no entries at 7710–7715, 17710–17711, 27710–27712 or 37710. The nearest neighbours are NIP-60 (7374–7376) and NIP-CC (7516–7517, 37516–37517). These kinds are **provisional**. The plan is to propose them as a NIP after six months in production (assumption A6 in [00](00-executive-summary.md#10-assumptions-and-open-questions)), and to re-check the table before each release.
 
-**Standard NIPs used**: NIP-01 (events), NIP-05 (`cafeaurora@ipplus.example`), NIP-17 (DMs), NIP-19 (bech32), NIP-40 (expiration), NIP-42 (relay auth), NIP-44 v2 (encryption), NIP-46 (remote signing), NIP-49 (encrypted key export), NIP-59 (gift wrap), NIP-65 (relay lists), NIP-77 (negentropy sync) and NIP-98 (HTTP auth). **Avoided**: NIP-04 (deprecated), NIP-26 delegation (marked unrecommended), NIP-03 (marked unrecommended; §6.5 uses RFC 3161 and OpenTimestamps directly).
+**Standard NIPs used**: NIP-01 (events), NIP-05 (`cafeaurora@goonerspay.example`), NIP-17 (DMs), NIP-19 (bech32), NIP-40 (expiration), NIP-42 (relay auth), NIP-44 v2 (encryption), NIP-46 (remote signing), NIP-49 (encrypted key export), NIP-59 (gift wrap), NIP-65 (relay lists), NIP-77 (negentropy sync) and NIP-98 (HTTP auth). **Avoided**: NIP-04 (deprecated), NIP-26 delegation (marked unrecommended), NIP-03 (marked unrecommended; §6.5 uses RFC 3161 and OpenTimestamps directly).
 
 ### 2.2 Conventions
 
@@ -86,10 +86,10 @@ sequenceDiagram
   RS->>RL: Gift wrap → claim key (kind 1059)
   RS->>RL: Gift wrap → merchant root key
   RS-->>T: receipt event id + claim URL (k in the fragment)
-  T->>C: Show QR: https://r.ipplus.example/c#k=…
+  T->>C: Show QR: https://r.goonerspay.example/c#k=…
   C->>RL: NIP-42 AUTH as claim key, REQ {kinds:[1059], #p:[P_k]}
   RL-->>C: Gift wrap
-  C->>C: Unwrap, verify seal and inner signatures,<br/>check the signer against ipplus.example NIP-05
+  C->>C: Unwrap, verify seal and inner signatures,<br/>check the signer against goonerspay.example NIP-05
   opt Customer has a Nostr identity
     C->>RL: Re-wrap the receipt to their own npub (kept in their inbox)
   end
@@ -100,7 +100,7 @@ sequenceDiagram
 The customer does not need an app, an account, a phone number or an e-mail address:
 
 1. For each receipt the enclave derives a **one-time claim key** `k` (32 random bytes) and wraps the receipt to `P_k = k·G`.
-2. The terminal shows `https://r.ipplus.example/c#k=<hex>`. The secret is in the **URL fragment**, which browsers never send to the server.
+2. The terminal shows `https://r.goonerspay.example/c#k=<hex>`. The secret is in the **URL fragment**, which browsers never send to the server.
 3. The page is static. It runs the relay query and decryption in the browser, verifies both signatures, and renders the receipt. It offers "save to my Nostr inbox", "download PDF" and "share".
 4. When the customer's client authenticates to the relay as `P_k` (NIP-42), the relay records that the receipt was **claimed**. This is useful evidence in "not recognized" disputes ([01 §7.2](01-acquiring-engine.md#72-automated-evidence)). The claim page discloses this.
 5. Unclaimed claim wraps expire from relays after 90 days (NIP-40 `expiration` on the wrap). The merchant's copy and the archive keep the receipt.
@@ -109,16 +109,16 @@ The customer does not need an app, an account, a phone number or an e-mail addre
 
 ```json
 {
-  "id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
-  "pubkey": "3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f",
+  "id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
+  "pubkey": "efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6",
   "created_at": 1793295730,
   "kind": 7711,
   "tags": [
-    ["merchant", "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"],
-    ["e", "32f69ea4fc50d9c1ce32bf4639a65196806ad747dab5b33184485b805c920bda", "wss://relay.ipplus.example", "journal"]
+    ["merchant", "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"],
+    ["e", "a14d60ce8cf49c2c466a55a184869f29ef6954e6383144abe702bbec4c74e02b", "wss://relay.goonerspay.example", "journal"]
   ],
-  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"authorization\":{\"approved_at\":\"2026-10-29T17:42:10Z\",\"code\":\"B7K2Q9\",\"rrn\":\"630217004211\",\"stan\":\"004211\",\"terminal_id\":\"TP000418\"},\"fiscal_note\":\"Comprovante de pagamento. Não é documento fiscal.\",\"installments\":{\"count\":1,\"type\":\"none\"},\"merchant\":{\"address\":\"Rua Augusta 1500, São Paulo - SP\",\"cnpj\":\"12.345.678/0001-95\",\"id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"name\":\"Café Aurora\",\"nip05\":\"cafeaurora@ipplus.example\"},\"method\":{\"aid\":\"A0000000031010\",\"application_label\":\"VISA CREDITO\",\"brand\":\"visa\",\"cvm\":\"no_cvm\",\"entry_mode\":\"contactless\",\"funding\":\"credit\",\"last4\":\"0119\",\"type\":\"card\"},\"payment_intent_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"receipt_id\":\"rcpt_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"settlement_date\":\"2026-10-29\",\"v\":1}",
-  "sig": "808723eab4067e01ac8f7b726a670c449a0df02b64cc029402157334153feb3672fe0d5f8b6092322eef47f4faebe199d14bb5df53a81b4b069cfdf015b02753"
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"authorization\":{\"approved_at\":\"2026-10-29T17:42:10Z\",\"code\":\"B7K2Q9\",\"rrn\":\"630217004211\",\"stan\":\"004211\",\"terminal_id\":\"TP000418\"},\"fiscal_note\":\"Comprovante de pagamento. Não é documento fiscal.\",\"installments\":{\"count\":1,\"type\":\"none\"},\"merchant\":{\"address\":\"Rua Augusta 1500, São Paulo - SP\",\"cnpj\":\"12.345.678/0001-95\",\"id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"name\":\"Café Aurora\",\"nip05\":\"cafeaurora@goonerspay.example\"},\"method\":{\"aid\":\"A0000000031010\",\"application_label\":\"VISA CREDITO\",\"brand\":\"visa\",\"cvm\":\"no_cvm\",\"entry_mode\":\"contactless\",\"funding\":\"credit\",\"last4\":\"0119\",\"type\":\"card\"},\"payment_intent_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"receipt_id\":\"rcpt_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"settlement_date\":\"2026-10-29\",\"v\":1}",
+  "sig": "a805775146ef636f5783b6b32d8ba89a2c82d9ec9563ac5329e76fc2499672782ebccbf08c0cec7d3333786420cb9aaa9bcbc6ea1a47c72544761e061792a845"
 }
 ```
 
@@ -130,7 +130,7 @@ The sealed and wrapped forms are in [`nostr/examples/1059-receipt-giftwrap.json`
 
 1. Unwrap the 1059 with the claim key and check the wrap's signature. Decrypt the seal and check that its signature is by `pubkey` P.
 2. Decrypt the inner event. Check that its `pubkey` equals the seal's (anti-impersonation), and check its `id` and `sig`.
-3. Check that P is the platform receipts key published at `https://ipplus.example/.well-known/nostr.json?name=_receipts`, cached and pinned in the merchant app.
+3. Check that P is the platform receipts key published at `https://goonerspay.example/.well-known/nostr.json?name=_receipts`, cached and pinned in the merchant app.
 4. Validate the content against [`kind-7711.receipt.schema.json`](../nostr/schemas/kind-7711.receipt.schema.json).
 5. Optionally, fetch the inclusion proof ([§6.5](#65-verification)) once the day's statement is published.
 
@@ -168,18 +168,18 @@ The merchant root key publishes a replaceable kind 17710 event listing the devic
 
 ```json
 {
-  "id": "b899e480051adaea43b611448d246710582ffcf1e6cee0e4183661811698c42b",
-  "pubkey": "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1",
+  "id": "eeb8fda719fa5813d637989236a770842af723e978911f8c8506f14f4923e8bf",
+  "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
   "created_at": 1793275930,
   "kind": 17710,
   "tags": [
     ["v", "1"],
     ["merchant", "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"],
-    ["device", "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970", "android", "Caixa 1", "1793275930"],
-    ["device", "216373baea4a19a6181a7f2112e7008d1ab9a0fd0f8e2c45c0a1d470e6ea7dfe", "ios", "iPad balcão", "1793275930"]
+    ["device", "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2", "android", "Caixa 1", "1793275930"],
+    ["device", "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510", "ios", "iPad balcão", "1793275930"]
   ],
   "content": "",
-  "sig": "740f97169d0a83ee1a3f42c6865ff194868ee668f6ff542126ff1aa5aeab41f6cf91d078cd8187397dee152054a1a24f9fbd0ca60a07a4844324e106a0c253b8"
+  "sig": "b19a1314953b8b64b8bc51bdac2ef1d9350d64e6b8818d28bd23d394a51c35239dadfdcc491ac62379d86587af0123317ce08f81ad6fb8dd244911abbef222ad"
 }
 ```
 
@@ -235,7 +235,7 @@ flowchart TB
   RR --> BODY["Statement body<br/>totals, count, lines, receipts_root"]
   BODY -->|"SHA-256(canonical JSON)"| SC["statement_commitment"]
   SALT["Per-merchant, per-day random salt<br/>(only in the encrypted statement)"] --> LEAF
-  SC --> LEAF["Log leaf = 'ipplus/v1/statement-leaf' ‖ salt ‖ commitment"]
+  SC --> LEAF["Log leaf = 'goonerspay/v1/statement-leaf' ‖ salt ‖ commitment"]
   LEAF --> MT2["Daily log tree<br/>all merchants' leaves + dummy padding,<br/>sorted by leaf hash"]
   MT2 --> ROOT["kind 7715 root (public), signed,<br/>prev = yesterday's root event"]
   ROOT --> TSA["RFC 3161 timestamp (ICP-Brasil TSA)<br/>+ OpenTimestamps (Bitcoin)"]
@@ -248,7 +248,7 @@ flowchart TB
 ```text
 receipts_root        = MTH( [receipt_event_id_1, …, receipt_event_id_n] )              (RFC 6962, SHA-256)
 statement_commitment = SHA-256( canonical_json(statement_body) )
-log_leaf             = "ipplus/v1/statement-leaf" ‖ salt(32 B) ‖ statement_commitment(32 B)
+log_leaf             = "goonerspay/v1/statement-leaf" ‖ salt(32 B) ‖ statement_commitment(32 B)
 log_root(date)       = MTH( sort_by_leaf_hash( leaves(date) ∪ dummy_padding(date) ) )
 ```
 
@@ -272,17 +272,17 @@ The example day has four receipts and a log padded to 8 leaves (production pads 
 
 ```json
 {
-  "id": "a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86",
-  "pubkey": "4888d5c500b64a32cd916405177b5fe955ab132e0e37849c4dbc5596cfb78177",
+  "id": "be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d",
+  "pubkey": "34decc3681764daa5132ca5fac8052d0db91b4d9bef3b5dfa7fa001bcadf9f89",
   "created_at": 1793325600,
   "kind": 7715,
   "tags": [
-    ["log", "ipplus-settlement-v1"],
+    ["log", "goonerspay-settlement-v1"],
     ["date", "2026-10-29"],
-    ["e", "840bab1c47c16475b8e21c1ebb2f36cddbd88f852f5582523428433f3131d7a2", "wss://relay.ipplus.example", "prev"]
+    ["e", "6e6de4463518d8806d3787cbd89991db6c45d9eb26e4781600111e9f7c831f47", "wss://relay.goonerspay.example", "prev"]
   ],
-  "content": "{\"date\":\"2026-10-29\",\"log\":\"ipplus-settlement-v1\",\"padding\":\"dummy leaves to a multiple of 8 (production: 4096)\",\"prev\":\"840bab1c47c16475b8e21c1ebb2f36cddbd88f852f5582523428433f3131d7a2\",\"root\":\"adf6366fd45dd7cf04791b22fff0dbdee3b707833d76462ea9ce5be10a0baf74\",\"tree_size\":8,\"v\":1}",
-  "sig": "9cdabcfc838b0f123e4e1af23b6c970f2410c58073061582a3e88e666c71d560f0462c25fb5e8de3b768bd8140fac13808e889f031729a64d269376b25daa775"
+  "content": "{\"date\":\"2026-10-29\",\"log\":\"goonerspay-settlement-v1\",\"padding\":\"dummy leaves to a multiple of 8 (production: 4096)\",\"prev\":\"6e6de4463518d8806d3787cbd89991db6c45d9eb26e4781600111e9f7c831f47\",\"root\":\"dd0bc1db86a3358f397bc33ab9506387e1c65ed8240063cc361b2fb6bd203dd8\",\"tree_size\":8,\"v\":1}",
+  "sig": "3660739aa05ab0f1b4973fecc871c9ce2ed207b9186f0bc7787f1cda71c6a52178b75cacd808280c3d7b362ff730a007b73b7f434f7481e2443234bdd5ddcc13"
 }
 ```
 
@@ -290,25 +290,25 @@ Proof that receipt `2b694e…ee42` is in the statement, and that the statement i
 
 ```json
 {
-  "receipt_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+  "receipt_event_id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
   "statement_inclusion": {
     "leaf_index": 0,
     "tree_size": 4,
     "audit_path": [
-      "ff07e9d7b9d0591122ed14801c77bc9c449cae9da1eddcc2aedeb5fe35ed813a",
-      "1901304a7abb10f03d6c302fa45619d182c9157a2f081e8e0d77fa958090cb85"
+      "308c2b57d5ff75c8bf1849d919e89ba1a46f7132d3c243a0c12d1f7db3cbbd82",
+      "01ed95bad1f07050998fd6ea8d45305e67c432ff94d9903de11f9db7679aa681"
     ],
-    "root": "74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717"
+    "root": "463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f"
   },
   "transparency_inclusion": {
     "leaf_index": 6,
     "tree_size": 8,
     "audit_path": [
-      "71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f",
-      "ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b",
-      "9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014"
+      "05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc",
+      "3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330",
+      "b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022"
     ],
-    "root": "adf6366fd45dd7cf04791b22fff0dbdee3b707833d76462ea9ce5be10a0baf74"
+    "root": "dd0bc1db86a3358f397bc33ab9506387e1c65ed8240063cc361b2fb6bd203dd8"
   }
 }
 ```
@@ -375,7 +375,7 @@ flowchart TB
   RA & RG & RZ --> ING["Ingest → Kafka → WORM archive"]
   SIGN["Receipt / statement signer"] --> RA & RG & RZ
   RA & RG & RZ -- "7715 roots only" --> PUB(["≥ 2 independent public relays"])
-  APP["Merchant and customer clients"] --> GLB["Anycast DNS<br/>relay.ipplus.example"] --> RA & RG & RZ
+  APP["Merchant and customer clients"] --> GLB["Anycast DNS<br/>relay.goonerspay.example"] --> RA & RG & RZ
   APP -.-> OWN(["Merchant's own relays (NIP-65)"])
 ```
 

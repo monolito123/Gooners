@@ -1,4 +1,4 @@
-# InfinityPay+ platform: reference implementation
+# goonersPAY platform: reference implementation
 
 Go 1.26 implementation of the specification in [`../docs`](../docs). It contains everything needed to connect to a card host (sponsor acquirer, then Visa and Mastercard directly) and to a bank for Pix, plus simulators of both counterparties so the full flow runs locally and in CI before any contract is signed.
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec.ipplus.example/nostr/schemas/kind-7714.terminal-journal.schema.json",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-7714.terminal-journal.schema.json",
   "title": "Kind 7714: terminal journal entry (device-signed, hash-chained, gift-wrapped to the platform and the merchant)",
   "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
   "properties": {

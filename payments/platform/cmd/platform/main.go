@@ -1,4 +1,4 @@
-// Command platform runs the InfinityPay+ platform: API, terminal and Pix webhook listeners,
+// Command platform runs the goonersPAY platform: API, terminal and Pix webhook listeners,
 // the authorization switch with its store-and-forward worker, webhook delivery, scheduled
 // releases and payout reconciliation.
 //

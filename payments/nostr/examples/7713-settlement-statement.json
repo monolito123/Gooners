@@ -1,20 +1,20 @@
 {
-  "id": "1fdd74f5dc92d4a8bb7a33a1e25c60dae11389db29e0cb790ee5c98079965c04",
-  "pubkey": "3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f",
+  "id": "5d42a2272879566eb1f918d738b223cdc5ac7135ae65aea020357110d69d809d",
+  "pubkey": "efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6",
   "created_at": 1793325660,
   "kind": 7713,
   "tags": [
     [
       "merchant",
-      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+      "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
     ],
     [
       "e",
-      "a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86",
-      "wss://relay.ipplus.example",
+      "be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d",
+      "wss://relay.goonerspay.example",
       "transparency"
     ]
   ],
-  "content": "{\"count\":4,\"currency\":\"BRL\",\"date\":\"2026-10-29\",\"lines\":[{\"amount\":12990,\"fee\":414,\"receipt_event_id\":\"2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42\",\"settles\":\"instant\"},{\"amount\":4500,\"fee\":62,\"receipt_event_id\":\"6a0e92227f246496afcc83676d0a8dc0418eab6f53c4709bc369324cfbb0fa09\",\"settles\":\"instant\"},{\"amount\":2390,\"fee\":0,\"receipt_event_id\":\"4574c3689bdd9d6f18fa665e32aa0560e10538bab3cf1f7f24952076a6fffd8e\",\"settles\":\"instant\"},{\"amount\":31000,\"fee\":1547,\"receipt_event_id\":\"1ed0641a8feceb3260e87a3e3130f14bcf21a0e00d54f5245faee4797c4f4052\",\"settles\":\"per_installment\"}],\"merchant_id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"receipts_root\":\"74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717\",\"receipts_tree\":\"rfc6962-sha256, leaves = receipt event ids (32 bytes) in capture order\",\"statement_commitment\":\"e5dfb73e31ccd61e49cfef598490fc59f87a45f292214f5e8e8f74c9c22dcc5b\",\"totals\":{\"chargebacks\":0,\"fees\":2023,\"gross\":50880,\"net\":48857,\"refunds\":0},\"transparency\":{\"audit_path\":[\"71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f\",\"ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b\",\"9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014\"],\"leaf_index\":6,\"leaf_salt\":\"effea16df937b6bb7038c4f231afec47fedccbc19631431f72e35d6edbe20713\",\"root_event_id\":\"a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86\",\"tree_size\":8},\"v\":1}",
-  "sig": "a8500e7896dfcb25715e4856f52e233babbe49d6a7c43ac74be8872e270c6cac728066a7fc7dfb7afdb1ad60186fb096a8fd8b4227e398fefb8b1ce59d26e005"
+  "content": "{\"count\":4,\"currency\":\"BRL\",\"date\":\"2026-10-29\",\"lines\":[{\"amount\":12990,\"fee\":414,\"receipt_event_id\":\"ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2\",\"settles\":\"instant\"},{\"amount\":4500,\"fee\":62,\"receipt_event_id\":\"430b34814da944656fd339258212dbb06eb466a3a965e92dc2c34b5ea6b96422\",\"settles\":\"instant\"},{\"amount\":2390,\"fee\":0,\"receipt_event_id\":\"285d0cf3aa41e475eccc60d5f71204dff3c8d199177275337ad5e0f3256009a9\",\"settles\":\"instant\"},{\"amount\":31000,\"fee\":1547,\"receipt_event_id\":\"b7ca94f3f94a6ab17c0812e0110636c8b55617a08271e188579296e4e26ac9f0\",\"settles\":\"per_installment\"}],\"merchant_id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"receipts_root\":\"463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f\",\"receipts_tree\":\"rfc6962-sha256, leaves = receipt event ids (32 bytes) in capture order\",\"statement_commitment\":\"3acf12db8c6f7c767c6ea37396e222d7260d547c278fe92be0328c67c6b6cf5a\",\"totals\":{\"chargebacks\":0,\"fees\":2023,\"gross\":50880,\"net\":48857,\"refunds\":0},\"transparency\":{\"audit_path\":[\"05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc\",\"3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330\",\"b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022\"],\"leaf_index\":2,\"leaf_salt\":\"0e710581771871b231503a927622127ddeecab43018ccf88b36f90bf2a2af9a0\",\"root_event_id\":\"be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d\",\"tree_size\":8},\"v\":1}",
+  "sig": "9d0294ed328f69398529203bc9453d8da2d9cd61bc053dfa361d95ab2fe0835fc2aa2d07f98c57349baf08b5c561ab3e3b6cf88882e7b4f9ebf10371c01eef63"
 }

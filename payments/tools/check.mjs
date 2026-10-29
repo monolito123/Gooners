@@ -284,12 +284,12 @@ check(apiChecked >= 20, `${apiChecked} request and response examples matched to 
 section('5. Design tokens: contrast and colour-vision tables');
 const tokens = JSON.parse(readFileSync(join(root, 'design', 'tokens.json'), 'utf8'));
 const tok = resolveTokens(tokens);
-for (const p of tokens.$extensions['ipplus.contrastPairs']) {
+for (const p of tokens.$extensions['goonerspay.contrastPairs']) {
   const c = contrast(tok(p.theme, p.fg), tok(p.theme, p.bg));
   if (c < p.min) bad(`${p.theme} ${p.fg} on ${p.bg}: ${fmt(c)} < ${p.min}`);
 }
-ok(`${tokens.$extensions['ipplus.contrastPairs'].length} token pairs meet their WCAG minimum`);
-for (const p of tokens.$extensions['ipplus.rejected']) if (contrast(p.fg, p.bg) >= p.min) bad(`rejected pair ${p.fg}/${p.bg} actually passes`);
+ok(`${tokens.$extensions['goonerspay.contrastPairs'].length} token pairs meet their WCAG minimum`);
+for (const p of tokens.$extensions['goonerspay.rejected']) if (contrast(p.fg, p.bg) >= p.min) bad(`rejected pair ${p.fg}/${p.bg} actually passes`);
 let rows = 0;
 for (const d of docs) {
   for (const m of d.text.matchAll(/\| `(#[0-9A-F]{6})` \| `(#[0-9A-F]{6})` \| ([0-9.]+):1 \|/g)) {

@@ -15,7 +15,7 @@ import (
 const examples = "../../../nostr/examples"
 
 func det(label string) []byte {
-	h := sha256.Sum256([]byte("ipplus-spec/det/" + label))
+	h := sha256.Sum256([]byte("goonerspay-spec/det/" + label))
 	return h[:]
 }
 
@@ -27,7 +27,7 @@ func det32(label string) *[32]byte {
 
 func testKey(t *testing.T, role string) Keys {
 	t.Helper()
-	h := sha256.Sum256([]byte("ipplus-spec/test-key/" + role))
+	h := sha256.Sum256([]byte("goonerspay-spec/test-key/" + role))
 	k, err := KeysFromSecret(h[:])
 	if err != nil {
 		t.Fatal(err)

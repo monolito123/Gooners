@@ -1,6 +1,6 @@
 {
-  "id": "13b96ab144bb14e4d539d98fa52efb59366f5b8bef55f97741dffeba614c131a",
-  "pubkey": "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1",
+  "id": "273c25b5c397eb4f03b864c456d8fc3ae35d47900b817b7915c57be2ae36019c",
+  "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
   "created_at": 1793275940,
   "kind": 17711,
   "tags": [
@@ -10,13 +10,13 @@
     ],
     [
       "relay",
-      "wss://relay.ipplus.example"
+      "wss://relay.goonerspay.example"
     ],
     [
       "relay",
-      "wss://relay2.ipplus.example"
+      "wss://relay2.goonerspay.example"
     ]
   ],
-  "content": "{\"city\":\"São Paulo\",\"cnpj\":\"12.345.678/0001-95\",\"display_name\":\"Café Aurora\",\"methods\":[\"card_present\",\"pix\",\"payment_link\"],\"nip05\":\"cafeaurora@ipplus.example\",\"receipts\":{\"relays\":[\"wss://relay.ipplus.example\",\"wss://relay2.ipplus.example\"],\"signer\":\"3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f\"},\"v\":1}",
-  "sig": "357b0e06158f53ccb5425ee9eccb796788818bdb2547f89d0b20d1a33def6b8e8eed952e6f00cd8595e06ebe649c7b21003dbf78548cbed4c3983ca6e5910480"
+  "content": "{\"city\":\"São Paulo\",\"cnpj\":\"12.345.678/0001-95\",\"display_name\":\"Café Aurora\",\"methods\":[\"card_present\",\"pix\",\"payment_link\"],\"nip05\":\"cafeaurora@goonerspay.example\",\"receipts\":{\"relays\":[\"wss://relay.goonerspay.example\",\"wss://relay2.goonerspay.example\"],\"signer\":\"efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6\"},\"v\":1}",
+  "sig": "003d1bb8c8fd1fe713d574f953a4e2a4e7510217d67751bed55cb5eaa4bc6ddc638d6e9a8dadc29f41c7562a89bc804002d0009a2e9cd4debccf236a707126a4"
 }

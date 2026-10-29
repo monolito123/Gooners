@@ -24,12 +24,12 @@ const K = {
   claim1: testKey('customer-claim-1'),
 };
 write('keys.json', {
-  warning: 'PUBLIC TEST KEYS. Secret key = SHA-256("ipplus-spec/test-key/" + role). Never use for anything real.',
+  warning: 'PUBLIC TEST KEYS. Secret key = SHA-256("goonerspay-spec/test-key/" + role). Never use for anything real.',
   keys: Object.values(K).map(({ role, pk, npub }) => ({ role, pubkey: pk, npub })),
 });
 
 const T0 = 1793295730; // 2026-10-29T17:42:10Z
-const RELAY = 'wss://relay.ipplus.example';
+const RELAY = 'wss://relay.goonerspay.example';
 const MERCHANT_ID = 'mer_01JB8Z2K5D6F7G8H9J0K1M2N3P';
 
 // ---------- 17710 device authorization list (root-signed, public, replaceable) ----------
@@ -55,15 +55,15 @@ const profile = signEvent(
   {
     kind: 17711,
     created_at: T0 - 19790,
-    tags: [['v', '1'], ['relay', RELAY], ['relay', 'wss://relay2.ipplus.example']],
+    tags: [['v', '1'], ['relay', RELAY], ['relay', 'wss://relay2.goonerspay.example']],
     content: canonicalJson({
       v: 1,
       display_name: 'Café Aurora',
-      nip05: 'cafeaurora@ipplus.example',
+      nip05: 'cafeaurora@goonerspay.example',
       cnpj: '12.345.678/0001-95',
       city: 'São Paulo',
       methods: ['card_present', 'pix', 'payment_link'],
-      receipts: { relays: [RELAY, 'wss://relay2.ipplus.example'], signer: K.receipts.pk },
+      receipts: { relays: [RELAY, 'wss://relay2.goonerspay.example'], signer: K.receipts.pk },
     }),
   },
   K.root,
@@ -81,7 +81,7 @@ const nip98 = signEvent(
     kind: 27235,
     created_at: T0 - 600,
     tags: [
-      ['u', 'https://api.ipplus.example/v1/auth/nostr'],
+      ['u', 'https://api.goonerspay.example/v1/auth/nostr'],
       ['method', 'POST'],
       ['payload', bytesToHex(sha256(utf8ToBytes(loginBody)))],
     ],
@@ -108,8 +108,8 @@ const payReq = signEvent(
       amount: { value: 12990, currency: 'BRL', exponent: 2 },
       description: 'Mesa 4: 2 cappuccinos, 1 pão de queijo, 1 suco',
       methods: ['card_present', 'pix'],
-      checkout_url: 'https://pay.ipplus.example/pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0',
-      pix_br_code: '00020101021226790014br.gov.bcb.pix2557pix.ipplus.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***63047CD0',
+      checkout_url: 'https://pay.goonerspay.example/pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0',
+      pix_br_code: '00020101021226830014br.gov.bcb.pix2561pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***6304EC1C',
       expires_at: iso(T0 + 870),
     }),
   },
@@ -178,7 +178,7 @@ const receipts = sales.map((s, i) =>
         v: 1,
         receipt_id: 'rcpt_' + s.pi.slice(3),
         payment_intent_id: s.pi,
-        merchant: { id: MERCHANT_ID, name: 'Café Aurora', cnpj: '12.345.678/0001-95', address: 'Rua Augusta 1500, São Paulo - SP', nip05: 'cafeaurora@ipplus.example' },
+        merchant: { id: MERCHANT_ID, name: 'Café Aurora', cnpj: '12.345.678/0001-95', address: 'Rua Augusta 1500, São Paulo - SP', nip05: 'cafeaurora@goonerspay.example' },
         amount: { value: s.amount, currency: 'BRL', exponent: 2 },
         method: s.method,
         ...(s.auth ? { authorization: { ...s.auth, terminal_id: 'TP000418', approved_at: iso(s.at) } } : {}),
@@ -202,7 +202,7 @@ const receiptWrapped = giftWrap(receipts[0], K.receipts, K.claim1.pk, 'receipt-0
 write('1059-receipt-giftwrap.json', {
   note: 'Receipt 7711 sealed (kind 13, signed by the receipts key) and gift-wrapped (kind 1059) to the one-time claim key.',
   recipient: 'customer-claim-1',
-  claim_url: 'https://r.ipplus.example/c#k=' + K.claim1.skHex,
+  claim_url: 'https://r.goonerspay.example/c#k=' + K.claim1.skHex,
   ...receiptWrapped,
 });
 
@@ -262,8 +262,8 @@ const prevRootEvent = signEvent(
   {
     kind: 7715,
     created_at: 1793239200, // 2026-10-29T02:00:00Z
-    tags: [['log', 'ipplus-settlement-v1'], ['date', '2026-10-28']],
-    content: canonicalJson({ v: 1, log: 'ipplus-settlement-v1', date: '2026-10-28', tree_size: prevLog.leaves.length, root: prevLog.root, prev: null, padding: 'dummy leaves to a multiple of 8 (production: 4096)' }),
+    tags: [['log', 'goonerspay-settlement-v1'], ['date', '2026-10-28']],
+    content: canonicalJson({ v: 1, log: 'goonerspay-settlement-v1', date: '2026-10-28', tree_size: prevLog.leaves.length, root: prevLog.root, prev: null, padding: 'dummy leaves to a multiple of 8 (production: 4096)' }),
   },
   K.transparency,
   'root-2026-10-28',
@@ -278,8 +278,8 @@ const rootEvent = signEvent(
   {
     kind: 7715,
     created_at: 1793325600, // 2026-10-30T02:00:00Z
-    tags: [['log', 'ipplus-settlement-v1'], ['date', '2026-10-29'], ['e', prevRootEvent.id, RELAY, 'prev']],
-    content: canonicalJson({ v: 1, log: 'ipplus-settlement-v1', date: '2026-10-29', tree_size: log.leaves.length, root: log.root, prev: prevRootEvent.id, padding: 'dummy leaves to a multiple of 8 (production: 4096)' }),
+    tags: [['log', 'goonerspay-settlement-v1'], ['date', '2026-10-29'], ['e', prevRootEvent.id, RELAY, 'prev']],
+    content: canonicalJson({ v: 1, log: 'goonerspay-settlement-v1', date: '2026-10-29', tree_size: log.leaves.length, root: log.root, prev: prevRootEvent.id, padding: 'dummy leaves to a multiple of 8 (production: 4096)' }),
   },
   K.transparency,
   'root-2026-10-29',
@@ -346,7 +346,7 @@ const link = signEvent(
     kind: 37710,
     created_at: T0 - 86400,
     tags: [['d', 'cappuccino'], ['title', 'Cappuccino'], ['price', '990', 'BRL'], ['merchant', K.root.pk]],
-    content: canonicalJson({ v: 1, title: 'Cappuccino', amount: { value: 990, currency: 'BRL', exponent: 2 }, checkout_url: 'https://pay.ipplus.example/l/cafeaurora/cappuccino', methods: ['card', 'pix'] }),
+    content: canonicalJson({ v: 1, title: 'Cappuccino', amount: { value: 990, currency: 'BRL', exponent: 2 }, checkout_url: 'https://pay.goonerspay.example/l/cafeaurora/cappuccino', methods: ['card', 'pix'] }),
   },
   K.android,
   'link',

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec.ipplus.example/nostr/schemas/kind-7711.receipt.schema.json",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-7711.receipt.schema.json",
   "title": "Kind 7711: payment receipt (signed by the platform receipts key, delivered gift-wrapped)",
   "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
   "properties": {

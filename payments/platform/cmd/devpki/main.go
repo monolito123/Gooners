@@ -25,7 +25,7 @@ func main() {
 		}
 	}
 	must(os.MkdirAll(*out, 0o755))
-	ca, err := testpki.NewCA("InfinityPay+ dev CA")
+	ca, err := testpki.NewCA("goonersPAY dev CA")
 	must(err)
 	must(os.WriteFile(filepath.Join(*out, "ca.pem"), ca.PEM, 0o644))
 	hs := splitComma(*hosts)

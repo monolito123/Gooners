@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec.ipplus.example/nostr/schemas/kind-7713.settlement-statement.schema.json",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-7713.settlement-statement.schema.json",
   "title": "Kind 7713: daily settlement statement (signed by the platform, gift-wrapped to the merchant)",
   "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
   "properties": {

@@ -1,4 +1,4 @@
-# InfinityPay+ platform
+# goonersPAY platform
 .PHONY: build test race lint vuln smoke up down fmt
 
 build:

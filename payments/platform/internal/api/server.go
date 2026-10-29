@@ -280,7 +280,7 @@ func problem(w http.ResponseWriter, r *http.Request, status int, code, title, de
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type": "https://docs.ipplus.example/errors/" + code, "title": title, "status": status, "code": strings.ReplaceAll(code, "-", "_"),
+		"type": "https://docs.goonerspay.example/errors/" + code, "title": title, "status": status, "code": strings.ReplaceAll(code, "-", "_"),
 		"detail": detail, "instance": r.URL.Path, "request_id": w.Header().Get("Request-Id"),
 	})
 }

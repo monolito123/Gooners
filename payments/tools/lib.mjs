@@ -10,7 +10,7 @@ import * as nip44 from 'nostr-tools/nip44';
 
 export { bytesToHex, hexToBytes, utf8ToBytes, sha256, nip19, nip44 };
 
-const LABEL_PREFIX = 'ipplus-spec/test-key/';
+const LABEL_PREFIX = 'goonerspay-spec/test-key/';
 
 /** Deterministic test key for a role, e.g. testKey('merchant-root'). */
 export function testKey(role) {
@@ -21,7 +21,7 @@ export function testKey(role) {
 
 /** Deterministic 32-byte value for a label (nonces, salts, aux randomness). */
 export function det(label) {
-  return sha256(utf8ToBytes('ipplus-spec/det/' + label));
+  return sha256(utf8ToBytes('goonerspay-spec/det/' + label));
 }
 
 /** Sign a NIP-01 event. Aux randomness is derived from the label so examples are reproducible. */
@@ -169,7 +169,7 @@ export function verifyInclusion(leafData, index, treeSize, path, rootHex) {
 
 /** Leaf data committing a merchant's statement into the public transparency log (03 §6.2). */
 export function statementLeafData(saltHex, statementCommitmentHex) {
-  return concatBytes(utf8ToBytes('ipplus/v1/statement-leaf'), hexToBytes(saltHex), hexToBytes(statementCommitmentHex));
+  return concatBytes(utf8ToBytes('goonerspay/v1/statement-leaf'), hexToBytes(saltHex), hexToBytes(statementCommitmentHex));
 }
 
 // ---------- misc ----------

@@ -47,11 +47,11 @@ func TestBCBDynamicExampleReencodes(t *testing.T) {
 
 // The dynamic code used in docs/02-api-reference.md §4.4.
 func TestSpecExample(t *testing.T) {
-	code, err := Encode(Payload{Dynamic: true, URL: "pix.ipplus.example/qr/v2/9d36b84fc70b478fb95c12729b90ca25", Amount: "129.90", MerchantName: "CAFE AURORA", MerchantCity: "SAO PAULO"})
+	code, err := Encode(Payload{Dynamic: true, URL: "pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca25", Amount: "129.90", MerchantName: "CAFE AURORA", MerchantCity: "SAO PAULO"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "00020101021226790014br.gov.bcb.pix2557pix.ipplus.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***63047CD0"
+	want := "00020101021226830014br.gov.bcb.pix2561pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***6304EC1C"
 	if code != want {
 		t.Fatalf("got %s", code)
 	}

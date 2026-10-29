@@ -132,12 +132,12 @@ Every event is a CloudEvents 1.0 JSON envelope. The schema registry rejects any 
 {
   "specversion": "1.0",
   "id": "evt_01JBK3W8T6R4P2N0M8K6J4H2G0",
-  "source": "ipplus://ledger/sa-east-1",
+  "source": "goonerspay://ledger/sa-east-1",
   "type": "ledger.journal.posted",
   "subject": "jr_01JBK3W8T6R4P2N0M8K6J4H2G1",
   "time": "2026-10-29T17:42:10.348Z",
   "datacontenttype": "application/json",
-  "dataschema": "https://schemas.ipplus.example/ledger/journal.posted/1.json",
+  "dataschema": "https://schemas.goonerspay.example/ledger/journal.posted/1.json",
   "tenantid": "ten_01JB7X0000000000000000000A",
   "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
   "data": {

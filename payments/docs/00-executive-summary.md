@@ -1,6 +1,6 @@
 # Module 1: Executive Summary and BaaS Ecosystem Architecture
 
-> **Working title.** "InfinityPay+" is the brief's name for this platform. It is close to *InfinitePay*, a CloudWalk brand in Brazil, so pick a distinct name before any public use. The documents say "the platform".
+> **Name.** The platform is **goonersPAY**, part of the Gooners brand family (Gooners, Gooners Law). The original brief called it "goonersPAY", a name too close to *InfinitePay* (CloudWalk) to use. Before launch, run an INPI trademark search in class 36 (financial services) and register the domains. The documents say "the platform" or "goonersPAY".
 
 ---
 

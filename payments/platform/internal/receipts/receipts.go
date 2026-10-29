@@ -115,7 +115,7 @@ type Issued struct {
 // Issuer signs receipts. In production the Author is the attested enclave signer.
 type Issuer struct {
 	Author      nostr.Author
-	ClaimBase   string        // e.g. https://r.ipplus.example/c
+	ClaimBase   string        // e.g. https://r.goonerspay.example/c
 	ClaimExpiry time.Duration // NIP-40 expiration on claim wraps (default 90 days)
 }
 

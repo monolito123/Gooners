@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec.ipplus.example/nostr/schemas/kind-27711.reconciliation-request.schema.json",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-27711.reconciliation-request.schema.json",
   "title": "Kind 27711: reconciliation request from a device (ephemeral)",
   "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
   "properties": { "kind": { "const": 27711 } },

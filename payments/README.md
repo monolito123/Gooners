@@ -1,4 +1,4 @@
-# InfinityPay+ (working title): merchant acquiring and BaaS platform specification
+# goonersPAY: merchant acquiring and BaaS platform specification
 
 Architecture and engineering specification (REA / PRD) for a Brazil-first merchant acquiring and Banking-as-a-Service platform with:
 
@@ -9,7 +9,7 @@ Architecture and engineering specification (REA / PRD) for a Brazil-first mercha
 - A **design system** whose colour claims are computed, not asserted.
 - Three re-scoped enhancements: a **risk-priced instant liquidity engine**, **zero-knowledge selective disclosure** for merchants, and an **on-device fraud shield**.
 
-> **Status: specification plus a tested reference implementation.** [`platform/`](platform) is the Go implementation of the integration layer (ISO 8583 switch, ledger, Pix through API Pix, receipts, API), with simulators of the card host and the Pix PSP. [`integration/`](integration) explains how to connect it to a sponsor acquirer, Visa, Mastercard and a bank for Pix. Not legal advice. The regulatory reading in [00 §7](docs/00-executive-summary.md#7-regulatory-posture-brazil-first) must be confirmed by counsel. "InfinityPay+" is a working title: it is close to *InfinitePay* (CloudWalk), so pick a distinct brand before public use. The platform's hosts use the reserved `.example` domain.
+> **Status: specification plus a tested reference implementation.** [`platform/`](platform) is the Go implementation of the integration layer (ISO 8583 switch, ledger, Pix through API Pix, receipts, API), with simulators of the card host and the Pix PSP. [`integration/`](integration) explains how to connect it to a sponsor acquirer, Visa, Mastercard and a bank for Pix. Not legal advice. The regulatory reading in [00 §7](docs/00-executive-summary.md#7-regulatory-posture-brazil-first) must be confirmed by counsel. **goonersPAY** is the product name, in the Gooners family with Gooners and Gooners Law. Run an INPI trademark search (class 36, financial services) and register the domains before public launch. The platform's hosts use the reserved `.example` domain.
 
 ## What changed from the brief
 

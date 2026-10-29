@@ -207,8 +207,8 @@ sequenceDiagram
   participant DB as Room outbox
   participant WM as WorkManager
   participant RP as Relay pool
-  participant R1 as relay.ipplus.example
-  participant R2 as relay2.ipplus.example
+  participant R1 as relay.goonerspay.example
+  participant R2 as relay2.goonerspay.example
   VM->>VM: Build 7714 (seq, prev) and sign with the device key
   VM->>DB: INSERT (event id, seq, gift wraps)
   VM->>WM: enqueueUniqueWork("nostr-outbox", APPEND_OR_REPLACE)
@@ -357,7 +357,7 @@ Tests: unit tests (state machines, money), Compose UI tests with screenshot diff
 |------------|-------------|
 | CoreNFC does not let third-party apps select EMV payment applications | Card acceptance on iPhone goes **only** through Apple's ProximityReader framework (Tap to Pay on iPhone) |
 | Tap to Pay on iPhone needs an Apple entitlement and a payment provider Apple has enabled; it runs on iPhone XS or later | The platform must become an enabled provider (or route through one) before iPhone tap is available. Until then: BLE readers |
-| The card data that ProximityReader returns is encrypted for the payment provider | The app forwards it to `terminal.ipplus.example` without ever seeing card data. Same posture as MPoC on Android |
+| The card data that ProximityReader returns is encrypted for the payment provider | The app forwards it to `terminal.goonerspay.example` without ever seeing card data. Same posture as MPoC on Android |
 | Background execution is opportunistic | The outbox syncs on foreground, on `BGAppRefreshTask`, and after silent push. Nothing safety-critical depends on background time |
 | Secure Enclave keys are P-256 only | The secp256k1 device key is wrapped by an Enclave key with ECIES (§3.6) |
 | The NFC and SE Platform (iOS 18.1+, selected countries) is for *presenting* credentials, not accepting them | Out of scope for acceptance. It is the path for a future in-app wallet when the platform issues BaaS cards (entitlement and country availability to be confirmed) |
@@ -546,7 +546,7 @@ sequenceDiagram
 ```swift
 // Security/DeviceKeyVault.swift — wrap the secp256k1 device key with a Secure Enclave P-256 key (ECIES)
 actor DeviceKeyVault {
-    private let tag = Data("br.ipplus.device-wrap".utf8)
+    private let tag = Data("br.com.gooners.pay.device-wrap".utf8)
     private let algorithm: SecKeyAlgorithm = .eciesEncryptionCofactorVariableIVX963SHA256AESGCM
 
     func enclaveKey() throws -> SecKey {

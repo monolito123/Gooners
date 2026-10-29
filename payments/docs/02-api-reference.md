@@ -10,10 +10,10 @@ The REST API is how merchants' apps, BaaS partners and the platform's own client
 
 | Host | Purpose | PCI scope | Client authentication |
 |------|---------|-----------|-----------------------|
-| `api.ipplus.example` | Every non-card endpoint | Out of scope | OAuth 2.0 access token bound to an mTLS certificate (partners), or a DPoP-bound session from Nostr login (merchant apps) |
-| `vault.ipplus.example` | Accepts PANs (hosted fields, server-to-server tokenization) | **CDE** | Publishable key (browser) or mTLS + token (PCI-compliant partners) |
-| `terminal.ipplus.example` | Card-present authorizations from terminals (MPoC apps, BLE reader bridges) | **CDE** | Terminal mTLS certificate + attestation token |
-| `*.sandbox.ipplus.example` | Sandbox with scheme simulators, test cards and simulated relays | None | Same as production, with sandbox credentials |
+| `api.goonerspay.example` | Every non-card endpoint | Out of scope | OAuth 2.0 access token bound to an mTLS certificate (partners), or a DPoP-bound session from Nostr login (merchant apps) |
+| `vault.goonerspay.example` | Accepts PANs (hosted fields, server-to-server tokenization) | **CDE** | Publishable key (browser) or mTLS + token (PCI-compliant partners) |
+| `terminal.goonerspay.example` | Card-present authorizations from terminals (MPoC apps, BLE reader bridges) | **CDE** | Terminal mTLS certificate + attestation token |
+| `*.sandbox.goonerspay.example` | Sandbox with scheme simulators, test cards and simulated relays | None | Same as production, with sandbox credentials |
 
 The PAN never transits `api.` hosts. Hosted fields and SDKs post card data straight to `vault.`, so a merchant integrating through them stays in SAQ A scope.
 
@@ -47,7 +47,7 @@ Errors use Problem Details (RFC 9457) with a stable `code`:
 
 ```json
 {
-  "type": "https://docs.ipplus.example/errors/card-declined",
+  "type": "https://docs.goonerspay.example/errors/card-declined",
   "title": "The card was declined",
   "status": 402,
   "code": "card_declined",
@@ -124,7 +124,7 @@ The edge (Cloudflare API Shield with the platform's own CA) validates the client
 
 ```http
 POST /oauth2/token HTTP/2
-Host: api.ipplus.example
+Host: api.goonerspay.example
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20accounts%3Aread
@@ -147,8 +147,8 @@ The app signs a NIP-98 event for this exact URL and method, with the SHA-256 of 
 
 ```http
 POST /v1/auth/nostr HTTP/2
-Host: api.ipplus.example
-Authorization: Nostr eyJpZCI6ImU0ODYyNmM1N2FlMTBlZTdlY2U3OTZjZjAzMDQzOGZiOWI0OWNkMmEyNmZhMTJjN2IxNDdiMDkxYmFjZjRjZGUiLCJwdWJrZXkiOiI4YjEzOTc1MjdlNjg2NTZiMzRjYzUyYjBiMjUxNzY0NWQ2Yzk2MDc3NDdiMzZjZTlmMDA0NmUxMzgzMWY2OTcwIiwiY3JlYXRlZF9hdCI6MTc5MzI5NTEzMCwia2luZCI6MjcyMzUsInRhZ3MiOltbInUiLCJodHRwczovL2FwaS5pcHBsdXMuZXhhbXBsZS92MS9hdXRoL25vc3RyIl0sWyJtZXRob2QiLCJQT1NUIl0sWyJwYXlsb2FkIiwiZjZjOGFlNDZhYzQ1NjI1YmQxMTU0MTljZTA5MjJhNWY3NDAwY2NiMmM3YzVmZWRkOGVlMjM4M2I4ZDkxZmJkNSJdXSwiY29udGVudCI6IiIsInNpZyI6IjE0NzE1NDBhZjMxZTc5MGU5ZDg5ZDAxZjU3NDIwMzEwYjFlYWRjZjA5NzFlZTFjOWNhYmFkY2VkMGE5ZDBkOTc4N2ZkNTM5MTEyNTdiNjFkMzA0Mjc3OWI2OTdjM2M3NmQ3Nzk5YWYyYWYyZjgyOTY0YjM3MTU1Y2Q0YzY1MmQyIn0=
+Host: api.goonerspay.example
+Authorization: Nostr eyJpZCI6ImE5Y2JmMmY4NGNmMThjMWJjMGM4Y2E2NGY1NDU0MWZjNzBiYTczOWFlOTBjNmU1NzJhZTRlM2UzNzVmZDEwZTgiLCJwdWJrZXkiOiI2YTIyZTQzY2M5YmRiZWZhZDdmNDdjZmEzMWQyYjRkYWE0YTE3NjI0NDViNjQ0MzA1YjhkOWE5MGZiN2VkZmUyIiwiY3JlYXRlZF9hdCI6MTc5MzI5NTEzMCwia2luZCI6MjcyMzUsInRhZ3MiOltbInUiLCJodHRwczovL2FwaS5nb29uZXJzcGF5LmV4YW1wbGUvdjEvYXV0aC9ub3N0ciJdLFsibWV0aG9kIiwiUE9TVCJdLFsicGF5bG9hZCIsImY2YzhhZTQ2YWM0NTYyNWJkMTE1NDE5Y2UwOTIyYTVmNzQwMGNjYjJjN2M1ZmVkZDhlZTIzODNiOGQ5MWZiZDUiXV0sImNvbnRlbnQiOiIiLCJzaWciOiJlMmQ3ZTc2NTMyZDkzZDhhMmNiMzg4ZjZjYTA4N2FiNTVkMjU3MDk4YzFhZWMzN2UxNmJhNTk0ZTg5ZTczMjk3YWJhMzMxYzQ4ZmU2NDIwNzQ0MTJiMTYwNjQwNmE5MjBlYzc2MjA3MmUxOGNiOGNkNjFkNWIxMjcwMzE0NDJiYyJ9
 Content-Type: application/json
 ```
 
@@ -203,7 +203,7 @@ stateDiagram-v2
 
 ```http
 POST /v1/payment-intents HTTP/2
-Host: api.ipplus.example
+Host: api.goonerspay.example
 Authorization: Bearer eyJ…
 Api-Version: 2026-10-01
 Idempotency-Key: 01JBK3T2W8C9M4N5P6Q7R8S9TB
@@ -335,7 +335,7 @@ After the challenge the SDK calls `GET /v1/payment-intents/{id}`. The platform h
     }
   },
   "receipt": {
-    "claim_url": "https://r.ipplus.example/c#k=5f0c3e9a17b2d4c86e1f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d"
+    "claim_url": "https://r.goonerspay.example/c#k=5f0c3e9a17b2d4c86e1f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d"
   }
 }
 ```
@@ -354,7 +354,7 @@ Confirming with `"payment_method_type": "pix"` returns a dynamic BR Code. Its pa
   "next_action": {
     "type": "pix_qr",
     "txid": "9d36b84fc70b478fb95c12729b90ca25",
-    "br_code": "00020101021226790014br.gov.bcb.pix2557pix.ipplus.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***63047CD0",
+    "br_code": "00020101021226830014br.gov.bcb.pix2561pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***6304EC1C",
     "expires_at": "2026-10-29T18:11:52Z"
   }
 }
@@ -364,7 +364,7 @@ The `br_code` above has a valid CRC16 (checked by `npm run check`, §12). Paymen
 
 ### 4.5 `POST /v1/terminal/authorizations` (card-present, CDE)
 
-Sent by the MPoC SDK inside the merchant app to `terminal.ipplus.example` over the terminal's mTLS certificate. Card data and PIN are encrypted on the device under DUKPT keys and are opaque to the app itself.
+Sent by the MPoC SDK inside the merchant app to `terminal.goonerspay.example` over the terminal's mTLS certificate. Card data and PIN are encrypted on the device under DUKPT keys and are opaque to the app itself.
 
 ```json
 {
@@ -388,7 +388,7 @@ Sent by the MPoC SDK inside the merchant app to `terminal.ipplus.example` over t
     "verdict_token": "eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig",
     "obtained_at": "2026-10-29T17:40:01Z"
   },
-  "journal_event_id": "32f69ea4fc50d9c1ce32bf4639a65196806ad747dab5b33184485b805c920bda"
+  "journal_event_id": "a14d60ce8cf49c2c466a55a184869f29ef6954e6383144abe702bbec4c74e02b"
 }
 ```
 
@@ -403,8 +403,8 @@ Sent by the MPoC SDK inside the merchant app to `terminal.ipplus.example` over t
   "cvm": "no_cvm",
   "issuer_response": { "arpc_and_scripts": "910A1A2B3C4D5E6F70800000" },
   "receipt": {
-    "nostr_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
-    "claim_qr": "https://r.ipplus.example/c#k=a6971b32af790dd3d60c77b860bee16b4cad4b481729e0c088914b2f18af164b"
+    "nostr_event_id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
+    "claim_qr": "https://r.goonerspay.example/c#k=ada9e69e2445b65e0739afcfe36455f0f2157c9c6edf9fbd3250f48f5408d163"
   },
   "settlement": { "mode": "instant", "estimated_available_at": "2026-10-29T17:42:20Z" }
 }
@@ -447,7 +447,7 @@ A refund is funded from the merchant's available balance. When the balance is sh
 
 ### 4.7 Payment methods (vault, CDE)
 
-`POST https://vault.ipplus.example/v1/payment-methods` (from hosted fields or a PCI-compliant partner):
+`POST https://vault.goonerspay.example/v1/payment-methods` (from hosted fields or a PCI-compliant partner):
 
 ```json
 {
@@ -685,7 +685,7 @@ Requires an HTTP Message Signature (§1.2).
     "address": { "street": "Rua Augusta", "number": "1500", "city": "São Paulo", "state": "SP", "postal_code": "01304-001", "country": "BR" },
     "representatives": [ { "cpf": "12345678909", "name": "Ana Souza", "birth_date": "1990-04-12", "role": "partner" } ]
   },
-  "root_npub": "npub14rqe5wfu2vnw3qf3aa52vd5ym7mcd46m9hqmf6zv9ccgptn5p6ss0c0wx0",
+  "root_npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",
   "contact": { "email": "ana@cafeaurora.example", "phone": "+5511999990000" },
   "settlement": { "default_speed": "instant", "pix_key": { "type": "cnpj", "key": "12345678000195" } }
 }
@@ -703,9 +703,9 @@ Requires an HTTP Message Signature (§1.2).
       { "type": "sanctions_pep", "status": "passed" },
       { "type": "mcc_risk", "status": "passed" }
     ],
-    "next_action": { "type": "liveness", "url": "https://kyb.ipplus.example/l/4cQ2" }
+    "next_action": { "type": "liveness", "url": "https://kyb.goonerspay.example/l/4cQ2" }
   },
-  "root_npub": "npub14rqe5wfu2vnw3qf3aa52vd5ym7mcd46m9hqmf6zv9ccgptn5p6ss0c0wx0",
+  "root_npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",
   "created_at": "2026-10-29T12:00:00Z"
 }
 ```
@@ -716,7 +716,7 @@ Binds a device key. The request carries a device-authorization event (kind 17710
 
 ```json
 {
-  "device_npub": "npub13vfew5n7dpjkkdxv22cty5tkghtvjcrhg7eke60sq3hp8qcld9cqy7kkdp",
+  "device_npub": "npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr",
   "platform": "android",
   "model": "Pixel 9",
   "attestation": {
@@ -725,18 +725,18 @@ Binds a device key. The request carries a device-authorization event (kind 17710
     "play_integrity_token": "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0…"
   },
   "authorization_event": {
-    "id": "b899e480051adaea43b611448d246710582ffcf1e6cee0e4183661811698c42b",
-    "pubkey": "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1",
+    "id": "eeb8fda719fa5813d637989236a770842af723e978911f8c8506f14f4923e8bf",
+    "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
     "created_at": 1793275930,
     "kind": 17710,
     "tags": [
       ["v", "1"],
       ["merchant", "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"],
-      ["device", "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970", "android", "Caixa 1", "1793275930"],
-      ["device", "216373baea4a19a6181a7f2112e7008d1ab9a0fd0f8e2c45c0a1d470e6ea7dfe", "ios", "iPad balcão", "1793275930"]
+      ["device", "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2", "android", "Caixa 1", "1793275930"],
+      ["device", "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510", "ios", "iPad balcão", "1793275930"]
     ],
     "content": "",
-    "sig": "740f97169d0a83ee1a3f42c6865ff194868ee668f6ff542126ff1aa5aeab41f6cf91d078cd8187397dee152054a1a24f9fbd0ca60a07a4844324e106a0c253b8"
+    "sig": "b19a1314953b8b64b8bc51bdac2ef1d9350d64e6b8818d28bd23d394a51c35239dadfdcc491ac62379d86587af0123317ce08f81ad6fb8dd244911abbef222ad"
   }
 }
 ```
@@ -746,7 +746,7 @@ Binds a device key. The request carries a device-authorization event (kind 17710
   "id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M",
   "object": "device",
   "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
-  "device_npub": "npub13vfew5n7dpjkkdxv22cty5tkghtvjcrhg7eke60sq3hp8qcld9cqy7kkdp",
+  "device_npub": "npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr",
   "status": "active",
   "integrity": { "verdict": "strong", "security_level": "strongbox", "os_patch": "2026-10-05" },
   "capabilities": ["tap_to_phone", "pin_on_glass"],
@@ -756,7 +756,7 @@ Binds a device key. The request carries a device-authorization event (kind 17710
 
 ### 8.3 `POST /v1/terminals`
 
-Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate. The terminal PKI issues that certificate after attestation, and its key must be the attested hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). The request carries the certificate's SHA-256, and requests on `terminal.ipplus.example` are then authenticated by that certificate.
+Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate. The terminal PKI issues that certificate after attestation, and its key must be the attested hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). The request carries the certificate's SHA-256, and requests on `terminal.goonerspay.example` are then authenticated by that certificate.
 
 ```json
 { "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M", "type": "mpoc_cots", "certificate_sha256": "d1584e3831c2e9ee819f8f538d2b49bb70875c842070b678a35724243498ec24" }
@@ -788,11 +788,11 @@ Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the
   "net": 48857,
   "transaction_count": 4,
   "statement": {
-    "nostr_event_id": "1fdd74f5dc92d4a8bb7a33a1e25c60dae11389db29e0cb790ee5c98079965c04",
-    "merkle_root": "74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717",
+    "nostr_event_id": "5d42a2272879566eb1f918d738b223cdc5ac7135ae65aea020357110d69d809d",
+    "merkle_root": "463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f",
     "leaf_count": 4
   },
-  "transparency": { "log_date": "2026-10-29", "root_event_id": "a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86" }
+  "transparency": { "log_date": "2026-10-29", "root_event_id": "be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d" }
 }
 ```
 
@@ -800,22 +800,22 @@ Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the
 
 ```json
 {
-  "receipt_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+  "receipt_event_id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
   "statement_inclusion": {
     "leaf_index": 0,
     "tree_size": 4,
     "audit_path": [
-      "ff07e9d7b9d0591122ed14801c77bc9c449cae9da1eddcc2aedeb5fe35ed813a",
-      "1901304a7abb10f03d6c302fa45619d182c9157a2f081e8e0d77fa958090cb85"
+      "308c2b57d5ff75c8bf1849d919e89ba1a46f7132d3c243a0c12d1f7db3cbbd82",
+      "01ed95bad1f07050998fd6ea8d45305e67c432ff94d9903de11f9db7679aa681"
     ]
   },
   "transparency_inclusion": {
     "leaf_index": 6,
     "tree_size": 8,
     "audit_path": [
-      "71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f",
-      "ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b",
-      "9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014"
+      "05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc",
+      "3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330",
+      "b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022"
     ]
   }
 }
@@ -830,7 +830,7 @@ Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the
 Webhooks follow the Standard Webhooks specification. Three headers are signed with HMAC-SHA256 over `webhook-id.webhook-timestamp.body`:
 
 ```http
-POST /hooks/ipplus HTTP/1.1
+POST /hooks/goonerspay HTTP/1.1
 Host: loja.example
 Content-Type: application/json
 webhook-id: msg_01JBK40ZQ8P7Y6X5W4V3U2T1S0

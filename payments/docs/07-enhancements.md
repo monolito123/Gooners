@@ -1,4 +1,4 @@
-# Module 7: "InfinityPay+" Superior Enhancements
+# Module 7: goonersPAY Superior Enhancements
 
 Three features, each re-scoped from the brief so that it is legal, buildable and better than the market baseline. A fourth section lists smaller advantages that fall out of the earlier modules.
 
@@ -232,7 +232,7 @@ fn main(
 | Limit | Consequence |
 |-------|-------------|
 | The issuer is trusted for the truth of the metrics | ZK proves statements about platform-signed data. If the platform's data is wrong, the proof is a correct proof of a wrong number. The transparency log ([03 §6](03-nostr-layer.md#6-verifiable-settlement-transparency-log)) and audited statements are what make the issuer's data trustworthy |
-| Volume *through this platform* is not total revenue | Credentials say "card and Pix volume on InfinityPay+". Verifiers must not read them as total revenue |
+| Volume *through this platform* is not total revenue | Credentials say "card and Pix volume on goonersPAY". Verifiers must not read them as total revenue |
 | Metric gaming (self-purchases to inflate volume) | The risk engine flags circular flows. Flagged months are issued with `flags ≠ 0`, which predicates can require to be zero |
 | Proving cost on phones | Target ≤ 5 s on a mid-range phone for the 12-month circuit. To be validated in a prototype before committing to Tier 2 |
 

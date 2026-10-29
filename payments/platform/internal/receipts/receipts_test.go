@@ -64,7 +64,7 @@ func receipt(root string) Receipt {
 func TestIssueClaimAndMerchantCopies(t *testing.T) {
 	signer, _ := nostr.GenerateKeys()
 	root, _ := nostr.GenerateKeys()
-	is := &Issuer{Author: signer, ClaimBase: "https://r.ipplus.example/c"}
+	is := &Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}
 	out, err := is.Issue(receipt(root.PubHex))
 	if err != nil {
 		t.Fatal(err)

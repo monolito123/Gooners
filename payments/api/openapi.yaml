@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: InfinityPay+ (working title) Merchant and BaaS API
+  title: goonersPAY Merchant and BaaS API
   version: "2026-10-01"
   summary: Acquiring, sub-ledger accounts, payouts, disputes, settlements and receipts.
   description: |
@@ -14,13 +14,13 @@ info:
     name: Proprietary (specification draft)
     identifier: LicenseRef-Proprietary
 servers:
-  - url: https://api.ipplus.example
+  - url: https://api.goonerspay.example
     description: Core API (out of PCI scope)
-  - url: https://vault.ipplus.example
+  - url: https://vault.goonerspay.example
     description: Card vault (CDE)
-  - url: https://terminal.ipplus.example
+  - url: https://terminal.goonerspay.example
     description: Card-present terminals (CDE)
-  - url: https://api.sandbox.ipplus.example
+  - url: https://api.sandbox.goonerspay.example
     description: Sandbox
 security:
   - mtlsBoundToken: []
@@ -242,7 +242,7 @@ paths:
       operationId: authorizeCardPresent
       summary: Card-present authorization from an MPoC terminal (terminal host, CDE)
       servers:
-        - url: https://terminal.ipplus.example
+        - url: https://terminal.goonerspay.example
       security:
         - terminalCert: []
       parameters:
@@ -322,7 +322,7 @@ paths:
       operationId: createPaymentMethod
       summary: Tokenize a card (vault host, CDE)
       servers:
-        - url: https://vault.ipplus.example
+        - url: https://vault.goonerspay.example
       security:
         - mtlsBoundToken: []
         - publishableKey: []
@@ -351,7 +351,7 @@ paths:
       operationId: deletePaymentMethod
       summary: Delete a payment method and its network tokens
       servers:
-        - url: https://vault.ipplus.example
+        - url: https://vault.goonerspay.example
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/PathId"

@@ -39,7 +39,7 @@ func NewCA(name string) (*CA, error) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: name, Organization: []string{"InfinityPay+ test PKI"}},
+		Subject:               pkix.Name{CommonName: name, Organization: []string{"goonersPAY test PKI"}},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,

@@ -1,40 +1,40 @@
 {
-  "warning": "PUBLIC TEST KEYS. Secret key = SHA-256(\"ipplus-spec/test-key/\" + role). Never use for anything real.",
+  "warning": "PUBLIC TEST KEYS. Secret key = SHA-256(\"goonerspay-spec/test-key/\" + role). Never use for anything real.",
   "keys": [
     {
       "role": "platform-receipts",
-      "pubkey": "3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f",
-      "npub": "npub1x4m7tgw3kl2968l4twpmusjl2fhkm7lj9dclyl4cme4rm8s7gv0s4m56ce"
+      "pubkey": "efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6",
+      "npub": "npub1alwfaeye6qsdrlth9eseha3hxaaf8przf2h5sv8rkf6qlp8lzhmqzdzty7"
     },
     {
       "role": "platform-transparency",
-      "pubkey": "4888d5c500b64a32cd916405177b5fe955ab132e0e37849c4dbc5596cfb78177",
-      "npub": "npub1fzydt3gqke9r9nv3vsz3w76la926kyewpcmcf8zdh32ednahs9msqtufg2"
+      "pubkey": "34decc3681764daa5132ca5fac8052d0db91b4d9bef3b5dfa7fa001bcadf9f89",
+      "npub": "npub1xn0vcd5pwex655fjef06eqzj6rderdxehmemtha8lgqphjkln7ysev2are"
     },
     {
       "role": "platform-inbox",
-      "pubkey": "3320213853d9b8c9e3667207092b6256daf6faf263cca26bd2a870dc7213dbf7",
-      "npub": "npub1xvszzwznmxuvncmxwgrsj2mz2md0d7hjv0x2y67j4pcdcusnm0msdknm94"
+      "pubkey": "e14aa8263f35a66d97da6ea3513dc45dab21e1dc033eab7dc1f2fd403df0a671",
+      "npub": "npub1u992sf3lxknxm976d634z0wytk4jrcwuqvl2klwp7t75q00s5ecsp6euk0"
     },
     {
       "role": "merchant-root",
-      "pubkey": "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1",
-      "npub": "npub14rqe5wfu2vnw3qf3aa52vd5ym7mcd46m9hqmf6zv9ccgptn5p6ss0c0wx0"
+      "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
+      "npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9"
     },
     {
       "role": "merchant-device-android",
-      "pubkey": "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970",
-      "npub": "npub13vfew5n7dpjkkdxv22cty5tkghtvjcrhg7eke60sq3hp8qcld9cqy7kkdp"
+      "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+      "npub": "npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr"
     },
     {
       "role": "merchant-device-ios",
-      "pubkey": "216373baea4a19a6181a7f2112e7008d1ab9a0fd0f8e2c45c0a1d470e6ea7dfe",
-      "npub": "npub1y93h8wh2fgv6vxq60us39ecq35dtng8ap78zc3wq5828peh20hlqkp9xg4"
+      "pubkey": "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510",
+      "npub": "npub1drzke9jsaafpp88qkx8ftujtqzpd5h7t3wm6a4c89zcgd9s2q5gq22qt3z"
     },
     {
       "role": "customer-claim-1",
-      "pubkey": "b8843015ad0a60ffe147e56273c30759c0f497db22cb5b160901a76c00d3b6e5",
-      "npub": "npub1hzzrq9ddpfs0lc28u4388sc8t8q0f97myt94k9sfqxnkcqxnkmjs659dxn"
+      "pubkey": "fbf9807f9fc6fab9673dbce8550e07a9a20ed26c9d3dff703fd378c3983623ee",
+      "npub": "npub1l0ucqlulcmatjeeahn592rs84x3qa5nvn57l7upl6duv8xpky0hq82u4na"
     }
   ]
 }

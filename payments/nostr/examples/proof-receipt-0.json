@@ -1,22 +1,22 @@
 {
-  "receipt_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+  "receipt_event_id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
   "statement_inclusion": {
     "leaf_index": 0,
     "tree_size": 4,
     "audit_path": [
-      "ff07e9d7b9d0591122ed14801c77bc9c449cae9da1eddcc2aedeb5fe35ed813a",
-      "1901304a7abb10f03d6c302fa45619d182c9157a2f081e8e0d77fa958090cb85"
+      "308c2b57d5ff75c8bf1849d919e89ba1a46f7132d3c243a0c12d1f7db3cbbd82",
+      "01ed95bad1f07050998fd6ea8d45305e67c432ff94d9903de11f9db7679aa681"
     ],
-    "root": "74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717"
+    "root": "463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f"
   },
   "transparency_inclusion": {
-    "leaf_index": 6,
+    "leaf_index": 2,
     "tree_size": 8,
     "audit_path": [
-      "71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f",
-      "ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b",
-      "9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014"
+      "05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc",
+      "3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330",
+      "b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022"
     ],
-    "root": "adf6366fd45dd7cf04791b22fff0dbdee3b707833d76462ea9ce5be10a0baf74"
+    "root": "dd0bc1db86a3358f397bc33ab9506387e1c65ed8240063cc361b2fb6bd203dd8"
   }
 }

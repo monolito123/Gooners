@@ -79,7 +79,7 @@ gantt
 | R13 | VAMP / Mastercard programme thresholds tighten | M | M | Thresholds are configuration; alerts at 60% of the limit | Risk |
 | R14 | LGPD complaint about on-device fraud features or the transparency log | L | M | RIPD, consent for location, data minimization, public explanation of what the log does not reveal | DPO |
 | R15 | Tap to Pay on iPhone access delayed | M | M | BLE readers and remote charge cover iOS merchants | Partnerships |
-| R16 | Brand confusion with InfinitePay | H | M | Choose a distinct brand before launch (see [00](00-executive-summary.md)) | Marketing / Legal |
+| R16 | Brand clearance for goonersPAY (INPI class 36, domains, app-store names) | M | M | INPI search and filing before launch; register goonerspay domains; keep merchant-facing descriptors as the merchant's name, not ours (see [00](00-executive-summary.md)) | Marketing / Legal |
 | R17 | ZK circuit bug lets merchants prove false statements | L | H | Tier 1 (SD-JWT) first; Tier 2 only after an external audit; issuer-side limits on what credentials can claim | Security |
 | R18 | Post-quantum break of secp256k1 signatures on archived receipts | L (near term) | M | Hash-based timestamps anchor history; plan a post-quantum co-signature once a Nostr standard exists | Security |
 

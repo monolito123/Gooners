@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec.ipplus.example/nostr/schemas/kind-37710.payment-link.schema.json",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-37710.payment-link.schema.json",
   "title": "Kind 37710: payment link (addressable by d tag, signed by an authorized merchant device)",
   "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
   "properties": {

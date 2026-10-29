@@ -120,7 +120,7 @@ func Load() (*Config, error) {
 		PixBaseURL: os.Getenv("PIX_BASE_URL"), PixTokenURL: os.Getenv("PIX_TOKEN_URL"), PixClientID: os.Getenv("PIX_CLIENT_ID"),
 		PixClientSecret: os.Getenv("PIX_CLIENT_SECRET"), PixKey: os.Getenv("PIX_KEY"), PixTLS: tlsEnv("PIX_TLS"),
 		PixWebhookPublicURL: os.Getenv("PIX_WEBHOOK_PUBLIC_URL"), PayoutBaseURL: os.Getenv("PAYOUT_BASE_URL"),
-		ClaimBase: env("RECEIPT_CLAIM_BASE", "https://r.ipplus.example/c"), BootstrapTenant: os.Getenv("BOOTSTRAP_TENANT"),
+		ClaimBase: env("RECEIPT_CLAIM_BASE", "https://r.goonerspay.example/c"), BootstrapTenant: os.Getenv("BOOTSTRAP_TENANT"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, errors.New("config: DATABASE_URL is required")

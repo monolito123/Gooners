@@ -1,4 +1,4 @@
-name: InfinityPay+ platform (Go)
+name: goonersPAY platform (Go)
 
 on:
   push:
@@ -72,6 +72,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Imagem Docker
-        run: docker build -t ipplus-platform:ci .
+        run: docker build -t goonerspay-platform:ci .
       - name: Compose válido
         run: docker compose config -q

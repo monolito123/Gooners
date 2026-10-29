@@ -1,6 +1,6 @@
 {
-  "id": "6668d701040d0c437938fc5c407d5491a4c53bca05226c3be96fa316a86ed0eb",
-  "pubkey": "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970",
+  "id": "61d3de981ea455d96496551e9d679a30f2bd71a689c35a1d3d0d174054ef2dca",
+  "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
   "created_at": 1793209330,
   "kind": 37710,
   "tags": [
@@ -19,9 +19,9 @@
     ],
     [
       "merchant",
-      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+      "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
     ]
   ],
-  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":990},\"checkout_url\":\"https://pay.ipplus.example/l/cafeaurora/cappuccino\",\"methods\":[\"card\",\"pix\"],\"title\":\"Cappuccino\",\"v\":1}",
-  "sig": "cf68d96511f6f4c5d55e4fb8c0d7529ada3f8d6a52394ad2fdd79c41c779943dba57b46af62b458e8b9df14135ad53b6e86c2866c2a7f980ff078ab3f76b77c1"
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":990},\"checkout_url\":\"https://pay.goonerspay.example/l/cafeaurora/cappuccino\",\"methods\":[\"card\",\"pix\"],\"title\":\"Cappuccino\",\"v\":1}",
+  "sig": "1292a39523d12d57a99a6d2ba67c661adf0e90d8bd9083eab0f2b345858dd013aba2f62a2aa45ef527a6a6791e7a7c2a2c56b08a91fc794a0277532052794bee"
 }

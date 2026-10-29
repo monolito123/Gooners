@@ -1,8 +1,8 @@
 {
-  "name": "@ipplus/spec-tools",
+  "name": "@goonerspay/spec-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Generates the signed Nostr examples and checks the InfinityPay+ specification (JSON, Mermaid, OpenAPI, Nostr events, Merkle proofs, Pix CRC, webhook vector, colour contrast).",
+  "description": "Generates the signed Nostr examples and checks the goonersPAY specification (JSON, Mermaid, OpenAPI, Nostr events, Merkle proofs, Pix CRC, webhook vector, colour contrast).",
   "type": "module",
   "license": "MIT",
   "engines": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec.ipplus.example/nostr/schemas/common.schema.json",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/common.schema.json",
   "title": "Shared definitions for the platform's Nostr event kinds",
   "$defs": {
     "hex32": { "type": "string", "pattern": "^[0-9a-f]{64}$" },

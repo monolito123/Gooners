@@ -34,7 +34,7 @@ if (!initdb || !pgctl || !psqlBin) {
   process.exit(2);
 }
 
-const base = mkdtempSync(join(tmpdir(), 'ipplus-ledger-'));
+const base = mkdtempSync(join(tmpdir(), 'goonerspay-ledger-'));
 const data = join(base, 'data');
 const sock = base;
 const port = String(54000 + Math.floor(Math.random() * 1000));
