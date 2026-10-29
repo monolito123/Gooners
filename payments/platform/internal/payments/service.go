@@ -137,6 +137,7 @@ type MerchantInput struct {
 	RootNpub                                             string
 	PixKey, PixKeyType                                   string
 	Plan                                                 pricing.Plan
+	KYB                                                  map[string]any // address, representatives, contact
 }
 
 // Merchant as returned by the API.
@@ -161,8 +162,17 @@ type Merchant struct {
 // CreateMerchant registers a merchant and opens its ledger accounts. KYB happens before
 // this call (in production the merchant starts as kyb_in_review).
 func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in MerchantInput) (*Merchant, error) {
-	if in.LegalName == "" || in.TradeName == "" || len(in.MCC) != 4 || in.SchemeMID == "" || in.City == "" {
-		return nil, invalid("legal_name, trade_name, mcc (4 digits), scheme_mid and city are required")
+	if in.LegalName == "" || in.TradeName == "" || len(in.MCC) != 4 || in.City == "" {
+		return nil, invalid("legal_name, trade_name, mcc (4 digits) and city (legal.city or legal.address.city) are required")
+	}
+	if in.SchemeMID == "" {
+		// Sub-acquirer model: the platform assigns the merchant ID sent in DE 42 (registered with the sponsor).
+		u := ids.ULID()
+		mid := make([]byte, 0, 15)
+		for i := len(u) - 1; i >= 0 && len(mid) < 15; i-- {
+			mid = append(mid, '0'+u[i]%10)
+		}
+		in.SchemeMID = string(mid)
 	}
 	if l := len(in.Document); l != 11 && l != 14 {
 		return nil, invalid("document must be a CPF (11) or CNPJ (14) without punctuation")
@@ -185,9 +195,13 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 		m.Status = "kyb_in_review"
 	}
 	plan, _ := json.Marshal(in.Plan)
-	if _, err := s.pool.Exec(ctx, `INSERT INTO merchants (id, tenant_id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, root_pubkey, pix_key, pix_key_type, plan, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14)`,
-		m.ID, tenantID, m.AccountID, m.LegalName, m.TradeName, in.Document, m.MCC, m.SchemeMID, m.City, rootHex, in.PixKey, in.PixKeyType, plan, m.Status); err != nil {
+	var kyb []byte
+	if len(in.KYB) > 0 {
+		kyb, _ = json.Marshal(in.KYB)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO merchants (id, tenant_id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, root_pubkey, pix_key, pix_key_type, plan, kyb, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13, $14, $15)`,
+		m.ID, tenantID, m.AccountID, m.LegalName, m.TradeName, in.Document, m.MCC, m.SchemeMID, m.City, rootHex, in.PixKey, in.PixKeyType, plan, kyb, m.Status); err != nil {
 		return nil, err
 	}
 	if err := s.ledger.OpenMerchant(ctx, tenantID, m.ID, s.cfg.Currency); err != nil {

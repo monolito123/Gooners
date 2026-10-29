@@ -409,8 +409,8 @@ func TestProductionGuards(t *testing.T) {
 	if code, _ := st.call("POST", "/v1/payment-intents/"+pi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "card", "payment_method": "pm_card_x"}, 0); code != http.StatusNotImplemented {
 		t.Fatalf("CNP confirm: %d", code)
 	}
-	// Unknown fields are rejected rather than silently ignored (for example splits).
-	if code, _ := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 1000, "splits": []any{}}, 0); code != http.StatusBadRequest {
+	// Unknown fields are rejected rather than silently ignored.
+	if code, _ := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 1000, "surprise": true}, 0); code != http.StatusBadRequest {
 		t.Fatalf("unknown field: %d", code)
 	}
 	// No API key.

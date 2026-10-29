@@ -756,15 +756,17 @@ Binds a device key. The request carries a device-authorization event (kind 17710
 
 ### 8.3 `POST /v1/terminals`
 
-Registers a device as a terminal and signs its mTLS CSR. The CSR's key must be the attested hardware key.
+Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate. The terminal PKI issues that certificate after attestation, and its key must be the attested hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). The request carries the certificate's SHA-256, and requests on `terminal.ipplus.example` are then authenticated by that certificate.
 
 ```json
-{ "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M", "type": "mpoc_cots", "csr": "MIIBNjCB3QIBADBbMQswCQYDVQQGEwJCUjEX…" }
+{ "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M", "type": "mpoc_cots", "certificate_sha256": "d1584e3831c2e9ee819f8f538d2b49bb70875c842070b678a35724243498ec24" }
 ```
 
 ```json
-{ "terminal_id": "TP000418", "certificate": "MIIC0zCCAnmgAwIBAgIQ…", "certificate_expires_at": "2026-11-28T12:20:00Z", "mpoc": { "sdk_min_version": "4.2.0", "attestation_interval_s": 900 } }
+{ "terminal_id": "TP000418", "object": "terminal", "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "type": "mpoc_cots", "status": "active" }
 ```
+
+Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the terminal PKI runs inside the platform. Until then that variant returns `501`.
 
 ---
 

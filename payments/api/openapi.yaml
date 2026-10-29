@@ -725,7 +725,12 @@ paths:
     post:
       tags: [merchants]
       operationId: registerTerminal
-      summary: Register a terminal and issue its mTLS certificate
+      summary: Register a terminal (DE 41) and bind its attested mTLS certificate
+      description: |
+        Binds a terminal ID to a merchant. certificate_sha256 is the fingerprint of the terminal's
+        mutual-TLS certificate, issued by the terminal PKI after device attestation (docs/05 §2.4);
+        requests on the terminal host are authenticated by that certificate. Sending a CSR for the
+        platform to sign returns 501 until the terminal PKI is enabled.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -735,13 +740,18 @@ paths:
           application/json:
             schema:
               type: object
-              required: [device_id, type, csr]
+              required: [merchant_id]
               properties:
+                merchant_id:
+                  $ref: "#/components/schemas/Id"
                 device_id:
                   $ref: "#/components/schemas/Id"
                 type:
                   type: string
                   enum: [mpoc_cots, ble_reader, smart_pos]
+                certificate_sha256:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
                 csr:
                   type: string
                   contentEncoding: base64
@@ -752,16 +762,22 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [terminal_id, merchant_id, status]
                 properties:
                   terminal_id:
                     type: string
                     pattern: "^[A-Z0-9]{8}$"
-                  certificate:
+                  object:
+                    const: terminal
+                  merchant_id:
+                    $ref: "#/components/schemas/Id"
+                  type:
                     type: string
-                    contentEncoding: base64
-                  certificate_expires_at:
+                  status:
                     type: string
-                    format: date-time
+                    enum: [active, revoked]
+        "501":
+          $ref: "#/components/responses/Problem"
         "4XX":
           $ref: "#/components/responses/Problem"
 
@@ -1866,6 +1882,24 @@ components:
           additionalProperties: true
         settlement:
           type: object
+          properties:
+            default_speed:
+              type: string
+              enum: [instant, standard]
+            pix_key:
+              type: object
+              properties:
+                type:
+                  type: string
+                key:
+                  type: string
+        scheme_mid:
+          type: string
+          maxLength: 15
+          description: Merchant ID sent in DE 42. Assigned by the platform when absent (sub-acquirer model).
+        plan:
+          type: object
+          description: Pricing (basis points per product, risk tier, instant settlement).
           additionalProperties: true
 
     Merchant:

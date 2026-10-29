@@ -11,6 +11,8 @@ import (
 )
 
 func (s *Server) createMerchant(w http.ResponseWriter, r *http.Request) {
+	// Request shape of docs/02 §8.1 (MerchantCreate), plus two platform extensions:
+	// scheme_mid (assigned automatically when absent) and plan (pricing).
 	var in struct {
 		Legal struct {
 			Document struct {
@@ -21,11 +23,22 @@ func (s *Server) createMerchant(w http.ResponseWriter, r *http.Request) {
 			TradeName string `json:"trade_name"`
 			MCC       string `json:"mcc"`
 			City      string `json:"city"`
+			Address   *struct {
+				Street     string `json:"street"`
+				Number     string `json:"number"`
+				City       string `json:"city"`
+				State      string `json:"state"`
+				PostalCode string `json:"postal_code"`
+				Country    string `json:"country"`
+			} `json:"address"`
+			Representatives []map[string]any `json:"representatives"`
 		} `json:"legal"`
-		SchemeMID  string `json:"scheme_mid"`
-		RootNpub   string `json:"root_npub"`
+		SchemeMID  string         `json:"scheme_mid"`
+		RootNpub   string         `json:"root_npub"`
+		Contact    map[string]any `json:"contact"`
 		Settlement struct {
-			PixKey struct {
+			DefaultSpeed string `json:"default_speed"`
+			PixKey       struct {
 				Type string `json:"type"`
 				Key  string `json:"key"`
 			} `json:"pix_key"`
@@ -39,9 +52,30 @@ func (s *Server) createMerchant(w http.ResponseWriter, r *http.Request) {
 	if in.Plan != nil {
 		plan = *in.Plan
 	}
+	switch in.Settlement.DefaultSpeed {
+	case "instant":
+		plan.Instant = true
+	case "standard":
+		plan.Instant = false
+	}
+	city := in.Legal.City
+	if city == "" && in.Legal.Address != nil {
+		city = in.Legal.Address.City
+	}
+	kyb := map[string]any{}
+	if in.Legal.Address != nil {
+		kyb["address"] = in.Legal.Address
+	}
+	if len(in.Legal.Representatives) > 0 {
+		kyb["representatives"] = in.Legal.Representatives
+	}
+	if len(in.Contact) > 0 {
+		kyb["contact"] = in.Contact
+	}
 	m, err := s.svc.CreateMerchant(r.Context(), from(r.Context()).tenantID, payments.MerchantInput{
 		LegalName: in.Legal.LegalName, TradeName: in.Legal.TradeName, Document: in.Legal.Document.Number, MCC: in.Legal.MCC,
-		SchemeMID: in.SchemeMID, City: in.Legal.City, RootNpub: in.RootNpub, PixKey: in.Settlement.PixKey.Key, PixKeyType: in.Settlement.PixKey.Type, Plan: plan,
+		SchemeMID: in.SchemeMID, City: city, RootNpub: in.RootNpub, PixKey: in.Settlement.PixKey.Key, PixKeyType: in.Settlement.PixKey.Type,
+		Plan: plan, KYB: kyb,
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -62,10 +96,17 @@ func (s *Server) getMerchant(w http.ResponseWriter, r *http.Request) {
 func (s *Server) registerTerminal(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		MerchantID      string `json:"merchant_id"`
+		DeviceID        string `json:"device_id"`
 		Type            string `json:"type"`
 		CertFingerprint string `json:"certificate_sha256"`
+		CSR             string `json:"csr"`
 	}
 	if !decode(w, r, &in) {
+		return
+	}
+	if in.CSR != "" && in.CertFingerprint == "" {
+		problem(w, r, http.StatusNotImplemented, "terminal-pki-not-enabled", "Certificate issuance needs the terminal PKI",
+			"issue the terminal certificate after attestation (docs/05 §2.4) and register its SHA-256 as certificate_sha256")
 		return
 	}
 	t, err := s.svc.RegisterTerminal(r.Context(), from(r.Context()).tenantID, in.MerchantID, in.Type, in.CertFingerprint)
@@ -79,15 +120,31 @@ func (s *Server) registerTerminal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createIntent(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		payments.IntentInput
-		PaymentMethodTypes []string `json:"payment_method_types"`
-		CaptureMethod      string   `json:"capture_method"`
-		Installments       *struct {
+		PaymentMethodTypes  []string `json:"payment_method_types"`
+		CaptureMethod       string   `json:"capture_method"`
+		StatementDescriptor string   `json:"statement_descriptor"`
+		Installments        *struct {
 			Count int    `json:"count"`
 			Type  string `json:"type"`
 		} `json:"installments"`
+		Customer map[string]any `json:"customer"` // accepted for compatibility; not stored (data minimization)
+		Receipt  *struct {
+			Nostr         *bool  `json:"nostr"`
+			RecipientNpub string `json:"recipient_npub"`
+		} `json:"receipt"`
+		Splits []any `json:"splits"`
 	}
 	if !decode(w, r, &in) {
 		return
+	}
+	if len(in.Splits) > 0 {
+		problem(w, r, http.StatusUnprocessableEntity, "splits-not-supported", "Split payments are not supported in this release",
+			"see payments/platform/README.md, implemented subset")
+		return
+	}
+	in.IntentInput.StatementDescriptor = in.StatementDescriptor
+	if in.Receipt != nil {
+		in.IntentInput.ReceiptRecipient = in.Receipt.RecipientNpub
 	}
 	if in.CaptureMethod != "" && in.CaptureMethod != "automatic" {
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Unsupported capture method", "this release captures automatically")
