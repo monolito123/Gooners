@@ -1,0 +1,38 @@
+{
+  "request": {
+    "id": "c8f7130b57fba5ab4f123120b9eb52c451227246f95848a7f1a2a286253b7035",
+    "pubkey": "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970",
+    "created_at": 1793301130,
+    "kind": 27711,
+    "tags": [
+      [
+        "p",
+        "3320213853d9b8c9e3667207092b6256daf6faf263cca26bd2a870dc7213dbf7"
+      ],
+      [
+        "merchant",
+        "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+      ]
+    ],
+    "content": "{\"journal_head\":{\"id\":\"32f69ea4fc50d9c1ce32bf4639a65196806ad747dab5b33184485b805c920bda\",\"seq\":412},\"known_receipts\":4,\"receipts_since\":1793292130,\"v\":1}",
+    "sig": "83869178ea56df8292e550929a5841b9069ef57766797c73c8123fb046dab9989aa3fd10eeb1f71ebd831d751e24d6cb4f47b110f57c46d4d7f65747ac3a6cd5"
+  },
+  "response": {
+    "id": "305c47b35936bfa77d95a7ec5822b1138c1c4d9cbdc921e0008efdc25c478d54",
+    "pubkey": "3320213853d9b8c9e3667207092b6256daf6faf263cca26bd2a870dc7213dbf7",
+    "created_at": 1793301131,
+    "kind": 27712,
+    "tags": [
+      [
+        "p",
+        "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970"
+      ],
+      [
+        "e",
+        "c8f7130b57fba5ab4f123120b9eb52c451227246f95848a7f1a2a286253b7035"
+      ]
+    ],
+    "content": "{\"journal_head_seen\":{\"id\":\"32f69ea4fc50d9c1ce32bf4639a65196806ad747dab5b33184485b805c920bda\",\"seq\":412},\"missing\":[],\"receipts\":4,\"status\":\"consistent\",\"v\":1}",
+    "sig": "750702f1dd4955a57d598ba30b1a2fbe3edf1617413407ee506fa4e3acda2c74e0522b963646f6cbf185b4e9a2013b6506db698289279a82499dbc8cee090628"
+  }
+}

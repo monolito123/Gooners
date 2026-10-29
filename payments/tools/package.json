@@ -1,0 +1,29 @@
+{
+  "name": "@ipplus/spec-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generates the signed Nostr examples and checks the InfinityPay+ specification (JSON, Mermaid, OpenAPI, Nostr events, Merkle proofs, Pix CRC, webhook vector, colour contrast).",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "gen": "node gen-nostr-examples.mjs",
+    "check": "node check.mjs",
+    "check:mermaid": "node check-mermaid.mjs",
+    "lint:openapi": "redocly lint ../api/openapi.yaml --config redocly.yaml"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "nostr-tools": "2.25.1",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.62.2",
+    "mermaid": "12.1.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "1fdd74f5dc92d4a8bb7a33a1e25c60dae11389db29e0cb790ee5c98079965c04",
+  "pubkey": "3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f",
+  "created_at": 1793325660,
+  "kind": 7713,
+  "tags": [
+    [
+      "merchant",
+      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+    ],
+    [
+      "e",
+      "a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86",
+      "wss://relay.ipplus.example",
+      "transparency"
+    ]
+  ],
+  "content": "{\"count\":4,\"currency\":\"BRL\",\"date\":\"2026-10-29\",\"lines\":[{\"amount\":12990,\"fee\":414,\"receipt_event_id\":\"2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42\",\"settles\":\"instant\"},{\"amount\":4500,\"fee\":62,\"receipt_event_id\":\"6a0e92227f246496afcc83676d0a8dc0418eab6f53c4709bc369324cfbb0fa09\",\"settles\":\"instant\"},{\"amount\":2390,\"fee\":0,\"receipt_event_id\":\"4574c3689bdd9d6f18fa665e32aa0560e10538bab3cf1f7f24952076a6fffd8e\",\"settles\":\"instant\"},{\"amount\":31000,\"fee\":1547,\"receipt_event_id\":\"1ed0641a8feceb3260e87a3e3130f14bcf21a0e00d54f5245faee4797c4f4052\",\"settles\":\"per_installment\"}],\"merchant_id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"receipts_root\":\"74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717\",\"receipts_tree\":\"rfc6962-sha256, leaves = receipt event ids (32 bytes) in capture order\",\"statement_commitment\":\"e5dfb73e31ccd61e49cfef598490fc59f87a45f292214f5e8e8f74c9c22dcc5b\",\"totals\":{\"chargebacks\":0,\"fees\":2023,\"gross\":50880,\"net\":48857,\"refunds\":0},\"transparency\":{\"audit_path\":[\"71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f\",\"ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b\",\"9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014\"],\"leaf_index\":6,\"leaf_salt\":\"effea16df937b6bb7038c4f231afec47fedccbc19631431f72e35d6edbe20713\",\"root_event_id\":\"a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86\",\"tree_size\":8},\"v\":1}",
+  "sig": "a8500e7896dfcb25715e4856f52e233babbe49d6a7c43ac74be8872e270c6cac728066a7fc7dfb7afdb1ad60186fb096a8fd8b4227e398fefb8b1ce59d26e005"
+}

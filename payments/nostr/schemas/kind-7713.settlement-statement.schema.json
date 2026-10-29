@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.ipplus.example/nostr/schemas/kind-7713.settlement-statement.schema.json",
+  "title": "Kind 7713: daily settlement statement (signed by the platform, gift-wrapped to the merchant)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": {
+    "kind": { "const": 7713 },
+    "tags": { "$ref": "common.schema.json#/$defs/merchantTag" }
+  },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "merchant_id", "date", "currency", "totals", "count", "receipts_root", "lines", "statement_commitment", "transparency"],
+      "properties": {
+        "v": { "const": 1 },
+        "merchant_id": { "$ref": "common.schema.json#/$defs/ulid" },
+        "date": { "type": "string", "format": "date" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "totals": {
+          "type": "object",
+          "required": ["gross", "fees", "refunds", "chargebacks", "net"],
+          "properties": {
+            "gross": { "type": "integer" }, "fees": { "type": "integer" }, "refunds": { "type": "integer" },
+            "chargebacks": { "type": "integer" }, "net": { "type": "integer" }
+          }
+        },
+        "count": { "type": "integer", "minimum": 0 },
+        "receipts_root": { "$ref": "common.schema.json#/$defs/hex32" },
+        "receipts_tree": { "type": "string" },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["receipt_event_id", "amount", "fee"],
+            "properties": {
+              "receipt_event_id": { "$ref": "common.schema.json#/$defs/hex32" },
+              "amount": { "type": "integer" },
+              "fee": { "type": "integer" },
+              "settles": { "enum": ["instant", "standard", "per_installment"] }
+            }
+          }
+        },
+        "statement_commitment": { "$ref": "common.schema.json#/$defs/hex32" },
+        "transparency": {
+          "type": "object",
+          "required": ["root_event_id", "leaf_salt", "leaf_index", "tree_size", "audit_path"],
+          "properties": {
+            "root_event_id": { "$ref": "common.schema.json#/$defs/hex32" },
+            "leaf_salt": { "$ref": "common.schema.json#/$defs/hex32" },
+            "leaf_index": { "type": "integer", "minimum": 0 },
+            "tree_size": { "type": "integer", "minimum": 1 },
+            "audit_path": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/hex32" } }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+extends:
+  - recommended
+rules:
+  info-contact: off
+  operation-4xx-response: warn
+  security-defined: error
+  no-unused-components: warn

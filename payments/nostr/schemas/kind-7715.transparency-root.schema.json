@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.ipplus.example/nostr/schemas/kind-7715.transparency-root.schema.json",
+  "title": "Kind 7715: daily settlement transparency root (public, signed by the transparency key)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": {
+    "kind": { "const": 7715 },
+    "tags": { "contains": { "type": "array", "prefixItems": [{ "const": "log" }, { "const": "ipplus-settlement-v1" }] } }
+  },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "log", "date", "tree_size", "root", "prev"],
+      "properties": {
+        "v": { "const": 1 },
+        "log": { "const": "ipplus-settlement-v1" },
+        "date": { "type": "string", "format": "date" },
+        "tree_size": { "type": "integer", "minimum": 1 },
+        "root": { "$ref": "common.schema.json#/$defs/hex32" },
+        "prev": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hex32" }, { "type": "null" }] },
+        "padding": { "type": "string" }
+      }
+    }
+  }
+}

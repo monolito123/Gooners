@@ -1,0 +1,927 @@
+# Module 2b: Merchant and BaaS REST API, mTLS and Webhooks
+
+The REST API is how merchants' apps, BaaS partners and the platform's own clients reach the acquiring engine ([01](01-acquiring-engine.md)) and the ledger ([04 §3](04-serverless-backend.md#3-ledger)). The machine-readable contract is [`api/openapi.yaml`](../api/openapi.yaml) (OpenAPI 3.1). This document explains it and shows full request and response payloads.
+
+---
+
+## 1. Conventions
+
+### 1.1 Hosts
+
+| Host | Purpose | PCI scope | Client authentication |
+|------|---------|-----------|-----------------------|
+| `api.ipplus.example` | Every non-card endpoint | Out of scope | OAuth 2.0 access token bound to an mTLS certificate (partners), or a DPoP-bound session from Nostr login (merchant apps) |
+| `vault.ipplus.example` | Accepts PANs (hosted fields, server-to-server tokenization) | **CDE** | Publishable key (browser) or mTLS + token (PCI-compliant partners) |
+| `terminal.ipplus.example` | Card-present authorizations from terminals (MPoC apps, BLE reader bridges) | **CDE** | Terminal mTLS certificate + attestation token |
+| `*.sandbox.ipplus.example` | Sandbox with scheme simulators, test cards and simulated relays | None | Same as production, with sandbox credentials |
+
+The PAN never transits `api.` hosts. Hosted fields and SDKs post card data straight to `vault.`, so a merchant integrating through them stays in SAQ A scope.
+
+### 1.2 Authentication
+
+| Client | Mechanism | Standard |
+|--------|-----------|----------|
+| BaaS partner servers | `client_credentials` grant with mTLS client authentication. The access token (5 min) is bound to the certificate thumbprint (`cnf.x5t#S256`). | RFC 8705, aligned with the FAPI 2.0 security profile |
+| Merchant apps and the web dashboard | A Nostr HTTP Auth event (NIP-98, kind 27235) signed by an authorized device key is exchanged for a 15-minute session token bound to a DPoP key | NIP-98, RFC 9449 ([03 §4](03-nostr-layer.md#4-merchant-identity-and-authentication)) |
+| Terminals | Device certificate issued after attestation + per-request attestation token | [05 §2.4](05-mobile.md#24-attestation-and-device-integrity) |
+| High-value calls (payouts, bank account changes, API key changes) | Additionally signed with HTTP Message Signatures over method, path, `content-digest` and `idempotency-key` | RFC 9421, RFC 9530 |
+
+### 1.3 Versioning
+
+Every request sends `Api-Version: 2026-10-01`. Breaking changes ship as a new date. Each version is supported for at least 24 months after its successor ships.
+
+### 1.4 Idempotency
+
+Every `POST` takes an `Idempotency-Key` header (a UUID or ULID). The edge stores `(tenant, key) → (request hash, response)` for 24 hours:
+
+| Situation | Response |
+|-----------|----------|
+| First request | Processed normally; the response is stored |
+| Same key, same body, request finished | The stored response, with `Idempotent-Replayed: true` |
+| Same key, same body, request still running | `409 Conflict`, `type: .../idempotency-in-progress`, `Retry-After: 1` |
+| Same key, different body | `422`, `type: .../idempotency-key-reused` |
+
+### 1.5 Errors
+
+Errors use Problem Details (RFC 9457) with a stable `code`:
+
+```json
+{
+  "type": "https://docs.ipplus.example/errors/card-declined",
+  "title": "The card was declined",
+  "status": 402,
+  "code": "card_declined",
+  "decline_code": "insufficient_funds",
+  "detail": "The issuer declined the authorization.",
+  "instance": "/v1/payment-intents/pi_01JBK3T2W8C9M4N5P6Q7R8S9TA/confirm",
+  "request_id": "req_01JBK3V0B7Q2C3D4E5F6G7H8J9",
+  "retryable": false,
+  "customer_message": "Pagamento recusado. Tente outro cartão."
+}
+```
+
+### 1.6 Common formats
+
+- **Money** is always an integer in minor units plus an ISO 4217 code: `"amount": 12990, "currency": "BRL"` is R$ 129,90. Floats never appear.
+- **IDs** are prefixed ULIDs (`pi_`, `pm_`, `acc_`, `po_`, `dp_`, `mer_`, `dev_`, `st_`), sortable by creation time.
+- **Times** are RFC 3339 UTC.
+- **Lists** use cursor pagination: `?limit=50&starting_after=pi_…`, returning `{ "data": [...], "has_more": true, "next_cursor": "…" }`.
+- **Rate limits** are sent as `RateLimit-Policy` and `RateLimit` headers. `429` comes with `Retry-After`.
+
+---
+
+## 2. Transport security: TLS 1.3 with mutual authentication
+
+### 2.1 Handshake
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Client (partner server / terminal)
+  participant S as Platform edge
+  C->>S: ClientHello (TLS 1.3, key_share X25519MLKEM768 + X25519,<br/>signature_algorithms, SNI, ALPN h2)
+  S->>C: ServerHello (selected key share)
+  Note over C,S: Handshake keys derived (HKDF from the hybrid shared secret)
+  S->>C: {EncryptedExtensions}
+  S->>C: {CertificateRequest} (acceptable CAs: Partner CA / Terminal CA)
+  S->>C: {Certificate} (ECDSA P-256 chain)
+  S->>C: {CertificateVerify} (signature over the transcript)
+  S->>C: {Finished}
+  C->>C: Verify server chain + SPKI pin
+  C->>S: {Certificate} (client chain)
+  C->>S: {CertificateVerify} (proves possession of the client key)
+  C->>S: {Finished}
+  Note over C,S: Application keys. 0-RTT is refused.
+  C->>S: POST /oauth2/token (client_assertion not needed: the mTLS cert authenticates)
+  S-->>C: access_token with cnf.x5t#S256 = SHA-256(client cert)
+  C->>S: API calls with Authorization: Bearer (same TLS client cert)
+  S->>S: Compare token cnf with the presented certificate thumbprint
+```
+
+### 2.2 Profile
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Protocol | TLS 1.3 only on mTLS hosts. TLS 1.2 (ECDHE + AEAD) accepted on the public `api.` host for browsers until 2027-06-30. | 1.3 removes static RSA, renegotiation and weak suites |
+| Cipher suites | `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`, `TLS_CHACHA20_POLY1305_SHA256` | All AEAD. ChaCha20 for phones without AES acceleration |
+| Key exchange groups | `X25519MLKEM768` (preferred), `X25519`, `secp256r1` | Hybrid post-quantum key agreement against harvest-now-decrypt-later, with a classical fallback. The same stance as the SMA messenger ([`messenger/docs/02-crypto-protocol.md`](../../messenger/docs/02-crypto-protocol.md)) |
+| Certificates | ECDSA P-256. Partner client certificates last 90 days; terminal certificates 30 days; internal workload certificates (SPIFFE) 24 hours | Short lifetimes make revocation mostly unnecessary |
+| Issuance | Partner CA per tenant (intermediate under an offline root kept in an HSM). Terminal CA issues only after attestation ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)) | Compromising one tenant's CA cannot reach another |
+| Revocation | CRL for partner certificates, propagated to the edge in ≤ 5 min. Terminals: deny-list by serial number | |
+| Resumption | PSK with (EC)DHE (`psk_dhe_ke`) only. **0-RTT disabled.** | 0-RTT data can be replayed, which is unacceptable for payment requests |
+| Pinning | Apps pin the SPKI of two intermediates (current + next). Partners are advised to pin the root | Survives a rotation without an app update |
+| Token binding | Access tokens carry `cnf.x5t#S256` and are rejected over any other certificate | A stolen token is useless without the private key |
+
+### 2.3 Edge enforcement
+
+The edge (Cloudflare API Shield with the platform's own CA) validates the client chain. A Worker then reads the verified certificate fingerprint from the request metadata and compares it with the token's `cnf` before forwarding over an authenticated origin tunnel to the core. A request whose certificate is unverified, revoked, or does not match its token is rejected with `401` and never reaches the origin.
+
+---
+
+## 3. Authentication endpoints
+
+### 3.1 `POST /oauth2/token` (partners)
+
+```http
+POST /oauth2/token HTTP/2
+Host: api.ipplus.example
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20accounts%3Aread
+```
+
+```json
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImF0LTIwMjYtMTAifQ.eyJzdWIiOiJjbGlfMDFKQjdZM1EiLCJ0ZW4iOiJ0ZW5fMDFKQjdYIiwic2NvcGUiOiJwYXltZW50czp3cml0ZSBhY2NvdW50czpyZWFkIiwiY25mIjp7Ing1dCNTMjU2IjoiYk9wVnN1c19wUmRSUHVaRUNCbXFaNkJENWh0cEtCUWdBVkdNeUktUnRRayJ9fQ.sig",
+  "token_type": "Bearer",
+  "expires_in": 300,
+  "scope": "payments:write accounts:read"
+}
+```
+
+Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`.
+
+### 3.2 `POST /v1/auth/nostr` (merchant apps)
+
+The app signs a NIP-98 event for this exact URL and method, with the SHA-256 of the body in a `payload` tag. The body carries the DPoP public key that the session will be bound to.
+
+```http
+POST /v1/auth/nostr HTTP/2
+Host: api.ipplus.example
+Authorization: Nostr eyJpZCI6ImU0ODYyNmM1N2FlMTBlZTdlY2U3OTZjZjAzMDQzOGZiOWI0OWNkMmEyNmZhMTJjN2IxNDdiMDkxYmFjZjRjZGUiLCJwdWJrZXkiOiI4YjEzOTc1MjdlNjg2NTZiMzRjYzUyYjBiMjUxNzY0NWQ2Yzk2MDc3NDdiMzZjZTlmMDA0NmUxMzgzMWY2OTcwIiwiY3JlYXRlZF9hdCI6MTc5MzI5NTEzMCwia2luZCI6MjcyMzUsInRhZ3MiOltbInUiLCJodHRwczovL2FwaS5pcHBsdXMuZXhhbXBsZS92MS9hdXRoL25vc3RyIl0sWyJtZXRob2QiLCJQT1NUIl0sWyJwYXlsb2FkIiwiZjZjOGFlNDZhYzQ1NjI1YmQxMTU0MTljZTA5MjJhNWY3NDAwY2NiMmM3YzVmZWRkOGVlMjM4M2I4ZDkxZmJkNSJdXSwiY29udGVudCI6IiIsInNpZyI6IjE0NzE1NDBhZjMxZTc5MGU5ZDg5ZDAxZjU3NDIwMzEwYjFlYWRjZjA5NzFlZTFjOWNhYmFkY2VkMGE5ZDBkOTc4N2ZkNTM5MTEyNTdiNjFkMzA0Mjc3OWI2OTdjM2M3NmQ3Nzk5YWYyYWYyZjgyOTY0YjM3MTU1Y2Q0YzY1MmQyIn0=
+Content-Type: application/json
+```
+
+```json
+{
+  "dpop_jwk": { "kty": "EC", "crv": "P-256", "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU", "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0" },
+  "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M"
+}
+```
+
+The body goes on the wire in compact form, and the event's `payload` tag is the SHA-256 of exactly those bytes. The full signed event, the compact body and the complete header are in [`nostr/examples/27235-nip98-login.json`](../nostr/examples/27235-nip98-login.json). The header above is truncated for width.
+
+```json
+{
+  "session_token": "sess_live_9QzH2gYb6wN4dK1pX7vR3mT8cL5sJ0aE",
+  "token_type": "DPoP",
+  "expires_in": 900,
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M",
+  "scopes": ["payments:write", "payments:read", "accounts:read", "payouts:write"]
+}
+```
+
+The server checks, in order: the event signature; `kind == 27235`; `created_at` within ±60 s; the `u` and `method` tags against the request; the `payload` hash against the body; that the event ID has not been seen before (a 120 s replay cache); and that the signing key is in the merchant's current device authorization list ([03 §4.2](03-nostr-layer.md#42-device-authorization)).
+
+---
+
+## 4. Payments
+
+### 4.1 Payment intent lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> requires_payment_method
+  requires_payment_method --> requires_confirmation: payment method attached
+  requires_confirmation --> requires_action: 3DS challenge / Pix QR shown / tap pending
+  requires_confirmation --> processing: confirm
+  requires_action --> processing: action completed
+  processing --> authorized: approved, capture_method = manual
+  processing --> captured: approved, capture_method = automatic
+  processing --> failed: declined / authentication failed
+  authorized --> captured: capture
+  authorized --> canceled: cancel (reversal)
+  captured --> partially_refunded
+  partially_refunded --> refunded
+  captured --> refunded
+  captured --> disputed
+  failed --> requires_payment_method: retry with another method
+```
+
+### 4.2 `POST /v1/payment-intents`
+
+```http
+POST /v1/payment-intents HTTP/2
+Host: api.ipplus.example
+Authorization: Bearer eyJ…
+Api-Version: 2026-10-01
+Idempotency-Key: 01JBK3T2W8C9M4N5P6Q7R8S9TB
+Content-Type: application/json
+```
+
+```json
+{
+  "amount": 12990,
+  "currency": "BRL",
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "channel": "ecommerce",
+  "payment_method_types": ["card", "pix"],
+  "capture_method": "automatic",
+  "installments": { "count": 3, "type": "merchant" },
+  "statement_descriptor": "CAFE AURORA",
+  "description": "Pedido #8812",
+  "customer": { "email": "cliente@example.com", "document": { "type": "cpf", "number": "12345678909" } },
+  "splits": [
+    { "account_id": "acc_01JB9SE77ER000000000000001", "amount": 10990, "bears_fees": true },
+    { "account_id": "acc_01JB9MKTP00000000000000001", "amount": 2000, "bears_fees": false }
+  ],
+  "receipt": { "nostr": true, "recipient_npub": null },
+  "metadata": { "order_id": "8812" }
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "id": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA",
+  "object": "payment_intent",
+  "status": "requires_payment_method",
+  "amount": 12990,
+  "amount_capturable": 0,
+  "amount_captured": 0,
+  "amount_refunded": 0,
+  "currency": "BRL",
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "channel": "ecommerce",
+  "payment_method_types": ["card", "pix"],
+  "capture_method": "automatic",
+  "installments": { "count": 3, "type": "merchant" },
+  "client_secret": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA_secret_x7Gm2QpLw9",
+  "splits": [
+    { "account_id": "acc_01JB9SE77ER000000000000001", "amount": 10990, "bears_fees": true },
+    { "account_id": "acc_01JB9MKTP00000000000000001", "amount": 2000, "bears_fees": false }
+  ],
+  "latest_attempt": null,
+  "receipt": null,
+  "created_at": "2026-10-29T17:41:52Z",
+  "updated_at": "2026-10-29T17:41:52Z",
+  "metadata": { "order_id": "8812" }
+}
+```
+
+`installments.type` is `none`, `merchant` (*parcelado lojista*: the merchant receives per installment and the customer pays no interest), or `issuer` (*parcelado emissor*: the issuer finances the customer and the merchant receives as a single payment).
+
+### 4.3 `POST /v1/payment-intents/{id}/confirm` (card, card-not-present)
+
+```json
+{
+  "payment_method": "pm_card_01JBK2Q7N4M1V8C6X3Z9B5M2K0",
+  "three_ds": {
+    "mode": "automatic",
+    "return_url": "https://loja.example/checkout/return",
+    "browser": {
+      "accept_header": "text/html,application/xhtml+xml",
+      "user_agent": "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36",
+      "language": "pt-BR",
+      "color_depth": 24,
+      "screen_height": 915,
+      "screen_width": 412,
+      "time_zone_offset_minutes": 180,
+      "java_enabled": false,
+      "javascript_enabled": true,
+      "ip": "203.0.113.24"
+    }
+  }
+}
+```
+
+When the issuer wants a challenge, the response is `200` with `status: requires_action`:
+
+```json
+{
+  "id": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA",
+  "object": "payment_intent",
+  "status": "requires_action",
+  "amount": 12990,
+  "currency": "BRL",
+  "next_action": {
+    "type": "three_ds_challenge",
+    "three_ds_session": "3ds_01JBK3VW1X2Y3Z4A5B6C7D8E9F",
+    "acs_url": "https://acs.issuer.example/challenge",
+    "creq": "eyJ0aHJlZURTU2VydmVyVHJhbnNJRCI6IjhhODgwZGMwLWQyZDItNDA2Ny1iY2IxLWIwOGQxNjkwYjI2ZSIsIm1lc3NhZ2VUeXBlIjoiQ1JlcSIsIm1lc3NhZ2VWZXJzaW9uIjoiMi4yLjAiLCJjaGFsbGVuZ2VXaW5kb3dTaXplIjoiMDUifQ",
+    "message_version": "2.2.0",
+    "expires_at": "2026-10-29T17:52:08Z"
+  },
+  "latest_attempt": {
+    "type": "card",
+    "three_ds": { "status": "challenge_required", "trans_status": "C" }
+  }
+}
+```
+
+After the challenge the SDK calls `GET /v1/payment-intents/{id}`. The platform has already received the RReq from the directory server and authorized:
+
+```json
+{
+  "id": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA",
+  "object": "payment_intent",
+  "status": "captured",
+  "amount": 12990,
+  "amount_captured": 12990,
+  "currency": "BRL",
+  "latest_attempt": {
+    "type": "card",
+    "card": { "brand": "visa", "last4": "1111", "funding": "credit", "network_token_used": true, "issuer_country": "BR" },
+    "three_ds": { "status": "authenticated", "trans_status": "Y", "eci": "05", "version": "2.2.0" },
+    "authorization": {
+      "code": "A1B2C3",
+      "response_code": "00",
+      "rrn": "630217004211",
+      "network_transaction_id": "386302175513210",
+      "route": "visa_direct",
+      "approved_at": "2026-10-29T17:42:10Z"
+    }
+  },
+  "receipt": {
+    "claim_url": "https://r.ipplus.example/c#k=5f0c3e9a17b2d4c86e1f7a9b0c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d"
+  }
+}
+```
+
+### 4.4 Pix
+
+Confirming with `"payment_method_type": "pix"` returns a dynamic BR Code. Its payload URL resolves to the signed charge (JWS) defined by the Pix rules:
+
+```json
+{
+  "id": "pi_01JBK4A1B2C3D4E5F6G7H8J9K0",
+  "object": "payment_intent",
+  "status": "requires_action",
+  "amount": 12990,
+  "currency": "BRL",
+  "next_action": {
+    "type": "pix_qr",
+    "txid": "9d36b84fc70b478fb95c12729b90ca25",
+    "br_code": "00020101021226790014br.gov.bcb.pix2557pix.ipplus.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***63047CD0",
+    "expires_at": "2026-10-29T18:11:52Z"
+  }
+}
+```
+
+The `br_code` above has a valid CRC16 (checked by `npm run check`, §12). Payment arrives as a Pix settlement notification and moves the intent to `captured`.
+
+### 4.5 `POST /v1/terminal/authorizations` (card-present, CDE)
+
+Sent by the MPoC SDK inside the merchant app to `terminal.ipplus.example` over the terminal's mTLS certificate. Card data and PIN are encrypted on the device under DUKPT keys and are opaque to the app itself.
+
+```json
+{
+  "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0",
+  "terminal_id": "TP000418",
+  "stan": "004211",
+  "local_time": "2026-10-29T14:42:08-03:00",
+  "emv_application": "credit",
+  "sred": {
+    "format": "mpoc-sdk-v2",
+    "ksn": "FFFF9876543210E00011",
+    "ciphertext": "q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJ"
+  },
+  "pin": null,
+  "device_risk": {
+    "score": 0.04,
+    "model": "fs-device-2026-10-a",
+    "signals": ["apdu_rtt_normal", "integrity_strong", "no_overlay", "location_consistent"]
+  },
+  "attestation": {
+    "verdict_token": "eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig",
+    "obtained_at": "2026-10-29T17:40:01Z"
+  },
+  "journal_event_id": "32f69ea4fc50d9c1ce32bf4639a65196806ad747dab5b33184485b805c920bda"
+}
+```
+
+```json
+{
+  "status": "approved",
+  "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0",
+  "response_code": "00",
+  "authorization_code": "B7K2Q9",
+  "rrn": "630217004211",
+  "card": { "brand": "visa", "last4": "0119", "application_label": "VISA CREDITO", "aid": "A0000000031010" },
+  "cvm": "no_cvm",
+  "issuer_response": { "arpc_and_scripts": "910A1A2B3C4D5E6F70800000" },
+  "receipt": {
+    "nostr_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+    "claim_qr": "https://r.ipplus.example/c#k=a6971b32af790dd3d60c77b860bee16b4cad4b481729e0c088914b2f18af164b"
+  },
+  "settlement": { "mode": "instant", "estimated_available_at": "2026-10-29T17:42:20Z" }
+}
+```
+
+`status` is `approved`, `declined` (with `decline_code`), `pin_required` (re-present with PIN on glass), or `timeout` (the platform has already queued a reversal; the app asks for another tap).
+
+### 4.6 Capture, cancel, refund
+
+| Endpoint | Body | Effect |
+|----------|------|--------|
+| `POST /v1/payment-intents/{id}/capture` | `{ "amount": 11990 }` (≤ authorized; optional) | Queues the clearing record. The uncaptured remainder is released by a partial reversal |
+| `POST /v1/payment-intents/{id}/cancel` | `{ "reason": "requested_by_customer" }` | Before clearing: full reversal (0400). After clearing: rejected, use a refund |
+| `POST /v1/refunds` | below | Online refund authorization + credit clearing record (card) or a Pix return (*devolução*) |
+
+```json
+{
+  "payment_intent_id": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA",
+  "amount": 4990,
+  "reason": "requested_by_customer",
+  "metadata": { "rma": "RMA-2231" }
+}
+```
+
+```json
+{
+  "id": "re_01JBK5C3D4E5F6G7H8J9K0M1M2",
+  "object": "refund",
+  "payment_intent_id": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA",
+  "amount": 4990,
+  "currency": "BRL",
+  "status": "pending",
+  "method": "card_credit",
+  "funding": { "account_id": "acc_01JB9SE77ER000000000000001", "held": 4990 },
+  "created_at": "2026-10-29T18:03:44Z"
+}
+```
+
+A refund is funded from the merchant's available balance. When the balance is short, the refund waits in `requires_funding` (or is debited from the merchant's reserve, by contract) and is never fronted by the platform without a risk decision.
+
+### 4.7 Payment methods (vault, CDE)
+
+`POST https://vault.ipplus.example/v1/payment-methods` (from hosted fields or a PCI-compliant partner):
+
+```json
+{
+  "type": "card",
+  "card": { "number": "4111111111111111", "exp_month": 11, "exp_year": 2029, "cvc": "123", "holder_name": "MARIA SILVA" },
+  "customer_reference": "cus_8812",
+  "network_token": "request"
+}
+```
+
+```json
+{
+  "id": "pm_card_01JBK2Q7N4M1V8C6X3Z9B5M2K0",
+  "object": "payment_method",
+  "type": "card",
+  "card": {
+    "brand": "visa",
+    "last4": "1111",
+    "exp_month": 11,
+    "exp_year": 2029,
+    "funding": "credit",
+    "issuer_country": "BR",
+    "fingerprint": "fp_Zq9Lw2Hx7Tc4",
+    "par": "V0010013026302917746820117931",
+    "network_token": { "status": "active", "updated_at": "2026-10-29T17:40:13Z" }
+  },
+  "created_at": "2026-10-29T17:40:12Z"
+}
+```
+
+The CVC is used for one verification and never stored (PCI DSS v4.0.1 requirement 3.3.1.2).
+
+---
+
+## 5. Disputes
+
+`GET /v1/disputes/{id}`:
+
+```json
+{
+  "id": "dp_01JBP7D8E9F0G1H2J3K4M5M6N7",
+  "object": "dispute",
+  "payment_intent_id": "pi_01JBK3T2W8C9M4N5P6Q7R8S9TA",
+  "scheme": "visa",
+  "network_case_id": "VCR-2026-11-0458812",
+  "reason_code": "10.4",
+  "category": "fraud",
+  "amount": 12990,
+  "currency": "BRL",
+  "status": "evidence_required",
+  "evidence_due_at": "2026-11-18T23:59:59Z",
+  "ledger": { "held_from_account": "acc_01JB9SE77ER000000000000001", "amount": 12990 },
+  "auto_evidence": {
+    "three_ds": { "trans_status": "Y", "eci": "05", "liability_shift": true },
+    "nostr_receipt": { "delivered": true, "claimed_by_customer": true },
+    "compelling_evidence_3": { "eligible": true, "prior_transactions": 2 }
+  },
+  "recommendation": "represent"
+}
+```
+
+`POST /v1/disputes/{id}/evidence`:
+
+```json
+{
+  "files": ["file_01JBP8A1B2C300000000000000", "file_01JBP8A1B2C400000000000000"],
+  "explanation": "Compra autenticada com 3DS (ECI 05). Cliente reclamou o recibo assinado.",
+  "use_auto_evidence": true,
+  "submit": true
+}
+```
+
+`POST /v1/disputes/{id}/accept` accepts liability. The held amount is debited for good ([04 §3.4](04-serverless-backend.md#34-posting-catalogue)).
+
+---
+
+## 6. Accounts, sub-ledgers and transfers
+
+### 6.1 `POST /v1/accounts`
+
+```json
+{
+  "holder": { "type": "sub_merchant", "id": "mer_01JB9SE77ER000000000000001" },
+  "type": "wallet",
+  "currency": "BRL",
+  "nickname": "Loja da Ana",
+  "metadata": { "partner_ref": "seller-4431" }
+}
+```
+
+```json
+{
+  "id": "acc_01JB9SE77ER000000000000001",
+  "object": "account",
+  "type": "wallet",
+  "currency": "BRL",
+  "holder": { "type": "sub_merchant", "id": "mer_01JB9SE77ER000000000000001" },
+  "status": "active",
+  "safeguarded": true,
+  "created_at": "2026-10-29T12:00:00Z"
+}
+```
+
+### 6.2 `GET /v1/accounts/{id}/balance`
+
+```json
+{
+  "account_id": "acc_01JB9SE77ER000000000000001",
+  "currency": "BRL",
+  "available": 184220,
+  "pending": 512340,
+  "reserved": 25000,
+  "in_transit": 0,
+  "instant_eligible": 498100,
+  "pending_by_date": [
+    { "date": "2026-10-30", "amount": 61200, "source": "debit" },
+    { "date": "2026-11-28", "amount": 431140, "source": "credit" },
+    { "date": "2026-12-28", "amount": 20000, "source": "credit_installment" }
+  ],
+  "as_of": "2026-10-29T17:45:00Z",
+  "ledger_version": 99812231
+}
+```
+
+`available` can be paid out now. `pending` is receivable from the schemes by date. `instant_eligible` is the part of `pending` the liquidity engine will advance now, at the price a quote returns ([§7](#7-payouts-and-instant-settlement)).
+
+### 6.3 `GET /v1/accounts/{id}/entries`
+
+Returns immutable ledger postings: `{ "id", "journal_id", "direction": "credit", "amount", "balance_after", "type": "card_capture", "reference": "pi_…", "posted_at" }`. Corrections are new reversing journals, never edits.
+
+### 6.4 Split payments
+
+Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) are applied atomically at capture in one journal. The `bears_fees: true` recipient pays the MDR. The sum of splits must equal `amount`, or the request fails with `422 split_mismatch`. Refunds and chargebacks reverse splits pro rata unless the intent sets `split_reversal: "primary_only"`.
+
+### 6.5 `POST /v1/transfers`
+
+```json
+{
+  "from_account": "acc_01JB9MKTP00000000000000001",
+  "to_account": "acc_01JB9SE77ER000000000000001",
+  "amount": 5000,
+  "description": "Bônus de frete outubro"
+}
+```
+
+```json
+{
+  "id": "tr_01JBK6E5F6G7H8J9K0M1M2N3P4",
+  "object": "transfer",
+  "status": "posted",
+  "amount": 5000,
+  "currency": "BRL",
+  "journal_id": "jr_01JBK6E5F6G7H8J9K0M1M2N3P5",
+  "posted_at": "2026-10-29T18:10:02Z"
+}
+```
+
+Transfers stay inside one tenant. They are synchronous because they are a single ledger transaction.
+
+---
+
+## 7. Payouts and instant settlement
+
+### 7.1 `POST /v1/payouts/quotes`
+
+```json
+{
+  "account_id": "acc_01JB9SE77ER000000000000001",
+  "amount": 400000,
+  "speed": "instant",
+  "destination": { "type": "pix", "key_type": "cnpj", "key": "12345678000195" }
+}
+```
+
+```json
+{
+  "id": "pq_01JBK7F6G7H8J9K0M1M2N3P4Q5",
+  "object": "payout_quote",
+  "amount": 400000,
+  "currency": "BRL",
+  "funding": {
+    "from_available": 184220,
+    "advanced": 215780,
+    "advance_detail": [
+      { "receivable_date": "2026-10-30", "amount": 61200, "business_days": 1, "fee": 40 },
+      { "receivable_date": "2026-11-28", "amount": 154580, "business_days": 21, "fee": 2147 }
+    ]
+  },
+  "fee_total": 2187,
+  "net_to_destination": 397813,
+  "effective_monthly_rate_bps": 139,
+  "risk_tier": "B",
+  "expires_at": "2026-10-29T18:15:00Z"
+}
+```
+
+The fee is priced per receivable from time value and risk: `amount × ((1 + r)^(business_days/252) − 1)`, where `r` is the funding cost plus the merchant's risk-tier spread (here tier B, 18% a year, about 1.39% a month) ([07 §1.3](07-enhancements.md#13-pricing-an-advance)). `npm run check` recomputes these fees. Advanced receivables are recorded against the registered receivable units, so the same receivable can never be advanced or pledged twice.
+
+### 7.2 `POST /v1/payouts`
+
+Requires an HTTP Message Signature (§1.2).
+
+```json
+{ "quote_id": "pq_01JBK7F6G7H8J9K0M1M2N3P4Q5" }
+```
+
+```json
+{
+  "id": "po_01JBK7H8J9K0M1M2N3P4Q5R6S7",
+  "object": "payout",
+  "status": "paid",
+  "amount": 397813,
+  "currency": "BRL",
+  "rail": "pix",
+  "end_to_end_id": "E12345678202610291742k3Q9xZ2mT8a",
+  "destination": { "type": "pix", "key_type": "cnpj", "key_masked": "12.***.***/0001-95", "bank_ispb": "00000000" },
+  "quote_id": "pq_01JBK7F6G7H8J9K0M1M2N3P4Q5",
+  "paid_at": "2026-10-29T17:46:09Z"
+}
+```
+
+---
+
+## 8. Merchants, devices and terminals
+
+### 8.1 `POST /v1/merchants` (onboarding)
+
+```json
+{
+  "legal": {
+    "document": { "type": "cnpj", "number": "12345678000195" },
+    "legal_name": "Cafe Aurora Ltda",
+    "trade_name": "Café Aurora",
+    "mcc": "5812",
+    "address": { "street": "Rua Augusta", "number": "1500", "city": "São Paulo", "state": "SP", "postal_code": "01304-001", "country": "BR" },
+    "representatives": [ { "cpf": "12345678909", "name": "Ana Souza", "birth_date": "1990-04-12", "role": "partner" } ]
+  },
+  "root_npub": "npub14rqe5wfu2vnw3qf3aa52vd5ym7mcd46m9hqmf6zv9ccgptn5p6ss0c0wx0",
+  "contact": { "email": "ana@cafeaurora.example", "phone": "+5511999990000" },
+  "settlement": { "default_speed": "instant", "pix_key": { "type": "cnpj", "key": "12345678000195" } }
+}
+```
+
+```json
+{
+  "id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "object": "merchant",
+  "status": "kyb_in_review",
+  "kyb": {
+    "checks": [
+      { "type": "cnpj_registry", "status": "passed" },
+      { "type": "representative_identity", "status": "pending_liveness" },
+      { "type": "sanctions_pep", "status": "passed" },
+      { "type": "mcc_risk", "status": "passed" }
+    ],
+    "next_action": { "type": "liveness", "url": "https://kyb.ipplus.example/l/4cQ2" }
+  },
+  "root_npub": "npub14rqe5wfu2vnw3qf3aa52vd5ym7mcd46m9hqmf6zv9ccgptn5p6ss0c0wx0",
+  "created_at": "2026-10-29T12:00:00Z"
+}
+```
+
+### 8.2 `POST /v1/merchants/{id}/devices`
+
+Binds a device key. The request carries a device-authorization event (kind 17710) signed by the merchant's **root** key and listing the new device's npub ([03 §4.2](03-nostr-layer.md#42-device-authorization)), plus the platform's attestation evidence.
+
+```json
+{
+  "device_npub": "npub13vfew5n7dpjkkdxv22cty5tkghtvjcrhg7eke60sq3hp8qcld9cqy7kkdp",
+  "platform": "android",
+  "model": "Pixel 9",
+  "attestation": {
+    "type": "android_key_attestation",
+    "certificate_chain": ["MIICyjCCAm+gAwIBAgIBATAKBggqhkjOPQQDAjA5MQwwCgYDVQQMDANURUUxKTAnBgNVBAUTIGQ0Y2Q2…"],
+    "play_integrity_token": "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0…"
+  },
+  "authorization_event": {
+    "id": "b899e480051adaea43b611448d246710582ffcf1e6cee0e4183661811698c42b",
+    "pubkey": "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1",
+    "created_at": 1793275930,
+    "kind": 17710,
+    "tags": [
+      ["v", "1"],
+      ["merchant", "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"],
+      ["device", "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970", "android", "Caixa 1", "1793275930"],
+      ["device", "216373baea4a19a6181a7f2112e7008d1ab9a0fd0f8e2c45c0a1d470e6ea7dfe", "ios", "iPad balcão", "1793275930"]
+    ],
+    "content": "",
+    "sig": "740f97169d0a83ee1a3f42c6865ff194868ee668f6ff542126ff1aa5aeab41f6cf91d078cd8187397dee152054a1a24f9fbd0ca60a07a4844324e106a0c253b8"
+  }
+}
+```
+
+```json
+{
+  "id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M",
+  "object": "device",
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "device_npub": "npub13vfew5n7dpjkkdxv22cty5tkghtvjcrhg7eke60sq3hp8qcld9cqy7kkdp",
+  "status": "active",
+  "integrity": { "verdict": "strong", "security_level": "strongbox", "os_patch": "2026-10-05" },
+  "capabilities": ["tap_to_phone", "pin_on_glass"],
+  "created_at": "2026-10-29T12:20:00Z"
+}
+```
+
+### 8.3 `POST /v1/terminals`
+
+Registers a device as a terminal and signs its mTLS CSR. The CSR's key must be the attested hardware key.
+
+```json
+{ "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M", "type": "mpoc_cots", "csr": "MIIBNjCB3QIBADBbMQswCQYDVQQGEwJCUjEX…" }
+```
+
+```json
+{ "terminal_id": "TP000418", "certificate": "MIIC0zCCAnmgAwIBAgIQ…", "certificate_expires_at": "2026-11-28T12:20:00Z", "mpoc": { "sdk_min_version": "4.2.0", "attestation_interval_s": 900 } }
+```
+
+---
+
+## 9. Settlements and proofs
+
+`GET /v1/settlements/{id}`:
+
+```json
+{
+  "id": "st_01JBMB0C1D2E3F4G5H6J7K8M9M",
+  "object": "settlement",
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "date": "2026-10-29",
+  "currency": "BRL",
+  "gross": 50880,
+  "fees": 2023,
+  "refunds": 0,
+  "chargebacks": 0,
+  "net": 48857,
+  "transaction_count": 4,
+  "statement": {
+    "nostr_event_id": "1fdd74f5dc92d4a8bb7a33a1e25c60dae11389db29e0cb790ee5c98079965c04",
+    "merkle_root": "74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717",
+    "leaf_count": 4
+  },
+  "transparency": { "log_date": "2026-10-29", "root_event_id": "a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86" }
+}
+```
+
+`GET /v1/settlements/{id}/proofs/{receipt_event_id}` returns the RFC 6962-style inclusion proof of one receipt in the statement, and of the statement in the public transparency root ([03 §6](03-nostr-layer.md#6-verifiable-settlement-transparency-log)):
+
+```json
+{
+  "receipt_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+  "statement_inclusion": {
+    "leaf_index": 0,
+    "tree_size": 4,
+    "audit_path": [
+      "ff07e9d7b9d0591122ed14801c77bc9c449cae9da1eddcc2aedeb5fe35ed813a",
+      "1901304a7abb10f03d6c302fa45619d182c9157a2f081e8e0d77fa958090cb85"
+    ]
+  },
+  "transparency_inclusion": {
+    "leaf_index": 6,
+    "tree_size": 8,
+    "audit_path": [
+      "71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f",
+      "ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b",
+      "9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014"
+    ]
+  }
+}
+```
+
+---
+
+## 10. Webhooks
+
+### 10.1 Delivery format
+
+Webhooks follow the Standard Webhooks specification. Three headers are signed with HMAC-SHA256 over `webhook-id.webhook-timestamp.body`:
+
+```http
+POST /hooks/ipplus HTTP/1.1
+Host: loja.example
+Content-Type: application/json
+webhook-id: msg_01JBK40ZQ8P7Y6X5W4V3U2T1S0
+webhook-timestamp: 1793295731
+webhook-signature: v1,AJC7y+Vo6KPncZvxSaIyjKWow3yceaSP8LoJqQbbhUQ=
+
+{"type":"payment_intent.captured","timestamp":"2026-10-29T17:42:11Z","data":{"id":"pi_01JBK3T2W8C9M4N5P6Q7R8S9TA","object":"payment_intent","status":"captured","amount":12990,"currency":"BRL","merchant_id":"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"}}
+```
+
+This is a real signature. The test vector below lets integrators check their verifier; `npm run check` verifies it too:
+
+```json
+{
+  "webhook_test_vector": {
+    "secret": "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+    "webhook_id": "msg_01JBK40ZQ8P7Y6X5W4V3U2T1S0",
+    "timestamp": "1793295731",
+    "body": "{\"type\":\"payment_intent.captured\",\"timestamp\":\"2026-10-29T17:42:11Z\",\"data\":{\"id\":\"pi_01JBK3T2W8C9M4N5P6Q7R8S9TA\",\"object\":\"payment_intent\",\"status\":\"captured\",\"amount\":12990,\"currency\":\"BRL\",\"merchant_id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"}}",
+    "signature": "v1,AJC7y+Vo6KPncZvxSaIyjKWow3yceaSP8LoJqQbbhUQ="
+  }
+}
+```
+
+Receivers must reject timestamps more than 5 minutes old, compare signatures in constant time, and accept any of several space-separated signatures during secret rotation. Partners who prefer asymmetric verification can choose `v1a` (Ed25519) signatures per endpoint.
+
+### 10.2 Semantics
+
+- **At least once.** Receivers deduplicate on `webhook-id`.
+- **Ordered per object.** Events for one object (say one payment intent) are delivered in sequence. A failed delivery blocks later events *for that object only*.
+- **Retries**: 5 s, 30 s, 2 min, 10 min, 1 h, then every 3 h for 3 days. After that the endpoint is disabled and the partner is alerted. `POST /v1/webhook-endpoints/{id}/replay` replays a time range.
+- **Thin by default.** Payloads carry the object's current state. Sensitive objects (disputes, KYB) carry only the ID and are fetched with an authenticated `GET`.
+- **Nostr mirror.** Merchants can also receive the same events as NIP-17 encrypted messages on their relays ([03 §5](03-nostr-layer.md#5-merchant-notifications)), which needs no public HTTPS endpoint.
+
+### 10.3 Event catalogue
+
+| Event | When |
+|-------|------|
+| `payment_intent.requires_action` | 3DS challenge, Pix QR shown |
+| `payment_intent.authorized` / `.captured` / `.failed` / `.canceled` | State transitions (§4.1) |
+| `refund.succeeded` / `.failed` | Refund outcome |
+| `dispute.opened` / `.evidence_due_soon` / `.won` / `.lost` | Dispute lifecycle ([01 §7](01-acquiring-engine.md#7-disputes-and-chargebacks)) |
+| `payout.paid` / `.failed` / `.returned` | Payout outcome |
+| `settlement.published` | Daily statement signed and published to Nostr |
+| `payment_method.updated` | Network token lifecycle update (new expiry, reissued card) |
+| `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding |
+| `device.revoked` | A device key was removed from the authorization list |
+| `account.reserve.changed` | Risk changed the merchant's reserve |
+
+---
+
+## 11. ISO 8583 mapping summary
+
+| API field | ISO 8583 | Notes |
+|-----------|----------|-------|
+| `amount` | DE 4 | n12, minor units |
+| `currency` | DE 49 | `986` |
+| `emv_application` (`credit`/`debit`) | DE 3 positions 3–4, plus the AID selected in DE 55 tag `84` | Brazilian combo cards |
+| `channel` + entry method | DE 22, DE 25 / DE 61 | [01 §3.5](01-acquiring-engine.md#35-data-elements) |
+| `merchant.mcc` / `statement_descriptor` | DE 18 / DE 43 | |
+| `terminal_id` / scheme merchant ID | DE 41 / DE 42 | |
+| `three_ds.eci`, authentication value | Scheme fields (Visa CAVV field; Mastercard DE 48 SE 42/43) | |
+| `installments` | Scheme-specific installment fields (Visa and Mastercard Brazil domestic specifications) | |
+| `stan` / `rrn` | DE 11 / DE 37 | Idempotency at the switch |
+| Response `authorization_code` / `response_code` | DE 38 / DE 39 | |
+| `network_transaction_id` | Visa transaction ID / Mastercard trace ID | Stored for MIT linkage |
+
+---
+
+## 12. Endpoint index
+
+| Method | Path | Host | Scope | Idempotent | Notes |
+|--------|------|------|-------|-----------|-------|
+| POST | `/oauth2/token` | api | — | — | mTLS client auth |
+| POST | `/v1/auth/nostr` | api | — | — | NIP-98 + DPoP |
+| POST | `/v1/payment-intents` | api | `payments:write` | Key | |
+| GET | `/v1/payment-intents/{id}` | api | `payments:read` | Yes | |
+| POST | `/v1/payment-intents/{id}/confirm` | api | `payments:write` | Key | 3DS, Pix |
+| POST | `/v1/payment-intents/{id}/capture` | api | `payments:write` | Key | |
+| POST | `/v1/payment-intents/{id}/cancel` | api | `payments:write` | Key | Reversal |
+| POST | `/v1/terminal/authorizations` | terminal | terminal cert | STAN | CDE |
+| POST | `/v1/refunds` | api | `refunds:write` | Key | |
+| GET | `/v1/refunds/{id}` | api | `payments:read` | Yes | |
+| POST | `/v1/payment-methods` | vault | publishable key / mTLS | Key | CDE |
+| DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Deletes network tokens too |
+| GET | `/v1/disputes` · `/v1/disputes/{id}` | api | `disputes:write` | Yes | |
+| POST | `/v1/disputes/{id}/evidence` · `/accept` | api | `disputes:write` | Key | |
+| POST | `/v1/accounts` | api | `accounts:write` | Key | |
+| GET | `/v1/accounts/{id}/balance` · `/entries` | api | `accounts:read` | Yes | |
+| POST | `/v1/transfers` | api | `accounts:write` | Key | |
+| POST | `/v1/payouts/quotes` | api | `payouts:write` | Key | |
+| POST | `/v1/payouts` | api | `payouts:write` | Key | RFC 9421 signature |
+| POST | `/v1/merchants` | api | `merchants:write` | Key | |
+| POST | `/v1/merchants/{id}/devices` | api | `merchants:write` | Key | Root-signed kind 17710 |
+| POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
+| GET | `/v1/settlements/{id}` · `/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | |
+| POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |

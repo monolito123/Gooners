@@ -1,0 +1,51 @@
+name: InfinityPay+ spec (verificação)
+
+on:
+  push:
+    paths: ['payments/**', '.github/workflows/payments-spec.yml']
+  pull_request:
+    paths: ['payments/**', '.github/workflows/payments-spec.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payments-spec-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: payments/tools/package-lock.json
+
+      - name: Dependências
+        working-directory: payments/tools
+        run: npm ci
+
+      # Chromium para renderizar os diagramas Mermaid (mesma versão usada no workflow do SMA).
+      - name: Playwright + Chromium
+        working-directory: payments/tools
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+
+      # Os exemplos Nostr são determinísticos: gerar de novo não pode mudar nenhum byte.
+      - name: Exemplos Nostr reproduzíveis
+        working-directory: payments/tools
+        run: |
+          npm run gen
+          git diff --exit-code -- ../nostr/examples
+
+      # JSON, eventos Nostr, provas Merkle, Pix CRC, webhook, taxas, contraste, links, OpenAPI, Mermaid e o ledger no PostgreSQL.
+      - name: Verificar a especificação
+        working-directory: payments/tools
+        run: npm run check

@@ -1,0 +1,22 @@
+{
+  "receipt_event_id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+  "statement_inclusion": {
+    "leaf_index": 0,
+    "tree_size": 4,
+    "audit_path": [
+      "ff07e9d7b9d0591122ed14801c77bc9c449cae9da1eddcc2aedeb5fe35ed813a",
+      "1901304a7abb10f03d6c302fa45619d182c9157a2f081e8e0d77fa958090cb85"
+    ],
+    "root": "74fff961f580464939c8502e46be2638b8b2a9ddeb4cd2a7b653c8e2291a1717"
+  },
+  "transparency_inclusion": {
+    "leaf_index": 6,
+    "tree_size": 8,
+    "audit_path": [
+      "71177061d4dface2899e86e2cfd995ac5ebfff5f7849deb860957a751a10c18f",
+      "ac9c44e45940884c31436e534cae00c2efe85201a7084e6493bb86b22243ec3b",
+      "9b9e325971f64691f1e2172ada9d66ff4e0acce34aae5532417a86e528cfb014"
+    ],
+    "root": "adf6366fd45dd7cf04791b22fff0dbdee3b707833d76462ea9ce5be10a0baf74"
+  }
+}

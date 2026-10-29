@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.ipplus.example/nostr/schemas/kind-17710.device-authorization.schema.json",
+  "title": "Kind 17710: merchant device authorization list (replaceable, signed by the merchant root key, public)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": {
+    "kind": { "const": 17710 },
+    "content": { "const": "" },
+    "tags": {
+      "items": {
+        "oneOf": [
+          { "type": "array", "prefixItems": [{ "const": "v" }, { "const": "1" }], "maxItems": 2 },
+          { "type": "array", "prefixItems": [{ "const": "merchant" }, { "$ref": "common.schema.json#/$defs/ulid" }], "maxItems": 2 },
+          {
+            "type": "array",
+            "prefixItems": [{ "const": "device" }, { "$ref": "common.schema.json#/$defs/hex32" }, { "enum": ["android", "ios", "web"] }, { "type": "string", "maxLength": 40 }, { "pattern": "^[0-9]+$" }],
+            "minItems": 5,
+            "maxItems": 5
+          }
+        ]
+      },
+      "allOf": [
+        { "contains": { "type": "array", "prefixItems": [{ "const": "device" }] } },
+        { "contains": { "type": "array", "prefixItems": [{ "const": "merchant" }] } }
+      ]
+    }
+  }
+}

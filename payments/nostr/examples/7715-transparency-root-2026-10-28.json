@@ -1,0 +1,18 @@
+{
+  "id": "840bab1c47c16475b8e21c1ebb2f36cddbd88f852f5582523428433f3131d7a2",
+  "pubkey": "4888d5c500b64a32cd916405177b5fe955ab132e0e37849c4dbc5596cfb78177",
+  "created_at": 1793239200,
+  "kind": 7715,
+  "tags": [
+    [
+      "log",
+      "ipplus-settlement-v1"
+    ],
+    [
+      "date",
+      "2026-10-28"
+    ]
+  ],
+  "content": "{\"date\":\"2026-10-28\",\"log\":\"ipplus-settlement-v1\",\"padding\":\"dummy leaves to a multiple of 8 (production: 4096)\",\"prev\":null,\"root\":\"ae5f1459144e25ab4c1fbaf509e2bc0ce2dbcb30bc76f259a6ab22fb626da8da\",\"tree_size\":8,\"v\":1}",
+  "sig": "87de318a5f9e955892eeaf09f02a68f1119fa0ac2f2238bfcd79a90a437c5fb560c80ba3a793dc03ebe970d37e0e405a2bef1c5a63b50c6335423c83d6aa4eb2"
+}

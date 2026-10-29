@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.ipplus.example/nostr/schemas/kind-27712.reconciliation-response.schema.json",
+  "title": "Kind 27712: reconciliation response from the platform (ephemeral)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": { "kind": { "const": 27712 } },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "status", "journal_head_seen", "receipts", "missing"],
+      "properties": {
+        "v": { "const": 1 },
+        "status": { "enum": ["consistent", "device_behind", "platform_behind", "fork_detected"] },
+        "journal_head_seen": { "type": "object", "required": ["seq", "id"], "properties": { "seq": { "type": "integer" }, "id": { "$ref": "common.schema.json#/$defs/hex32" } } },
+        "receipts": { "type": "integer" },
+        "missing": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/hex32" } }
+      }
+    }
+  }
+}

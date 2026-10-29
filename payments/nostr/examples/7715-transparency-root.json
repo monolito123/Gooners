@@ -1,0 +1,24 @@
+{
+  "id": "a25f5c2b66680560af1659ded133ecec14811bb5d93d6860830ad82af966df86",
+  "pubkey": "4888d5c500b64a32cd916405177b5fe955ab132e0e37849c4dbc5596cfb78177",
+  "created_at": 1793325600,
+  "kind": 7715,
+  "tags": [
+    [
+      "log",
+      "ipplus-settlement-v1"
+    ],
+    [
+      "date",
+      "2026-10-29"
+    ],
+    [
+      "e",
+      "840bab1c47c16475b8e21c1ebb2f36cddbd88f852f5582523428433f3131d7a2",
+      "wss://relay.ipplus.example",
+      "prev"
+    ]
+  ],
+  "content": "{\"date\":\"2026-10-29\",\"log\":\"ipplus-settlement-v1\",\"padding\":\"dummy leaves to a multiple of 8 (production: 4096)\",\"prev\":\"840bab1c47c16475b8e21c1ebb2f36cddbd88f852f5582523428433f3131d7a2\",\"root\":\"adf6366fd45dd7cf04791b22fff0dbdee3b707833d76462ea9ce5be10a0baf74\",\"tree_size\":8,\"v\":1}",
+  "sig": "9cdabcfc838b0f123e4e1af23b6c970f2410c58073061582a3e88e666c71d560f0462c25fb5e8de3b768bd8140fac13808e889f031729a64d269376b25daa775"
+}

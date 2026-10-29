@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.ipplus.example/nostr/schemas/kind-27710.remote-charge.schema.json",
+  "title": "Kind 27710: remote charge between merchant devices (ephemeral, gift-wrapped as kind 21059)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": { "kind": { "const": 27710 } },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "action", "payment_intent_id", "amount", "ttl_s"],
+      "properties": {
+        "v": { "const": 1 },
+        "action": { "enum": ["charge", "cancel", "status"] },
+        "payment_intent_id": { "$ref": "common.schema.json#/$defs/ulid" },
+        "amount": { "$ref": "common.schema.json#/$defs/money" },
+        "display": { "type": "string", "maxLength": 40 },
+        "ttl_s": { "type": "integer", "minimum": 5, "maximum": 600 }
+      }
+    }
+  }
+}

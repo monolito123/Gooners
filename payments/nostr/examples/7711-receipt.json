@@ -1,0 +1,20 @@
+{
+  "id": "2b694ec03c1e5e7859afcf8ce2a161b7002c03d3bc471193560f7e97cd63ee42",
+  "pubkey": "3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f",
+  "created_at": 1793295730,
+  "kind": 7711,
+  "tags": [
+    [
+      "merchant",
+      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+    ],
+    [
+      "e",
+      "32f69ea4fc50d9c1ce32bf4639a65196806ad747dab5b33184485b805c920bda",
+      "wss://relay.ipplus.example",
+      "journal"
+    ]
+  ],
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"authorization\":{\"approved_at\":\"2026-10-29T17:42:10Z\",\"code\":\"B7K2Q9\",\"rrn\":\"630217004211\",\"stan\":\"004211\",\"terminal_id\":\"TP000418\"},\"fiscal_note\":\"Comprovante de pagamento. Não é documento fiscal.\",\"installments\":{\"count\":1,\"type\":\"none\"},\"merchant\":{\"address\":\"Rua Augusta 1500, São Paulo - SP\",\"cnpj\":\"12.345.678/0001-95\",\"id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"name\":\"Café Aurora\",\"nip05\":\"cafeaurora@ipplus.example\"},\"method\":{\"aid\":\"A0000000031010\",\"application_label\":\"VISA CREDITO\",\"brand\":\"visa\",\"cvm\":\"no_cvm\",\"entry_mode\":\"contactless\",\"funding\":\"credit\",\"last4\":\"0119\",\"type\":\"card\"},\"payment_intent_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"receipt_id\":\"rcpt_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"settlement_date\":\"2026-10-29\",\"v\":1}",
+  "sig": "808723eab4067e01ac8f7b726a670c449a0df02b64cc029402157334153feb3672fe0d5f8b6092322eef47f4faebe199d14bb5df53a81b4b069cfdf015b02753"
+}

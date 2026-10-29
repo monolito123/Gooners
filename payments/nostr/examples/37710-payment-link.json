@@ -1,0 +1,27 @@
+{
+  "id": "6668d701040d0c437938fc5c407d5491a4c53bca05226c3be96fa316a86ed0eb",
+  "pubkey": "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970",
+  "created_at": 1793209330,
+  "kind": 37710,
+  "tags": [
+    [
+      "d",
+      "cappuccino"
+    ],
+    [
+      "title",
+      "Cappuccino"
+    ],
+    [
+      "price",
+      "990",
+      "BRL"
+    ],
+    [
+      "merchant",
+      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+    ]
+  ],
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":990},\"checkout_url\":\"https://pay.ipplus.example/l/cafeaurora/cappuccino\",\"methods\":[\"card\",\"pix\"],\"title\":\"Cappuccino\",\"v\":1}",
+  "sig": "cf68d96511f6f4c5d55e4fb8c0d7529ada3f8d6a52394ad2fdd79c41c779943dba57b46af62b458e8b9df14135ad53b6e86c2866c2a7f980ff078ab3f76b77c1"
+}

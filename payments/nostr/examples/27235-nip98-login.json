@@ -1,0 +1,26 @@
+{
+  "event": {
+    "id": "e48626c57ae10ee7ece796cf030438fb9b49cd2a26fa12c7b147b091bacf4cde",
+    "pubkey": "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970",
+    "created_at": 1793295130,
+    "kind": 27235,
+    "tags": [
+      [
+        "u",
+        "https://api.ipplus.example/v1/auth/nostr"
+      ],
+      [
+        "method",
+        "POST"
+      ],
+      [
+        "payload",
+        "f6c8ae46ac45625bd115419ce0922a5f7400ccb2c7c5fedd8ee2383b8d91fbd5"
+      ]
+    ],
+    "content": "",
+    "sig": "1471540af31e790e9d89d01f57420310b1eadcf0971ee1c9cabadced0a9d0d9787fd53911257b61d3042779b697c3c76d7799af2af2f82964b37155cd4c652d2"
+  },
+  "request_body": "{\"dpop_jwk\":{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU\",\"y\":\"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0\"},\"device_id\":\"dev_01JB9A2B3C4D5E6F7G8H9J0K1M\"}",
+  "authorization_header": "Nostr eyJpZCI6ImU0ODYyNmM1N2FlMTBlZTdlY2U3OTZjZjAzMDQzOGZiOWI0OWNkMmEyNmZhMTJjN2IxNDdiMDkxYmFjZjRjZGUiLCJwdWJrZXkiOiI4YjEzOTc1MjdlNjg2NTZiMzRjYzUyYjBiMjUxNzY0NWQ2Yzk2MDc3NDdiMzZjZTlmMDA0NmUxMzgzMWY2OTcwIiwiY3JlYXRlZF9hdCI6MTc5MzI5NTEzMCwia2luZCI6MjcyMzUsInRhZ3MiOltbInUiLCJodHRwczovL2FwaS5pcHBsdXMuZXhhbXBsZS92MS9hdXRoL25vc3RyIl0sWyJtZXRob2QiLCJQT1NUIl0sWyJwYXlsb2FkIiwiZjZjOGFlNDZhYzQ1NjI1YmQxMTU0MTljZTA5MjJhNWY3NDAwY2NiMmM3YzVmZWRkOGVlMjM4M2I4ZDkxZmJkNSJdXSwiY29udGVudCI6IiIsInNpZyI6IjE0NzE1NDBhZjMxZTc5MGU5ZDg5ZDAxZjU3NDIwMzEwYjFlYWRjZjA5NzFlZTFjOWNhYmFkY2VkMGE5ZDBkOTc4N2ZkNTM5MTEyNTdiNjFkMzA0Mjc3OWI2OTdjM2M3NmQ3Nzk5YWYyYWYyZjgyOTY0YjM3MTU1Y2Q0YzY1MmQyIn0="
+}

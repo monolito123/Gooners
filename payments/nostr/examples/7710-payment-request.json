@@ -1,0 +1,18 @@
+{
+  "id": "80c3025e2e5de9f4ec0eb69c210d90fd74d0a60e1eda1183300534e14866601d",
+  "pubkey": "8b1397527e68656b34cc52b0b2517645d6c9607747b36ce9f0046e13831f6970",
+  "created_at": 1793295700,
+  "kind": 7710,
+  "tags": [
+    [
+      "merchant",
+      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+    ],
+    [
+      "expiration",
+      "1793296600"
+    ]
+  ],
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"checkout_url\":\"https://pay.ipplus.example/pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"description\":\"Mesa 4: 2 cappuccinos, 1 pão de queijo, 1 suco\",\"expires_at\":\"2026-10-29T17:56:40Z\",\"methods\":[\"card_present\",\"pix\"],\"pix_br_code\":\"00020101021226790014br.gov.bcb.pix2557pix.ipplus.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***63047CD0\",\"request_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"v\":1}",
+  "sig": "5888f9f86f10196def4d714af949ce5d2a3f03231b54d80f522640420c39a2dbd56132be5a70d6949c5259bc7bd1d1482de16eb9a04bf14761db45b8afb5ac33"
+}

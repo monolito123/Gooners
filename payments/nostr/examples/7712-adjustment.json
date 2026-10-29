@@ -1,0 +1,20 @@
+{
+  "id": "d0c598b78eb8539504df84a095b6b7e89cc0c27b81c5ac6585a2cdfd66492bc9",
+  "pubkey": "3577e5a1d1b7d45d1ff55b83be425f526f6dfbf22b71f27eb8de6a3d9e1e431f",
+  "created_at": 1793382130,
+  "kind": 7712,
+  "tags": [
+    [
+      "merchant",
+      "a8c19a393c5326e88131ef68a63684dfb786d75b2dc1b4e84c2e3080ae740ea1"
+    ],
+    [
+      "e",
+      "1ed0641a8feceb3260e87a3e3130f14bcf21a0e00d54f5245faee4797c4f4052",
+      "wss://relay.ipplus.example",
+      "receipt"
+    ]
+  ],
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":10000},\"payment_intent_id\":\"pi_01JBK8V6B5N4M3Q2W1E0R9T8Y7\",\"processed_at\":\"2026-10-30T17:42:10Z\",\"reason\":\"requested_by_customer\",\"refund_id\":\"re_01JBMQ0A9S8D7F6G5H4J3K2M1N\",\"type\":\"refund\",\"v\":1}",
+  "sig": "6fb8a05997728551fe11fc9b90df51bc5ad5dfaab3c62e2efc851d4432de5933d876b3354087a96869e8b0be268aa4c02bc45b231b1bc7b4e7b106f6828b4ff3"
+}

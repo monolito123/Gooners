@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.ipplus.example/nostr/schemas/kind-37710.payment-link.schema.json",
+  "title": "Kind 37710: payment link (addressable by d tag, signed by an authorized merchant device)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": {
+    "kind": { "const": 37710 },
+    "tags": {
+      "allOf": [
+        { "contains": { "type": "array", "prefixItems": [{ "const": "d" }, { "type": "string", "pattern": "^[a-z0-9-]{1,64}$" }] } },
+        { "$ref": "common.schema.json#/$defs/merchantTag" }
+      ]
+    }
+  },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "title", "amount", "checkout_url"],
+      "properties": {
+        "v": { "const": 1 },
+        "title": { "type": "string", "maxLength": 80 },
+        "amount": { "$ref": "common.schema.json#/$defs/money" },
+        "checkout_url": { "type": "string", "format": "uri" },
+        "methods": { "type": "array", "items": { "enum": ["card", "pix"] } }
+      }
+    }
+  }
+}
