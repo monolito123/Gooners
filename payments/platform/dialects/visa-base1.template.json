@@ -1,0 +1,217 @@
+{
+  "name": "visa-base1-template",
+  "description": "STRUCTURAL TEMPLATE ONLY. Encodings follow publicly described V.I.P./BASE I conventions (BCD numerics, EBCDIC text, binary bitmap and length prefixes, a fixed message header). Field definitions, the header layout and the framing MUST be replaced with the ones in your licensed Visa interface specification and proven by Visa certification before use. The platform refuses to load template dialects in production.",
+  "status": "template-unverified",
+  "source": "Public descriptions only. Replace from the licensed specification.",
+  "mti_enc": "bcd",
+  "bitmap_enc": "binary",
+  "header_len": 22,
+  "framing": {
+    "type": "binary",
+    "bytes": 2
+  },
+  "defaults": {
+    "enc": "bcd",
+    "len_enc": "binary"
+  },
+  "fields": {
+    "2": {
+      "name": "Primary account number",
+      "type": "llvar",
+      "class": "n",
+      "max": 19,
+      "sensitive": true
+    },
+    "3": {
+      "name": "Processing code",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "4": {
+      "name": "Amount, transaction",
+      "type": "fixed",
+      "class": "n",
+      "length": 12
+    },
+    "7": {
+      "name": "Transmission date and time (MMDDhhmmss, UTC)",
+      "type": "fixed",
+      "class": "n",
+      "length": 10
+    },
+    "11": {
+      "name": "System trace audit number",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "12": {
+      "name": "Local transaction time (hhmmss)",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "13": {
+      "name": "Local transaction date (MMDD)",
+      "type": "fixed",
+      "class": "n",
+      "length": 4
+    },
+    "14": {
+      "name": "Expiration date (YYMM)",
+      "type": "fixed",
+      "class": "n",
+      "length": 4,
+      "sensitive": true
+    },
+    "18": {
+      "name": "Merchant category code",
+      "type": "fixed",
+      "class": "n",
+      "length": 4
+    },
+    "19": {
+      "name": "Acquiring institution country code",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "22": {
+      "name": "POS entry mode",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "23": {
+      "name": "Card sequence number",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "25": {
+      "name": "POS condition code",
+      "type": "fixed",
+      "class": "n",
+      "length": 2
+    },
+    "32": {
+      "name": "Acquiring institution ID",
+      "type": "llvar",
+      "class": "n",
+      "max": 11
+    },
+    "35": {
+      "name": "Track 2 equivalent data",
+      "type": "llvar",
+      "class": "z",
+      "max": 37,
+      "sensitive": true
+    },
+    "37": {
+      "name": "Retrieval reference number",
+      "type": "fixed",
+      "class": "an",
+      "length": 12,
+      "enc": "ebcdic"
+    },
+    "38": {
+      "name": "Authorization ID response",
+      "type": "fixed",
+      "class": "an",
+      "length": 6,
+      "enc": "ebcdic"
+    },
+    "39": {
+      "name": "Response code",
+      "type": "fixed",
+      "class": "an",
+      "length": 2,
+      "enc": "ebcdic"
+    },
+    "41": {
+      "name": "Card acceptor terminal ID",
+      "type": "fixed",
+      "class": "ans",
+      "length": 8,
+      "enc": "ebcdic"
+    },
+    "42": {
+      "name": "Card acceptor ID",
+      "type": "fixed",
+      "class": "ans",
+      "length": 15,
+      "enc": "ebcdic"
+    },
+    "43": {
+      "name": "Card acceptor name/location",
+      "type": "fixed",
+      "class": "ans",
+      "length": 40,
+      "enc": "ebcdic"
+    },
+    "49": {
+      "name": "Currency code, transaction",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "52": {
+      "name": "PIN data",
+      "type": "fixed",
+      "class": "b",
+      "length": 8,
+      "sensitive": true
+    },
+    "55": {
+      "name": "ICC system-related data",
+      "type": "llvar",
+      "class": "b",
+      "max": 255,
+      "sensitive": true
+    },
+    "60": {
+      "name": "Additional POS information",
+      "type": "llvar",
+      "class": "b",
+      "max": 255
+    },
+    "62": {
+      "name": "Custom payment service fields",
+      "type": "llvar",
+      "class": "b",
+      "max": 255
+    },
+    "63": {
+      "name": "V.I.P. private-use field",
+      "type": "llvar",
+      "class": "b",
+      "max": 255
+    },
+    "70": {
+      "name": "Network management information code",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "90": {
+      "name": "Original data elements",
+      "type": "fixed",
+      "class": "n",
+      "length": 42
+    },
+    "95": {
+      "name": "Replacement amounts",
+      "type": "fixed",
+      "class": "an",
+      "length": 42,
+      "enc": "ebcdic"
+    },
+    "126": {
+      "name": "Visa private-use fields",
+      "type": "llvar",
+      "class": "b",
+      "max": 255
+    }
+  }
+}

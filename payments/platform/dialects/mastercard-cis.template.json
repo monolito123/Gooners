@@ -1,0 +1,203 @@
+{
+  "name": "mastercard-cis-template",
+  "description": "STRUCTURAL TEMPLATE ONLY. Encodings follow publicly described Customer Interface Specification conventions (EBCDIC text and numerics, binary bitmap, EBCDIC length prefixes). Field definitions and framing MUST be replaced with the ones in your licensed Mastercard specification and proven in Mastercard testing before use. The platform refuses to load template dialects in production.",
+  "status": "template-unverified",
+  "source": "Public descriptions only. Replace from the licensed specification.",
+  "mti_enc": "ebcdic",
+  "bitmap_enc": "binary",
+  "framing": {
+    "type": "binary",
+    "bytes": 2
+  },
+  "defaults": {
+    "enc": "ebcdic",
+    "len_enc": "ebcdic"
+  },
+  "fields": {
+    "2": {
+      "name": "Primary account number",
+      "type": "llvar",
+      "class": "n",
+      "max": 19,
+      "sensitive": true
+    },
+    "3": {
+      "name": "Processing code",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "4": {
+      "name": "Amount, transaction",
+      "type": "fixed",
+      "class": "n",
+      "length": 12
+    },
+    "7": {
+      "name": "Transmission date and time (MMDDhhmmss, UTC)",
+      "type": "fixed",
+      "class": "n",
+      "length": 10
+    },
+    "11": {
+      "name": "System trace audit number",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "12": {
+      "name": "Local transaction time (hhmmss)",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "13": {
+      "name": "Local transaction date (MMDD)",
+      "type": "fixed",
+      "class": "n",
+      "length": 4
+    },
+    "14": {
+      "name": "Expiration date (YYMM)",
+      "type": "fixed",
+      "class": "n",
+      "length": 4,
+      "sensitive": true
+    },
+    "18": {
+      "name": "Merchant category code",
+      "type": "fixed",
+      "class": "n",
+      "length": 4
+    },
+    "19": {
+      "name": "Acquiring institution country code",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "22": {
+      "name": "POS entry mode",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "23": {
+      "name": "Card sequence number",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "25": {
+      "name": "POS condition code",
+      "type": "fixed",
+      "class": "n",
+      "length": 2
+    },
+    "32": {
+      "name": "Acquiring institution ID",
+      "type": "llvar",
+      "class": "n",
+      "max": 11
+    },
+    "35": {
+      "name": "Track 2 equivalent data",
+      "type": "llvar",
+      "class": "z",
+      "max": 37,
+      "sensitive": true
+    },
+    "37": {
+      "name": "Retrieval reference number",
+      "type": "fixed",
+      "class": "an",
+      "length": 12
+    },
+    "38": {
+      "name": "Authorization ID response",
+      "type": "fixed",
+      "class": "an",
+      "length": 6
+    },
+    "39": {
+      "name": "Response code",
+      "type": "fixed",
+      "class": "an",
+      "length": 2
+    },
+    "41": {
+      "name": "Card acceptor terminal ID",
+      "type": "fixed",
+      "class": "ans",
+      "length": 8
+    },
+    "42": {
+      "name": "Card acceptor ID",
+      "type": "fixed",
+      "class": "ans",
+      "length": 15
+    },
+    "43": {
+      "name": "Card acceptor name/location",
+      "type": "fixed",
+      "class": "ans",
+      "length": 40
+    },
+    "48": {
+      "name": "Additional data (sub-elements, including SE 42, 43, 84)",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "49": {
+      "name": "Currency code, transaction",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "52": {
+      "name": "PIN data",
+      "type": "fixed",
+      "class": "b",
+      "length": 8,
+      "sensitive": true
+    },
+    "55": {
+      "name": "ICC system-related data",
+      "type": "lllvar",
+      "class": "b",
+      "max": 255,
+      "sensitive": true
+    },
+    "61": {
+      "name": "Point-of-service data",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 26
+    },
+    "63": {
+      "name": "Network data (Banknet reference)",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 50
+    },
+    "70": {
+      "name": "Network management information code",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "90": {
+      "name": "Original data elements",
+      "type": "fixed",
+      "class": "n",
+      "length": 42
+    },
+    "95": {
+      "name": "Replacement amounts",
+      "type": "fixed",
+      "class": "an",
+      "length": 42
+    }
+  }
+}
