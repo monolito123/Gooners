@@ -32,12 +32,24 @@ enum AppError: LocalizedError {
     }
 }
 
+/// The journal, readable from the login hook (which runs off the main actor) once it exists:
+/// a cashier phone's journal starts only after its first login.
+private final class JournalRef: @unchecked Sendable {
+    private let lock = NSLock()
+    private var j: Journal?
+    var journal: Journal? {
+        get { lock.withLock { j } }
+        set { lock.withLock { j = newValue } }
+    }
+}
+
 /// What the checkout needs from the logged-in session, kept apart so the controller can be
 /// created before the first login.
 @MainActor
 private final class SessionBox {
     var authed: GoonersPayAPI.Authed?
     var reader: SandboxCardReader?
+    let journal = JournalRef()
     private var readerKey = ""
 
     /// The sandbox reader for the configured development key; nil outside the sandbox.
@@ -85,8 +97,31 @@ final class AppModel {
                 guard let r = box.sandboxReader(key: settings.sandboxCardKey) else { throw AppError.noReader }
                 return r
             },
-            stan: settings.stan
+            stan: settings.stan,
+            journal: { box.journal.journal }
         )
+    }
+
+    @ObservationIgnored private let journalStore = FileJournalStore()
+
+    /// The journal, once the merchant's root key is known (it names it in every entry).
+    private func journal() -> Journal? {
+        if let j = box.journal.journal { return j }
+        guard !settings.devicePubkey.isEmpty, !settings.merchantRootPub.isEmpty else { return nil }
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let j = Journal(store: journalStore, devicePubkeyHex: settings.devicePubkey, merchantRootPubHex: settings.merchantRootPub, appVersion: version)
+        box.journal.journal = j
+        return j
+    }
+
+    /// Uploads signed journal entries; the platform's answer says what it still lacks.
+    private func syncJournal() {
+        guard let a = box.authed, let j = journal() else { return }
+        Task {
+            if let st = try? await a.syncJournal(j), st.status == "fork_detected" {
+                message = "A goonersPAY bloqueou este terminal: o diário do aparelho foi duplicado. Fale com o suporte."
+            }
+        }
     }
 
     var isOwner: Bool { vault.has(.root) }
@@ -152,11 +187,25 @@ final class AppModel {
         let api = GoonersPayAPI(baseURL: settings.apiURL)
         let dpop = try vault.dpopSigner()
         let deviceID = settings.deviceID.isEmpty ? nil : settings.deviceID
-        let session = try await withKey(.device) { try await api.login(device: $0, dpop: dpop, deviceID: deviceID) }
+        journal()?.append("session_start")
+        let ref = box.journal
+        let session = try await withKey(.device) { key in
+            let s = try await api.login(device: key, dpop: dpop, deviceID: deviceID)
+            _ = try? ref.journal?.signPending(key)
+            return s
+        }
         let vault = vault
-        box.authed = api.authed(deviceKey: { try await Task.detached { try vault.load(.device) }.value }, dpop: dpop, session: session)
+        let a = api.authed(deviceKey: { try await Task.detached { try vault.load(.device) }.value }, dpop: dpop, session: session,
+                           onKey: { _ = try? ref.journal?.signPending($0) })
+        box.authed = a
         settings.deviceID = session.deviceId
         settings.merchantID = session.merchantId
+        if settings.merchantRootPub.isEmpty, let npub = try await a.merchant().rootNpub {
+            // A cashier phone learns the root key from the merchant; its journal starts now.
+            settings.merchantRootPub = try Bech32.decode(hrp: "npub", npub).hex
+            journal()?.append("session_start")
+        }
+        syncJournal()
     }
 
     /// Pairs this phone with the merchant the enrollment code names. On the merchant's first
@@ -196,6 +245,7 @@ final class AppModel {
                 let created = try await api.enroll(code: code, DeviceCreate(deviceNpub: device.npub, platform: "ios", model: Self.model,
                                                                             attestation: evidence, authorizationEvent: list))
                 settings.deviceID = created.id
+                settings.merchantRootPub = root.publicKeyHex
                 settings.deviceList = entries
                 settings.deviceListAt = now
                 devices = entries
@@ -321,6 +371,8 @@ final class AppModel {
     private func forget() {
         box.authed = nil
         box.reader = nil
+        box.journal.journal = nil
+        journalStore.delete()
         checkout.nextSale()
         vault.wipe()
         settings.clear()

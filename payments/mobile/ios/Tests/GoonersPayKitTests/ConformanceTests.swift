@@ -96,6 +96,46 @@ final class ConformanceTests: XCTestCase {
         XCTAssertEqual(ev, rebuilt)
     }
 
+    /// Sections whose values are free-form JSON: decoded without key conversion, which would
+    /// rewrite their snake_case keys.
+    struct RawVectors: Decodable {
+        struct Canon: Decodable { var json: String; var canonical: String }
+        struct Entry: Decodable { var fields: JSONValue; var aux: String; var event: NostrEvent }
+        struct JournalVec: Decodable { var device_role: String; var entries: [Entry] }
+        var canonical_json: [Canon]
+        var journal: JournalVec
+    }
+
+    static let raw: RawVectors = {
+        let data = try! Data(contentsOf: mobile.appendingPathComponent("conformance/vectors.json"))
+        return try! JSONDecoder().decode(RawVectors.self, from: data)
+    }()
+
+    func testCanonicalJSON() throws {
+        for c in Self.raw.canonical_json {
+            XCTAssertEqual(c.canonical, try JSONDecoder().decode(JSONValue.self, from: Data(c.json.utf8)).canonical)
+        }
+    }
+
+    func testJournalEntriesAreReproduced() throws {
+        let j = Self.raw.journal
+        let device = try key(j.device_role)
+        for e in j.entries {
+            XCTAssertEqual(e.event.content, e.fields.canonical)
+            var unsigned = e.event
+            unsigned.id = ""
+            unsigned.sig = ""
+            unsigned.pubkey = ""
+            XCTAssertEqual(e.event, try unsigned.signed(by: device, aux: Data(hex: e.aux)!))
+        }
+        // The journal itself writes the first entry byte for byte, before any key is unwrapped.
+        let first = j.entries[0].event
+        let at = first.createdAt
+        let journal = Journal(store: MemoryJournalStore(), devicePubkeyHex: device.publicKeyHex, merchantRootPubHex: first.tag("merchant")![1],
+                              appVersion: "0.1.0", clock: { at }, timeZone: TimeZone(secondsFromGMT: -3 * 3600)!)
+        XCTAssertEqual(first.id, journal.append("session_start").id)
+    }
+
     func testSandboxCardFormat() throws {
         let x = v.devCard
         XCTAssertEqual(DevFormat.name, x.format)

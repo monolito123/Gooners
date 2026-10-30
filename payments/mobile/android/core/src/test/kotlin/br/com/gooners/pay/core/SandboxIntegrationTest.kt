@@ -7,6 +7,8 @@ import br.com.gooners.pay.core.api.PixDestination
 import br.com.gooners.pay.core.auth.DeviceList
 import br.com.gooners.pay.core.checkout.CheckoutController
 import br.com.gooners.pay.core.checkout.CheckoutState
+import br.com.gooners.pay.core.journal.Journal
+import br.com.gooners.pay.core.journal.MemoryJournalStore
 import br.com.gooners.pay.core.nostr.NostrKeys
 import br.com.gooners.pay.core.pix.BrCode
 import br.com.gooners.pay.core.sandbox.EmvApplication
@@ -16,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -65,13 +68,15 @@ class SandboxIntegrationTest {
         val list = DeviceList.event(root, merchantId, listOf(DeviceList.Entry(device.publicKeyHex, "android", "Caixa 1")), System.currentTimeMillis() / 1000)
         val bound = api.enroll(code, DeviceCreate(device.npub, "android", "JVM test", buildJsonObject { put("type", "none") }, list))
         assertNotNull(bound.terminalId)
-        val authed = api.Authed({ NostrKeys(device.exportSecret()) }, dpop, api.login(device, dpop))
+        val journal = Journal(MemoryJournalStore(), device.publicKeyHex, root.publicKeyHex, "test")
+        journal.append("session_start")
+        val authed = api.Authed({ NostrKeys(device.exportSecret()) }, dpop, api.login(device, dpop), onKey = { journal.signPending(it) })
         assertEquals(merchantId, authed.merchant().id)
 
         // A card sale through the real checkout controller and the sandbox reader.
         val stan = AtomicInteger(0)
         val controller = CheckoutController({ authed }, { SandboxCardReader(info["dev_card_key"]!!.jsonPrimitive.content.hexToBytes()) },
-            { (stan.incrementAndGet() % 1_000_000).toString().padStart(6, '0') }, this, pixPollMillis = 200)
+            { (stan.incrementAndGet() % 1_000_000).toString().padStart(6, '0') }, this, pixPollMillis = 200, journal = { journal })
         listOf(1, 2, 9, 9, 0).forEach(controller::digit)
         controller.charge()
         controller.card(EmvApplication.CREDIT)
@@ -90,6 +95,20 @@ class SandboxIntegrationTest {
         val decoded = BrCode.decode((qr as CheckoutState.PixQr).brCode)
         assertTrue(decoded.dynamic && decoded.url != null && (decoded.amount == null || decoded.amount == "23.90"))
         controller.nextSale()
+
+        // The journal: signed with the key unwrapped for login, uploaded in order, linked from the sale.
+        journal.signPending(device)
+        val sent = journal.toUpload()
+        val synced = authed.syncJournal(journal)!!
+        assertEquals("consistent", synced.status)
+        assertEquals(journal.lastSeq, synced.head!!.seq)
+        assertEquals(sent.size, synced.accepted)
+        assertEquals("consistent", authed.journalState().status)
+        val tap = sent.first { it.content.contains("\"tap_started\"") }
+        val saleId = Json.parseToJsonElement(tap.content).jsonObject["payment_intent_id"]!!.jsonPrimitive.content
+        val evidence = http.newCall(Request.Builder().url("$base/v1/payment-intents/$saleId/journal").header("Authorization", "Bearer $apiKey").build())
+            .execute().use { Json.parseToJsonElement(it.body.string()).jsonObject["data"]!!.jsonArray.size }
+        assertEquals(2, evidence) // tap_started and auth_result: the device's own signed view of the sale
 
         // Balance and a payout to a Pix key.
         val balance = authed.balance()

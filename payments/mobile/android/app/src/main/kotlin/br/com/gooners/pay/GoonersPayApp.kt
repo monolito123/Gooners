@@ -6,7 +6,9 @@ import br.com.gooners.pay.core.api.GoonersPayApi
 import br.com.gooners.pay.core.hexToBytes
 import br.com.gooners.pay.core.sandbox.CardReader
 import br.com.gooners.pay.core.sandbox.SandboxCardReader
+import br.com.gooners.pay.data.FileJournalStore
 import br.com.gooners.pay.data.Settings
+import java.io.File
 import br.com.gooners.pay.security.IntegrityProvider
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.Unlocker
@@ -19,6 +21,7 @@ class GoonersPayApp : Application() {
 /** The app's long-lived objects. */
 class AppContainer(context: Context) {
     val settings = Settings(context)
+    val journalStore = FileJournalStore(File(context.filesDir, "journal.json"))
     val vault = KeyVault(context)
     val unlocker = Unlocker()
     val integrity: IntegrityProvider = UnverifiedIntegrity

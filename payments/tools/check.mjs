@@ -402,6 +402,14 @@ if (existsSync(vecFile)) {
   const nip98 = JSON.parse(Buffer.from(vec.nip98.authorization_header.slice(6), 'base64').toString());
   check(nip98.id === vec.nip98.event.id && verifyEventStrict(nip98).length === 0 && nip98.tags.find((t) => t[0] === 'payload')[1] === bytesToHex(sha256(utf8ToBytes(vec.nip98.body))), 'NIP-98 login vector');
   check(verifyEventStrict(vec.device_list.event).length === 0, 'kind 17710 device list vector');
+  check(vec.canonical_json.every((c) => canonicalJson(JSON.parse(c.json)) === c.canonical), `${vec.canonical_json.length} canonical JSON vectors match JavaScript's canonicalJson`);
+  {
+    const entries = vec.journal.entries;
+    const chained = entries.every((e, i) =>
+      verifyEventStrict(e.event).length === 0 && e.event.kind === 7714 && e.event.content === canonicalJson(e.fields) &&
+      JSON.parse(e.event.content).prev === (i === 0 ? null : entries[i - 1].event.id) && e.event.pubkey === testKey(vec.journal.device_role).pk);
+    check(chained, 'kind 7714 journal vector: canonical content, signatures and the prev chain');
+  }
   const j = vec.jwk_thumbprint.jwk;
   check(Buffer.from(sha256(utf8ToBytes(`{"crv":"${j.crv}","kty":"${j.kty}","x":"${j.x}","y":"${j.y}"}`))).toString('base64url') === vec.jwk_thumbprint.thumbprint, 'JWK thumbprint (RFC 7638)');
   const { createDecipheriv } = await import('node:crypto');

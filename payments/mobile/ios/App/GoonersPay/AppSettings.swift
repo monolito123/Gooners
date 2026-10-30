@@ -36,6 +36,12 @@ final class AppSettings: @unchecked Sendable {
         set { defaults.set(newValue, forKey: "device_pubkey") }
     }
 
+    /// The merchant's root key (hex), which every journal entry names.
+    var merchantRootPub: String {
+        get { string("merchant_root_pub") }
+        set { defaults.set(newValue, forKey: "merchant_root_pub") }
+    }
+
     var tradeName: String {
         get { string("trade_name") }
         set { defaults.set(newValue, forKey: "trade_name") }
@@ -72,7 +78,7 @@ final class AppSettings: @unchecked Sendable {
     }
 
     func clear() {
-        for k in ["api_url", "sandbox_card_key", "merchant_id", "device_id", "device_pubkey", "trade_name", "root_backed_up",
+        for k in ["api_url", "sandbox_card_key", "merchant_id", "device_id", "device_pubkey", "merchant_root_pub", "trade_name", "root_backed_up",
                   "device_list", "device_list_at", "stan"] {
             defaults.removeObject(forKey: k)
         }

@@ -37,6 +37,10 @@ final class UnitTests: XCTestCase {
         XCTAssertTrue(ev.verify())
         XCTAssertEqual(try GoonersPayAPI.decoder.decode(NostrEvent.self, from: Data(ev.json().utf8)), ev)
         XCTAssertEqual(try GoonersPayAPI.decoder.decode(NostrEvent.self, from: GoonersPayAPI.encoder.encode(ev)), ev)
+        // Plain coders keep NIP-01's field names too.
+        let plain = String(decoding: try JSONEncoder().encode(ev), as: UTF8.self)
+        XCTAssertTrue(plain.contains("\"created_at\":") && !plain.contains("createdAt"))
+        XCTAssertEqual(try JSONDecoder().decode(NostrEvent.self, from: Data(plain.utf8)), ev)
         k.wipe()
         XCTAssertEqual(k.exportSecret(), Data(count: 32))
     }

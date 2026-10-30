@@ -15,6 +15,7 @@ import br.com.gooners.pay.core.api.PixDestination
 import br.com.gooners.pay.core.api.Quote
 import br.com.gooners.pay.core.auth.DeviceList
 import br.com.gooners.pay.core.checkout.CheckoutController
+import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.nostr.Bech32
 import br.com.gooners.pay.core.nostr.Event
 import br.com.gooners.pay.core.nostr.NostrKeys
@@ -69,13 +70,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val devices: StateFlow<List<DeviceList.Entry>> = _devices.asStateFlow()
 
     private var authed: GoonersPayApi.Authed? = null
+    private var journal: Journal? = null
 
     val checkout = CheckoutController(
         api = { authed ?: error("Sessão encerrada. Abra o app novamente.") },
         reader = { c.reader() },
         stan = settings.stan,
         scope = viewModelScope,
+        journal = { journal },
     )
+
+    /** The journal, once the merchant's root key is known (it names it in every entry). */
+    private fun journal(): Journal? {
+        journal?.let { return it }
+        val device = c.vault.publicKey(KeyVault.DEVICE) ?: return null
+        val root = settings.merchantRootPub.ifEmpty { return null }
+        return Journal(c.journalStore, device, root, BuildConfig.VERSION_NAME).also { journal = it }
+    }
 
     val isOwner: Boolean get() = c.vault.has(KeyVault.ROOT)
     val ownNpub: String? get() = c.vault.publicKey(KeyVault.DEVICE)?.let(Bech32::npub)
@@ -142,10 +153,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun login() {
         val api = c.api()
         val dpop = c.vault.dpopSigner()
-        val session = withKey(KeyVault.DEVICE) { api.login(it, dpop, settings.deviceId.ifEmpty { null }) }
-        authed = api.Authed({ unlocker.withKeys { c.vault.load(KeyVault.DEVICE) } }, dpop, session)
+        journal()?.append("session_start")
+        val session = withKey(KeyVault.DEVICE) { key ->
+            api.login(key, dpop, settings.deviceId.ifEmpty { null }).also { journal()?.signPending(key) }
+        }
+        val a = api.Authed({ unlocker.withKeys { c.vault.load(KeyVault.DEVICE) } }, dpop, session, onKey = { journal()?.signPending(it) })
+        authed = a
         settings.deviceId = session.deviceId
         settings.merchantId = session.merchantId
+        if (settings.merchantRootPub.isEmpty()) {
+            // A cashier phone learns the root key from the merchant; its journal starts now.
+            a.merchant().rootNpub?.let { settings.merchantRootPub = Bech32.decode("npub", it).toHex() }
+            journal()?.append("session_start")
+        }
+        syncJournal()
+    }
+
+    /** Uploads signed journal entries; the platform's answer says what it still lacks. */
+    private fun syncJournal() = viewModelScope.launch {
+        val a = authed ?: return@launch
+        val j = journal() ?: return@launch
+        runCatching { a.syncJournal(j) }.onSuccess { st ->
+            if (st?.status == "fork_detected") _message.value = "A goonersPAY bloqueou este terminal: o diário do aparelho foi duplicado. Fale com o suporte."
+        }
     }
 
     /**
@@ -178,6 +208,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val list = DeviceList.event(root, enrollment.merchantId, entries, now)
                 val created = api.enroll(code.trim(), DeviceCreate(device.npub, "android", Build.MODEL, c.integrity.evidence(device.publicKeyHex), list))
                 settings.deviceId = created.id
+                settings.merchantRootPub = root.publicKeyHex
                 settings.deviceList = entries
                 settings.deviceListAt = now
                 _devices.value = entries
@@ -288,6 +319,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun forget() {
         authed = null
+        journal = null
+        c.journalStore.delete()
         c.vault.wipe()
         settings.clear()
         _devices.value = emptyList()

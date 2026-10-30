@@ -7,6 +7,7 @@ import br.com.gooners.pay.core.api.IntentCreate
 import br.com.gooners.pay.core.api.Sred
 import br.com.gooners.pay.core.api.TerminalAuthorization
 import br.com.gooners.pay.core.api.TerminalResult
+import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.pix.BrCode
 import br.com.gooners.pay.core.sandbox.CardReader
 import br.com.gooners.pay.core.sandbox.EmvApplication
@@ -18,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
@@ -47,6 +50,8 @@ class CheckoutController(
     private val stan: StanSource,
     private val scope: CoroutineScope,
     private val pixPollMillis: Long = 2_000,
+    /** The device's journal: each sale writes tap_started and auth_result (docs/03 §7.1). */
+    private val journal: () -> Journal? = { null },
 ) {
     private val _state = MutableStateFlow<CheckoutState>(CheckoutState.Entering())
     val state: StateFlow<CheckoutState> = _state.asStateFlow()
@@ -67,7 +72,21 @@ class CheckoutController(
 
     fun back() {
         job?.cancel()
-        _state.value = CheckoutState.Entering(amountOf(_state.value))
+        val s = _state.value
+        if (s is CheckoutState.PixQr) {
+            // The customer left: cancel the charge, so a late payment of an abandoned QR is refused.
+            log("auth_result", s.intentId, s.amount, "result" to "canceled")
+            scope.launch { runCatching { api().cancel(s.intentId) } }
+        }
+        _state.value = CheckoutState.Entering(amountOf(s))
+    }
+
+    private fun log(type: String, intentId: String, amount: Money, vararg extra: Pair<String, String>) {
+        val j = journal() ?: return
+        runCatching {
+            j.append(type, JsonObject(mapOf("payment_intent_id" to JsonPrimitive(intentId), "amount" to Journal.amount(amount.centavos)) +
+                extra.associate { (k, v) -> k to JsonPrimitive(v) }))
+        }
     }
 
     fun nextSale() {
@@ -79,24 +98,46 @@ class CheckoutController(
         val s = _state.value as? CheckoutState.ChoosingMethod ?: return
         val amount = s.amount
         job = scope.launch {
+            var intentId: String? = null
+            var sent = false
             try {
                 val authed = api()
                 val terminal = authed.session.terminalId ?: return@launch fail(amount, "Este aparelho não tem terminal. Use Pix.")
                 val intent = authed.createIntent(IntentCreate(amount = amount.centavos, channel = "card_present"))
+                intentId = intent.id
                 val r = reader()
                 _state.value = CheckoutState.WaitingForCard(amount, r.name)
                 val card = r.read(amount, application)
                 _state.value = CheckoutState.Authorizing(amount)
-                val result = authed.authorize(TerminalAuthorization(intent.id, terminal, stan.next(), application.wire,
-                    OffsetDateTime.now(ZoneOffset.UTC).withNano(0).toString(), Sred(card.format, card.ksn, card.base64Ciphertext())))
+                val stanValue = stan.next()
+                val tap = journal()?.let { runCatching { it.append("tap_started", JsonObject(mapOf("payment_intent_id" to JsonPrimitive(intent.id),
+                    "amount" to Journal.amount(amount.centavos), "terminal_id" to JsonPrimitive(terminal), "stan" to JsonPrimitive(stanValue)))) }.getOrNull() }
+                sent = true
+                val result = authed.authorize(TerminalAuthorization(intent.id, terminal, stanValue, application.wire,
+                    OffsetDateTime.now(ZoneOffset.UTC).withNano(0).toString(), Sred(card.format, card.ksn, card.base64Ciphertext()), tap?.id))
+                log("auth_result", intent.id, amount, "result" to journalResult(result.status), "stan" to stanValue)
                 _state.value = outcome(amount, result)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                abandon(intentId, sent)
+                throw e
             } catch (e: ApiException) {
+                abandon(intentId, sent)
                 fail(amount, e.problem?.detail?.takeIf { e.status == 409 } ?: "Não foi possível autorizar. Tente de novo ou use Pix.")
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                abandon(intentId, sent)
                 fail(amount, "Sem conexão com a goonersPAY. Tente de novo.")
             }
         }
+    }
+
+    /**
+     * Cancels a card intent nothing was sent for (the reader failed, the cashier went back).
+     * Once an authorization was sent its outcome may be unknown, and the platform's reversal
+     * handles it; the app never cancels then.
+     */
+    private fun abandon(intentId: String?, sent: Boolean) {
+        if (intentId == null || sent) return
+        scope.launch { runCatching { api().cancel(intentId) } }
     }
 
     fun pix() {
@@ -116,10 +157,14 @@ class CheckoutController(
                     val pi = authed.intent(created.id)
                     when (pi.status) {
                         "captured" -> {
+                            log("auth_result", created.id, amount, "result" to "approved")
                             _state.value = CheckoutState.Approved(amount, "Pix", pi.receipt?.claimUrl, null, true)
                             return@launch
                         }
-                        "canceled", "failed" -> return@launch fail(amount, "O Pix expirou. Gere um novo QR Code.")
+                        "canceled", "failed" -> {
+                            log("auth_result", created.id, amount, "result" to "canceled")
+                            return@launch fail(amount, "O Pix expirou. Gere um novo QR Code.")
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -134,6 +179,13 @@ class CheckoutController(
     }
 
     companion object {
+        /** The journal's result values (nostr/schemas/kind-7714). */
+        fun journalResult(status: String): String = when (status) {
+            "approved" -> "approved"
+            "timeout" -> "timeout"
+            else -> "declined"
+        }
+
         fun outcome(amount: Money, r: TerminalResult): CheckoutState = when (r.status) {
             "approved" -> CheckoutState.Approved(amount, listOfNotNull(r.card?.brand?.replaceFirstChar { it.uppercase() }, r.card?.last4?.let { "•••• $it" }).joinToString(" "),
                 r.receipt?.claimQr, r.settlement?.netAvailable, r.settlement?.mode == "instant")

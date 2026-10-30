@@ -41,14 +41,31 @@ public final class CheckoutController {
     private let reader: @MainActor () throws -> CardReader
     private let stan: StanSource
     private let pixPoll: Duration
+    /// The device's journal: each sale writes tap_started and auth_result (docs/03 §7.1).
+    private let journal: @MainActor () -> Journal?
     @ObservationIgnored private var task: Task<Void, Never>?
 
     public init(api: @escaping @MainActor () throws -> GoonersPayAPI.Authed, reader: @escaping @MainActor () throws -> CardReader,
-                stan: StanSource, pixPoll: Duration = .seconds(2)) {
+                stan: StanSource, pixPoll: Duration = .seconds(2), journal: @escaping @MainActor () -> Journal? = { nil }) {
         self.api = api
         self.reader = reader
         self.stan = stan
         self.pixPoll = pixPoll
+        self.journal = journal
+    }
+
+    private func log(_ type: String, _ intentID: String, _ amount: Money, _ extra: [String: String] = [:]) {
+        var fields: [String: JSONValue] = ["payment_intent_id": .string(intentID), "amount": Journal.amount(amount)]
+        for (k, v) in extra { fields[k] = .string(v) }
+        journal()?.append(type, fields: fields)
+    }
+
+    /// Cancels a card intent nothing was sent for (the reader failed, the cashier went back).
+    /// Once an authorization was sent its outcome may be unknown, and the platform's reversal
+    /// handles it; the app never cancels then.
+    private func abandon(_ intentID: String?, sent: Bool) {
+        guard let intentID, !sent, let authed = try? api() else { return }
+        Task { _ = try? await authed.cancel(intentID) }
     }
 
     public func digit(_ d: Int) { edit { $0.typed(d) } }
@@ -64,6 +81,11 @@ public final class CheckoutController {
 
     public func back() {
         task?.cancel()
+        if case let .pixQR(amount, intentID, _) = state {
+            // The customer left: cancel the charge, so a late payment of an abandoned QR is refused.
+            log("auth_result", intentID, amount, ["result": "canceled"])
+            if let authed = try? api() { Task { _ = try? await authed.cancel(intentID) } }
+        }
         if case .approved = state { state = .entering(.zero) } else { state = .entering(state.amount) }
     }
 
@@ -75,23 +97,35 @@ public final class CheckoutController {
     public func card(_ application: EmvApplication) {
         guard case let .choosingMethod(amount) = state else { return }
         task = Task {
+            var intentID: String?
+            var sent = false
             do {
                 let authed = try api()
                 guard let terminal = await authed.session.terminalId else { return fail(amount, "Este aparelho não tem terminal. Use Pix.") }
                 let intent = try await authed.createIntent(IntentCreate(amount: amount.centavos, channel: "card_present"))
+                intentID = intent.id
                 let r = try reader()
                 state = .waitingForCard(amount, readerName: r.name)
                 let card = try await r.read(amount: amount, application: application)
                 try Task.checkCancellation()
                 state = .authorizing(amount)
+                let stanValue = stan.next()
+                let tap = journal()?.append("tap_started", fields: ["payment_intent_id": .string(intent.id), "amount": Journal.amount(amount),
+                                                                   "terminal_id": .string(terminal), "stan": .string(stanValue)])
+                sent = true
                 let result = try await authed.authorize(TerminalAuthorization(
-                    paymentIntentId: intent.id, terminalId: terminal, stan: stan.next(), emvApplication: application.rawValue,
-                    localTime: Self.utcNow(), sred: Sred(format: card.format, ksn: card.ksn, ciphertext: card.ciphertext.base64EncodedString())))
+                    paymentIntentId: intent.id, terminalId: terminal, stan: stanValue, emvApplication: application.rawValue,
+                    localTime: Self.utcNow(), sred: Sred(format: card.format, ksn: card.ksn, ciphertext: card.ciphertext.base64EncodedString()),
+                    journalEventId: tap?.id))
+                log("auth_result", intent.id, amount, ["result": Self.journalResult(result.status), "stan": stanValue])
                 if !Task.isCancelled { state = Self.outcome(amount, result) }
             } catch is CancellationError {
+                abandon(intentID, sent: sent)
             } catch let e as APIError {
+                abandon(intentID, sent: sent)
                 fail(amount, e.status == 409 ? e.message : "Não foi possível autorizar. Tente de novo ou use Pix.")
             } catch {
+                abandon(intentID, sent: sent)
                 fail(amount, "Sem conexão com a goonersPAY. Tente de novo.")
             }
         }
@@ -114,9 +148,11 @@ public final class CheckoutController {
                     let pi = try await authed.intent(created.id)
                     switch pi.status {
                     case "captured":
+                        log("auth_result", created.id, amount, ["result": "approved"])
                         state = .approved(amount, method: "Pix", claimURL: pi.receipt?.claimUrl, netAvailable: nil, instant: true)
                         return
                     case "canceled", "failed":
+                        log("auth_result", created.id, amount, ["result": "canceled"])
                         return fail(amount, "O Pix expirou. Gere um novo QR Code.")
                     default:
                         continue
@@ -137,6 +173,15 @@ public final class CheckoutController {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f.string(from: Date())
+    }
+
+    /// The journal's result values (nostr/schemas/kind-7714).
+    public nonisolated static func journalResult(_ status: String) -> String {
+        switch status {
+        case "approved": "approved"
+        case "timeout": "timeout"
+        default: "declined"
+        }
     }
 
     public nonisolated static func outcome(_ amount: Money, _ r: TerminalResult) -> CheckoutState {

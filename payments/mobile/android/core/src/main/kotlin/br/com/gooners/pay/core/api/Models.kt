@@ -98,6 +98,8 @@ data class TerminalAuthorization(
     @SerialName("emv_application") val emvApplication: String,
     @SerialName("local_time") val localTime: String,
     val sred: Sred,
+    /** The device's tap_started journal entry; the receipt links to it (docs/03 §3.3). */
+    @SerialName("journal_event_id") val journalEventId: String? = null,
 )
 
 @Serializable
@@ -190,6 +192,9 @@ data class Payout(
     @SerialName("end_to_end_id") val endToEndId: String? = null,
     val reason: String? = null,
 )
+
+@Serializable
+data class JournalUpload(val entries: List<Event>)
 
 @Serializable
 data class EnrollmentCode(val code: String, @SerialName("merchant_id") val merchantId: String, @SerialName("expires_at") val expiresAt: String)

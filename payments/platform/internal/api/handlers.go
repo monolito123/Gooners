@@ -8,6 +8,7 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
+	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
 
 func (s *Server) createMerchant(w http.ResponseWriter, r *http.Request) {
@@ -580,4 +581,58 @@ func (s *Server) transparencyRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	writeJSON(w, http.StatusOK, root)
+}
+
+// ---------------------------------------------------------------- terminal journal
+
+// postJournal takes a device's signed journal entries (docs/03 §7). Only enrolled devices
+// keep a journal: the entries must be signed by the session's own device key.
+func (s *Server) postJournal(w http.ResponseWriter, r *http.Request) {
+	p := from(r.Context())
+	if p.deviceID == "" {
+		problem(w, r, http.StatusForbidden, "forbidden", "Journal entries come from enrolled devices", "log in with the device key (POST /v1/auth/nostr)")
+		return
+	}
+	var in struct {
+		Entries []nostr.Event `json:"entries"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	st, err := s.svc.IngestJournal(r.Context(), p.tenantID, p.merchantID, p.deviceID, in.Entries)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) journalState(w http.ResponseWriter, r *http.Request) {
+	p := from(r.Context())
+	if p.deviceID == "" {
+		problem(w, r, http.StatusForbidden, "forbidden", "Journal state is per device", "")
+		return
+	}
+	st, err := s.svc.JournalState(r.Context(), p.tenantID, p.merchantID, p.deviceID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) intentJournal(w http.ResponseWriter, r *http.Request) {
+	if !s.ownIntent(w, r, r.PathValue("id")) {
+		return
+	}
+	if _, err := s.svc.GetIntent(r.Context(), from(r.Context()).tenantID, r.PathValue("id")); err != nil {
+		s.fail(w, r, err) // an unknown payment is a 404, not an empty journal
+		return
+	}
+	evs, err := s.svc.IntentJournal(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": evs})
 }

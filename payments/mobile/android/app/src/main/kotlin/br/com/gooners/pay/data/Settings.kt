@@ -33,6 +33,11 @@ class Settings(context: Context) {
         get() = prefs.getString("device_id", "").orEmpty()
         set(v) = prefs.edit { putString("device_id", v) }
 
+    /** The merchant's root key (hex), which every journal entry names. */
+    var merchantRootPub: String
+        get() = prefs.getString("merchant_root_pub", "").orEmpty()
+        set(v) = prefs.edit { putString("merchant_root_pub", v) }
+
     var tradeName: String
         get() = prefs.getString("trade_name", "").orEmpty()
         set(v) = prefs.edit { putString("trade_name", v) }

@@ -3,6 +3,9 @@ package br.com.gooners.pay.core.api
 import br.com.gooners.pay.core.auth.Dpop
 import br.com.gooners.pay.core.auth.Nip98
 import br.com.gooners.pay.core.auth.P256Signer
+import br.com.gooners.pay.core.journal.Journal
+import br.com.gooners.pay.core.journal.JournalStatus
+import br.com.gooners.pay.core.nostr.Event
 import br.com.gooners.pay.core.nostr.NostrKeys
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -80,7 +83,13 @@ class GoonersPayApi(
      * key is asked for only to sign that login and wiped right after, so between logins it can
      * stay wrapped behind the user's biometrics (docs/05 §2.6).
      */
-    inner class Authed(private val deviceKey: suspend () -> NostrKeys, private val dpop: P256Signer, initial: Session) {
+    inner class Authed(
+        private val deviceKey: suspend () -> NostrKeys,
+        private val dpop: P256Signer,
+        initial: Session,
+        /** Runs while the device key is unwrapped for a login: signs pending journal entries. */
+        private val onKey: (NostrKeys) -> Unit = {},
+    ) {
         private val mutex = Mutex()
         @Volatile var session: Session = initial
             private set
@@ -91,6 +100,7 @@ class GoonersPayApi(
                 val key = deviceKey()
                 try {
                     session = login(key, dpop, session.deviceId)
+                    runCatching { onKey(key) }
                 } finally {
                     key.wipe()
                 }
@@ -135,6 +145,18 @@ class GoonersPayApi(
             call("POST", "/v1/payouts/quotes", json.encodeToString(QuoteRequest.serializer(), QuoteRequest(session.accountId, amount, destination = destination)), Quote.serializer())
 
         suspend fun payout(quoteId: String): Payout = call("POST", "/v1/payouts", json.encodeToString(PayoutRequest.serializer(), PayoutRequest(quoteId)), Payout.serializer())
+
+        suspend fun uploadJournal(entries: List<Event>): JournalStatus =
+            call("POST", "/v1/terminal/journal", json.encodeToString(JournalUpload.serializer(), JournalUpload(entries)), JournalStatus.serializer())
+
+        suspend fun journalState(): JournalStatus = call("GET", "/v1/terminal/journal", null, JournalStatus.serializer())
+
+        /** Uploads the journal's signed entries; null when there was nothing to send. */
+        suspend fun syncJournal(journal: Journal): JournalStatus? {
+            val entries = journal.toUpload()
+            if (entries.isEmpty()) return null
+            return uploadJournal(entries).also { journal.record(entries, it) }
+        }
 
         suspend fun createEnrollmentCode(): EnrollmentCode = call("POST", "/v1/merchants/${session.merchantId}/enrollment-codes", null, EnrollmentCode.serializer())
 

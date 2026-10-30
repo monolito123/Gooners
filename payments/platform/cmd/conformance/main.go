@@ -120,6 +120,42 @@ func main() {
 	must(list.Sign(root, &da))
 	v["device_list"] = map[string]any{"aux": hex.EncodeToString(da[:]), "event": list}
 
+	// Canonical JSON (docs/03 §2.2): sorted keys, no whitespace, integers only, the escaping
+	// of NIP-01. Values arrive in any key order; the canonical string is the same.
+	var canon []map[string]any
+	for _, raw := range []string{
+		`{"v":1,"b":[3,1,2],"a":{"z":null,"y":true,"x":false}}`,
+		`{"seq":-7,"text":"aspas \" barra \\ nova\nlinha \t tab \u0001 ctl","ação":"São Paulo – R$ 1.299,90"}`,
+		`{"nested":{"k2":{"b":2,"a":1},"k1":[{"d":4,"c":3}]},"empty_obj":{},"empty_arr":[]}`,
+	} {
+		var val any
+		must(json.Unmarshal([]byte(raw), &val))
+		c, err := nostr.CanonicalJSON(val)
+		must(err)
+		canon = append(canon, map[string]any{"json": raw, "canonical": c})
+	}
+	v["canonical_json"] = canon
+
+	// A terminal journal (kind 7714): two hash-chained entries signed by the device key.
+	var chain []map[string]any
+	prev := any(nil)
+	for i, f := range []map[string]any{
+		{"v": 1, "seq": 1, "type": "session_start", "local_time": "2026-10-29T14:30:00-03:00", "app": map[string]any{"version": "0.1.0"}},
+		{"v": 1, "seq": 2, "type": "tap_started", "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0", "terminal_id": "TP000418",
+			"amount": map[string]any{"value": 12990, "currency": "BRL", "exponent": 2}, "local_time": "2026-10-29T14:42:09-03:00", "app": map[string]any{"version": "0.1.0"}},
+	} {
+		f["prev"] = prev
+		content, err := nostr.CanonicalJSON(f)
+		must(err)
+		ev := &nostr.Event{CreatedAt: int64(1793295000 + 60*i), Kind: 7714, Tags: [][]string{{"merchant", root.PubHex}}, Content: content}
+		var a [32]byte
+		copy(a[:], det(fmt.Sprintf("journal/%d", i+1)))
+		must(ev.Sign(device, &a))
+		chain = append(chain, map[string]any{"fields": f, "aux": hex.EncodeToString(a[:]), "event": ev})
+		prev = ev.ID
+	}
+	v["journal"] = map[string]any{"device_role": "merchant-device-android", "root_role": "merchant-root", "entries": chain}
+
 	// The sandbox card format (carddata.DevFormat) with a fixed nonce.
 	key, nonce := det("dev-card/key"), det("dev-card/nonce")[:12]
 	card := carddata.Card{PAN: "4111111111111111", Expiry: "2911", AID: "A0000000031010", EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE11"}

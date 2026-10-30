@@ -91,8 +91,10 @@ public final class GoonersPayAPI: Sendable {
 
     /// A logged-in device. The device key is asked for only to sign a login and wiped right
     /// after, so between logins it stays wrapped behind the user's biometrics (docs/05 §3.6).
-    public func authed(deviceKey: @escaping @Sendable () async throws -> NostrKeys, dpop: P256Signer, session: Session) -> Authed {
-        Authed(api: self, deviceKey: deviceKey, dpop: dpop, session: session, now: clock)
+    /// `onKey` runs while the device key is unwrapped for a login: it signs pending journal entries.
+    public func authed(deviceKey: @escaping @Sendable () async throws -> NostrKeys, dpop: P256Signer, session: Session,
+                       onKey: @escaping @Sendable (NostrKeys) -> Void = { _ in }) -> Authed {
+        Authed(api: self, deviceKey: deviceKey, dpop: dpop, session: session, now: clock, onKey: onKey)
     }
 
     /// A device session that logs in again when it expires or is refused.
@@ -101,12 +103,15 @@ public final class GoonersPayAPI: Sendable {
         private let deviceKey: @Sendable () async throws -> NostrKeys
         private let dpop: P256Signer
         private let now: @Sendable () -> Int64
+        private let onKey: @Sendable (NostrKeys) -> Void
         public private(set) var session: Session
         private var expiresAt: Int64
         private var renewing: Task<Session, Error>?
 
-        init(api: GoonersPayAPI, deviceKey: @escaping @Sendable () async throws -> NostrKeys, dpop: P256Signer, session: Session, now: @escaping @Sendable () -> Int64) {
+        init(api: GoonersPayAPI, deviceKey: @escaping @Sendable () async throws -> NostrKeys, dpop: P256Signer, session: Session,
+             now: @escaping @Sendable () -> Int64, onKey: @escaping @Sendable (NostrKeys) -> Void) {
             self.api = api
+            self.onKey = onKey
             self.deviceKey = deviceKey
             self.dpop = dpop
             self.session = session
@@ -117,11 +122,13 @@ public final class GoonersPayAPI: Sendable {
         private func current() async throws -> Session {
             if now() < expiresAt - 30 { return session }
             if let r = renewing { return try await r.value } // one login, however many calls wait for it
-            let (api, deviceKey, dpop, deviceID) = (api, deviceKey, dpop, session.deviceId)
+            let (api, deviceKey, dpop, deviceID, onKey) = (api, deviceKey, dpop, session.deviceId, onKey)
             let task = Task<Session, Error> {
                 let key = try await deviceKey()
                 defer { key.wipe() }
-                return try await api.login(device: key, dpop: dpop, deviceID: deviceID)
+                let s = try await api.login(device: key, dpop: dpop, deviceID: deviceID)
+                onKey(key)
+                return s
             }
             renewing = task
             defer { renewing = nil }
@@ -176,6 +183,22 @@ public final class GoonersPayAPI: Sendable {
 
         public func payout(quoteID: String) async throws -> Payout {
             try await call("POST", "/v1/payouts", body: encode(PayoutRequest(quoteId: quoteID)))
+        }
+
+        public func uploadJournal(_ entries: [NostrEvent]) async throws -> JournalStatus {
+            try await call("POST", "/v1/terminal/journal", body: encode(JournalUpload(entries: entries)))
+        }
+
+        public func journalState() async throws -> JournalStatus { try await call("GET", "/v1/terminal/journal") }
+
+        /// Uploads the journal's signed entries; nil when there was nothing to send.
+        @discardableResult
+        public func syncJournal(_ journal: Journal) async throws -> JournalStatus? {
+            let entries = journal.toUpload()
+            if entries.isEmpty { return nil }
+            let status = try await uploadJournal(entries)
+            journal.record(sent: entries, status: status)
+            return status
         }
 
         public func createEnrollmentCode() async throws -> EnrollmentCode {

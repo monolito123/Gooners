@@ -111,6 +111,12 @@ public struct TerminalAuthorization: Codable, Sendable, Equatable {
     public var emvApplication: String
     public var localTime: String
     public var sred: Sred
+    /// The device's tap_started journal entry; the receipt links to it (docs/03 §3.3).
+    public var journalEventId: String?
+}
+
+struct JournalUpload: Codable, Sendable {
+    var entries: [NostrEvent]
 }
 
 public struct CardView: Codable, Sendable, Equatable {

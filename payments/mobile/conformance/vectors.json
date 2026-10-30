@@ -42,6 +42,20 @@
       "url": ""
     }
   ],
+  "canonical_json": [
+    {
+      "canonical": "{\"a\":{\"x\":false,\"y\":true,\"z\":null},\"b\":[3,1,2],\"v\":1}",
+      "json": "{\"v\":1,\"b\":[3,1,2],\"a\":{\"z\":null,\"y\":true,\"x\":false}}"
+    },
+    {
+      "canonical": "{\"ação\":\"São Paulo – R$ 1.299,90\",\"seq\":-7,\"text\":\"aspas \\\" barra \\\\ nova\\nlinha \\t tab \\u0001 ctl\"}",
+      "json": "{\"seq\":-7,\"text\":\"aspas \\\" barra \\\\ nova\\nlinha \\t tab \\u0001 ctl\",\"ação\":\"São Paulo – R$ 1.299,90\"}"
+    },
+    {
+      "canonical": "{\"empty_arr\":[],\"empty_obj\":{},\"nested\":{\"k1\":[{\"c\":3,\"d\":4}],\"k2\":{\"a\":1,\"b\":2}}}",
+      "json": "{\"nested\":{\"k2\":{\"b\":2,\"a\":1},\"k1\":[{\"d\":4,\"c\":3}]},\"empty_obj\":{},\"empty_arr\":[]}"
+    }
+  ],
   "dev_card": {
     "ciphertext_base64": "wvQEhAkbB6ypn7bTQbYTzGsLzVT0kvwyUnK1nBCsAd91HPAJwdqNdUZDa+mSiI0NQq3FyM92d/kR2AeJlZSi+NiaJn5vcbA5zZRFxr6L6hpx5uPPv3aeviR9/aCKv4QDC/y1uUSziaJ90fWFdBWVOzdXxEavOqZAMMIxKjWdqvl4RZ6RGcB4BadSWd0GYbJOeL4=",
     "format": "dev-aesgcm-v1",
@@ -180,6 +194,73 @@
     }
   ],
   "generated_by": "payments/platform/cmd/conformance",
+  "journal": {
+    "device_role": "merchant-device-android",
+    "entries": [
+      {
+        "aux": "35dc54ef77ca15f6ac8266920eb60d2f5389aa05b0e27197926a396e585c1b12",
+        "event": {
+          "id": "6e53d19d8c0c8ceee99735c1cdcb45e0b5889063fa2159725fc39cad4b167c9a",
+          "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+          "created_at": 1793295000,
+          "kind": 7714,
+          "tags": [
+            [
+              "merchant",
+              "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+            ]
+          ],
+          "content": "{\"app\":{\"version\":\"0.1.0\"},\"local_time\":\"2026-10-29T14:30:00-03:00\",\"prev\":null,\"seq\":1,\"type\":\"session_start\",\"v\":1}",
+          "sig": "85704d5b5ef02fd0f977edf05e36e8595b7803683c634024172f10d94958f41b8af5c65839eb0985a8568ce7e134c2bc3ea0713d9de58f0a8da90a34e9bd6aeb"
+        },
+        "fields": {
+          "app": {
+            "version": "0.1.0"
+          },
+          "local_time": "2026-10-29T14:30:00-03:00",
+          "prev": null,
+          "seq": 1,
+          "type": "session_start",
+          "v": 1
+        }
+      },
+      {
+        "aux": "edfd65d3450ab5817438aaa9e7837a96727487fcc8d7a58bd53fce8308bd1c7a",
+        "event": {
+          "id": "bc9d7a8570b5060a5453d08d76bd2b4f47815d81c6534451acf9052e78854f0f",
+          "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+          "created_at": 1793295060,
+          "kind": 7714,
+          "tags": [
+            [
+              "merchant",
+              "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+            ]
+          ],
+          "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"app\":{\"version\":\"0.1.0\"},\"local_time\":\"2026-10-29T14:42:09-03:00\",\"payment_intent_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"prev\":\"6e53d19d8c0c8ceee99735c1cdcb45e0b5889063fa2159725fc39cad4b167c9a\",\"seq\":2,\"terminal_id\":\"TP000418\",\"type\":\"tap_started\",\"v\":1}",
+          "sig": "2bda708e9abdeb3b8989b7391cb0127ba6fad7ae3196d539e746a5018e9ae9b54c4eda51740176d76682a66c00c988a568c75ca0b4c0b3aa8460d24a57537d3c"
+        },
+        "fields": {
+          "amount": {
+            "currency": "BRL",
+            "exponent": 2,
+            "value": 12990
+          },
+          "app": {
+            "version": "0.1.0"
+          },
+          "local_time": "2026-10-29T14:42:09-03:00",
+          "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0",
+          "prev": "6e53d19d8c0c8ceee99735c1cdcb45e0b5889063fa2159725fc39cad4b167c9a",
+          "seq": 2,
+          "terminal_id": "TP000418",
+          "type": "tap_started",
+          "v": 1
+        }
+      }
+    ],
+    "root_role": "merchant-root"
+  },
   "jwk_thumbprint": {
     "jwk": {
       "kty": "EC",

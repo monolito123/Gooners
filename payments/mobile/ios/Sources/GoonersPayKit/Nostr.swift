@@ -21,18 +21,41 @@ public struct NostrEvent: Codable, Sendable, Equatable {
         self.sig = sig
     }
 
-    // Keys are matched after the decoder's snake_case conversion (see GoonersPayAPI.decoder).
-    enum CodingKeys: String, CodingKey { case id, pubkey, createdAt, kind, tags, content, sig }
+    /// Field names are NIP-01's whatever the coder's key strategy: written as "created_at"
+    /// (which snake_case conversion leaves alone) and read under either spelling, since the API
+    /// decoder converts keys to camelCase first.
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(_ s: String) { stringValue = s }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
 
     public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
-        pubkey = try c.decodeIfPresent(String.self, forKey: .pubkey) ?? ""
-        createdAt = try c.decode(Int64.self, forKey: .createdAt)
-        kind = try c.decode(Int.self, forKey: .kind)
-        tags = try c.decode([[String]].self, forKey: .tags)
-        content = try c.decode(String.self, forKey: .content)
-        sig = try c.decodeIfPresent(String.self, forKey: .sig) ?? ""
+        let c = try decoder.container(keyedBy: Key.self)
+        id = try c.decodeIfPresent(String.self, forKey: Key("id")) ?? ""
+        pubkey = try c.decodeIfPresent(String.self, forKey: Key("pubkey")) ?? ""
+        if let t = try c.decodeIfPresent(Int64.self, forKey: Key("created_at")) {
+            createdAt = t
+        } else {
+            createdAt = try c.decode(Int64.self, forKey: Key("createdAt"))
+        }
+        kind = try c.decode(Int.self, forKey: Key("kind"))
+        tags = try c.decode([[String]].self, forKey: Key("tags"))
+        content = try c.decode(String.self, forKey: Key("content"))
+        sig = try c.decodeIfPresent(String.self, forKey: Key("sig")) ?? ""
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        try c.encode(id, forKey: Key("id"))
+        try c.encode(pubkey, forKey: Key("pubkey"))
+        try c.encode(createdAt, forKey: Key("created_at"))
+        try c.encode(kind, forKey: Key("kind"))
+        try c.encode(tags, forKey: Key("tags"))
+        try c.encode(content, forKey: Key("content"))
+        try c.encode(sig, forKey: Key("sig"))
     }
 
     /// The NIP-01 commitment [0, pubkey, created_at, kind, tags, content], escaped exactly as

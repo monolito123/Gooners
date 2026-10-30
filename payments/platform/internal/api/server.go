@@ -141,6 +141,9 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/payment-intents/{id}/capture", "payments:write", true, s.captureIntent)
 	route("POST /v1/payment-intents/{id}/cancel", "payments:write", true, s.cancelIntent)
 	route("POST /v1/terminal/authorizations", "terminal", false, s.terminalAuthorization)
+	route("POST /v1/terminal/journal", "payments:write", false, s.postJournal)
+	route("GET /v1/terminal/journal", "payments:read", false, s.journalState)
+	route("GET /v1/payment-intents/{id}/journal", "payments:read", false, s.intentJournal)
 	route("POST /v1/refunds", "refunds:write", true, s.createRefund)
 	route("GET /v1/refunds/{id}", "payments:read", false, s.getRefund)
 	route("GET /v1/accounts/{id}/balance", "accounts:read", false, s.balance)
@@ -180,6 +183,9 @@ var sessionRoutes = map[string]bool{
 	"GET /v1/settlements/{id}":                           true,
 	"GET /v1/settlements/{id}/statement":                 true,
 	"GET /v1/settlements/{id}/proofs/{receipt_event_id}": true,
+	"POST /v1/terminal/journal":                          true,
+	"GET /v1/terminal/journal":                           true,
+	"GET /v1/payment-intents/{id}/journal":               true,
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a

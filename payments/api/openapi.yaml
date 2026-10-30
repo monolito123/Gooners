@@ -320,6 +320,82 @@ paths:
         "409":
           $ref: "#/components/responses/Problem"
 
+  /v1/terminal/journal:
+    post:
+      tags: [terminals]
+      operationId: uploadTerminalJournal
+      summary: Upload the device's signed, hash-chained journal entries (kind 7714)
+      description: |
+        App sessions only; every entry must be signed by the session's device key and name the
+        merchant's root key. Entries are stored in seq order; re-sent entries count as duplicates.
+        The answer is the HTTPS form of the 27711 / 27712 reconciliation (docs/03 §9): `missing`
+        lists the seq ranges the platform lacks, and a second entry at a stored seq, or a prev that
+        is not the entry before it, is kept as proof of a fork and freezes the device's terminal.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    $ref: "#/components/schemas/NostrEvent"
+      responses:
+        "200":
+          description: The platform's view of the journal after the upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JournalStatus"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+    get:
+      tags: [terminals]
+      operationId: getTerminalJournal
+      summary: The platform's view of this device's journal
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      responses:
+        "200":
+          description: Journal state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JournalStatus"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/payment-intents/{id}/journal:
+    get:
+      tags: [payments]
+      operationId: getPaymentJournal
+      summary: The devices' signed journal entries about a payment (dispute evidence)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Entries in device and seq order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/NostrEvent"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
   /v1/terminal/authorizations:
     post:
       tags: [payments]
@@ -2289,6 +2365,35 @@ components:
               format: date
             root_event_id:
               $ref: "#/components/schemas/Hex32"
+
+    JournalStatus:
+      type: object
+      required: [status, missing, forks]
+      properties:
+        status:
+          enum: [consistent, platform_behind, fork_detected]
+        accepted:
+          type: integer
+        duplicates:
+          type: integer
+        head:
+          type: [object, "null"]
+          properties:
+            seq:
+              type: integer
+            event_id:
+              $ref: "#/components/schemas/Hex32"
+        missing:
+          description: Inclusive seq ranges the platform lacks; the device republishes them.
+          type: array
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: integer
+        forks:
+          type: integer
 
     InclusionProof:
       type: object

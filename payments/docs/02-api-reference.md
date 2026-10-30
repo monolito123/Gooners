@@ -958,4 +958,6 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
 | GET | `/v1/settlements` · `/{id}` · `/{id}/statement` · `/{id}/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | App sessions see their own merchant |
 | GET | `/v1/transparency/{date}` | api | none (public) | Yes | The day's kind 7715 root |
+| POST · GET | `/v1/terminal/journal` | api | app session | Yes | The device's kind 7714 journal; answers `missing` ranges and forks |
+| GET | `/v1/payment-intents/{id}/journal` | api | `payments:read` | Yes | The devices' signed entries about a payment |
 | POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |

@@ -3,7 +3,10 @@ package br.com.gooners.pay.core
 import br.com.gooners.pay.core.auth.DeviceList
 import br.com.gooners.pay.core.auth.Jwk
 import br.com.gooners.pay.core.auth.Nip98
+import br.com.gooners.pay.core.journal.Journal
+import br.com.gooners.pay.core.journal.MemoryJournalStore
 import br.com.gooners.pay.core.nostr.Bech32
+import br.com.gooners.pay.core.nostr.CanonicalJson
 import br.com.gooners.pay.core.nostr.Event
 import br.com.gooners.pay.core.nostr.NostrKeys
 import br.com.gooners.pay.core.pix.BrCode
@@ -86,6 +89,27 @@ class ConformanceTest {
         val root = NostrKeys(sha256("goonerspay-spec/test-key/merchant-root"))
         val entries = ev.tags.filter { it[0] == "device" }.map { DeviceList.Entry(it[1], it[2], it[3]) }
         assertEquals(ev, DeviceList.event(root, ev.tag("merchant")!![1], entries, ev.createdAt, x.s("aux").hexToBytes()))
+    }
+
+    @Test fun canonicalJson() {
+        for (x in v["canonical_json"]!!.jsonArray.map { it.jsonObject }) {
+            assertEquals(x.s("canonical"), CanonicalJson.encode(json.parseToJsonElement(x.s("json"))))
+        }
+    }
+
+    @Test fun journalEntriesAreReproduced() {
+        val j = v["journal"]!!.jsonObject
+        val device = NostrKeys(sha256("goonerspay-spec/test-key/" + j.s("device_role")))
+        val entries = j["entries"]!!.jsonArray.map { it.jsonObject }
+        for (x in entries) {
+            val ev = event(x["event"]!!.jsonObject)
+            assertEquals(ev.content, CanonicalJson.encode(x["fields"]!!))
+            assertEquals(ev, ev.copy(id = "", sig = "", pubkey = "").signedBy(device, x.s("aux").hexToBytes()))
+        }
+        // The journal itself writes the first entry byte for byte, before any key is unwrapped.
+        val first = event(entries[0]["event"]!!.jsonObject)
+        val journal = Journal(MemoryJournalStore(), device.publicKeyHex, first.tag("merchant")!![1], "0.1.0", { first.createdAt }, java.time.ZoneOffset.ofHours(-3))
+        assertEquals(first.id, journal.append("session_start").id)
     }
 
     @Test fun sandboxCardFormat() {
