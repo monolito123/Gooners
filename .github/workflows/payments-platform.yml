@@ -2,9 +2,9 @@ name: goonersPAY platform (Go)
 
 on:
   push:
-    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
+    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
   pull_request:
-    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
+    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
   workflow_dispatch:
 
 permissions:
@@ -65,6 +65,12 @@ jobs:
         run: |
           psql "$DATABASE_URL" -c "CREATE DATABASE smoke"
           DATABASE_URL="postgres://postgres:postgres@localhost:5432/smoke?sslmode=disable" go run ./cmd/smoke
+
+      # Os apps testam contra estes vetores; eles precisam ser exatamente o que a plataforma gera hoje.
+      - name: Vetores de conformidade dos apps atualizados
+        run: |
+          go run ./cmd/conformance
+          git diff --exit-code -- ../mobile/conformance/vectors.json
 
       - name: Vulnerabilidades (govulncheck)
         run: make vuln

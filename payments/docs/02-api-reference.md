@@ -650,6 +650,8 @@ Transfers stay inside one tenant. They are synchronous because they are a single
 
 The fee is priced per receivable from time value and risk: `amount × ((1 + r)^(business_days/252) − 1)`, where `r` is the funding cost plus the merchant's risk-tier spread (here tier B, 18% a year, about 1.39% a month) ([07 §1.3](07-enhancements.md#13-pricing-an-advance)). `npm run check` recomputes these fees. Advanced receivables are recorded against the registered receivable units, so the same receivable can never be advanced or pledged twice.
 
+The destination key is checked and stored as DICT holds it: CPF and CNPJ as digits with valid check digits, e-mail in lowercase, phone in E.164, EVP as a UUID. A key that cannot exist gets `422` here, before anything reaches the PSP.
+
 ### 7.2 `POST /v1/payouts`
 
 Requires an HTTP Message Signature (§1.2).

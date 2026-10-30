@@ -1926,6 +1926,11 @@ components:
           enum: [cpf, cnpj, email, phone, evp]
         key:
           type: string
+          maxLength: 77
+          description: >-
+            Checked and stored as DICT holds it: CPF and CNPJ as digits with valid check digits (punctuation is removed),
+            e-mail in lowercase, phone in E.164 (+5511987654321), EVP as a lowercase UUID. A key that cannot exist is
+            refused with 422 before anything reaches the PSP.
 
     PayoutQuote:
       type: object

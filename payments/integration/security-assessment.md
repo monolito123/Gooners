@@ -32,6 +32,7 @@ An internal assessment of the Go platform ([`../platform`](../platform)), made w
 | F-12 | Low | No security headers | `nosniff`, `no-store`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `Referrer-Policy: no-referrer`, HSTS over TLS | `TestInputHardening` |
 | F-13 | Low | No upper bound on payment amounts | R$ 1.000.000,00 per payment intent by default (`MAX_PAYMENT_AMOUNT`), never above what the rails carry (R$ 9.999.999.999,99) | `TestInputHardening` |
 | F-14 | Low | Near midnight UTC, the daily Pix reconciliation took the calendar day in UTC and reconciled the wrong Brasília day (found when the test ran at 21:05 in Brasília) | A business day is always the Brasília date, in the service and the commands | `TestBusinessDayIsTheBrasiliaDate`, `TestOperations` |
+| F-17 | Low | Payout destinations took any `key_type` and any key, so a typo became a refused transfer at the PSP (and a fee) instead of a `422`; merchant documents were checked only for length | Pix keys are checked and normalized as DICT stores them: CPF and CNPJ with check digits, e-mail, E.164 phone, EVP UUID; `key_type` is case-insensitive and stored lowercase. Merchant CPF/CNPJ must have valid check digits | `TestNormalizePixKey`, `TestInputHardening` |
 | F-15 | Info | The routing round-robin counter was converted to `int` before the modulo, which would go negative on a 32-bit build | Reduced first | gosec |
 
 The other gosec results were reviewed and are false positives (conversions bounded by spec validation, retry jitter that is not a secret, file paths given by the operator). Each is annotated in the code with `#nosec` and the reason, and `make sec` now runs in CI with zero findings. govulncheck finds no vulnerability on a reachable path.
@@ -56,9 +57,21 @@ The other gosec results were reviewed and are false positives (conversions bound
 | The audit trail lives in the platform database | A database administrator could alter it | Export it to write-once storage (WORM) |
 | Operator commands need database credentials | Access to them is access to money | Run them only through a bastion with SSO and session recording |
 | Secrets come from environment variables | They show up in process listings and crash dumps | A secrets manager, and the HSM adapters ([hsm.md](hsm.md)) |
-| Mobile sessions (NIP-98 login, DPoP) | New attack surface for the apps | Covered by this assessment's method as it is built (§5) |
+| Device attestation | The sandbox attestor records App Attest and Play Integrity evidence without verifying it, and phones the owner adds by `npub` send none | Verify both at enrollment and at the first login of an added phone, before the production pilot ([mobile/README.md](../mobile/README.md#status-and-next-steps)) |
+| Certificate pinning in the apps | A user-installed CA could read app traffic on a compromised phone | Pin the API host's key in both apps |
 
-## 5. How to repeat it
+## 5. Merchant app protocol
+
+Tested by `internal/e2e/mobile_test.go` against the real API and PostgreSQL, and by both app cores against a live sandbox ([mobile/README.md](../mobile/README.md)):
+
+- **Enrollment codes** are single use, expire in 15 minutes, are stored hashed, and are given back only when the request was wrong. Two phones racing with one code cannot both enroll.
+- **NIP-98 logins** must sign this exact URL, method and body hash within 60 s, and each event is accepted once across replicas (`auth_nonces`). A device the root key dropped from its list cannot log in.
+- **DPoP.** A session is bound to the RFC 7638 thumbprint of the key it logged in with. A proof signed by another key, for another method or URL, without the token's hash, outside 60 s, or replayed is refused, so a stolen session token alone is useless.
+- **Scope.** Sessions reach only the merchant-app routes, only their merchant's account, payments and devices, and only their own terminal ID.
+- **Device lists** (kind 17710) must be signed by the merchant's root key, name the merchant, be newer than the last accepted list, and be dated no more than 10 minutes ahead. A list signed by a device key, or an older list replayed, is refused. Dropping a device ends its sessions and revokes its terminal in the same transaction.
+- **On the phones**, the DPoP key never leaves the Keystore or the Secure Enclave, and the Nostr keys are unwrapped only for a signature, behind biometrics. §4 lists what remains.
+
+## 6. How to repeat it
 
 ```bash
 cd payments/platform

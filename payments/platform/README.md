@@ -28,7 +28,7 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/webhooks` | Standard Webhooks delivery with retries; matches the spec's test vector | [02 §10](../docs/02-api-reference.md#10-webhooks) |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
 
-Binaries (`cmd/`): `platform` (serve, migrate, apikey, verify-ledger, release-due, settle, and the operator commands below), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator) and `smoke` (runs all of them together).
+Binaries (`cmd/`): `platform` (serve, migrate, apikey, verify-ledger, release-due, settle, and the operator commands below), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator), `smoke` (runs all of them together) and `conformance` (writes the merchant apps' test vectors, [`../mobile/conformance/vectors.json`](../mobile/conformance/vectors.json)).
 
 ## Quick start
 
@@ -38,7 +38,7 @@ go test -race ./...         # unit, integration and end-to-end tests; starts a t
 docker compose up --build   # sandbox stack on http://localhost:8080
 ```
 
-With PostgreSQL installed and no Docker, `DATABASE_URL=postgres://… go run ./cmd/smoke` builds every binary, starts them as separate processes with a fresh dev PKI, and drives a tap, a decline, a Pix payment over the PSP's mTLS webhook, and a payout. It then checks the ledger.
+With PostgreSQL installed and no Docker, `DATABASE_URL=postgres://… go run ./cmd/smoke` builds every binary, starts them as separate processes with a fresh dev PKI, and drives a tap, a decline, a Pix payment over the PSP's mTLS webhook, and a payout. It then checks the ledger. With `-serve FILE` it keeps the whole stack running after the checks and writes the API URL, a partner API key, a merchant and the sandbox's card key to `FILE`, for the mobile apps' integration tests ([`../mobile`](../mobile)).
 
 Talking to the sandbox:
 

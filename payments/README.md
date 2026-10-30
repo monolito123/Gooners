@@ -9,7 +9,7 @@ Architecture and engineering specification (REA / PRD) for a Brazil-first mercha
 - A **design system** whose colour claims are computed, not asserted.
 - Three re-scoped enhancements: a **risk-priced instant liquidity engine**, **zero-knowledge selective disclosure** for merchants, and an **on-device fraud shield**.
 
-> **Status: specification plus a tested reference implementation.** [`platform/`](platform) is the Go implementation of the integration layer (ISO 8583 switch, ledger, Pix through API Pix, receipts, API), with simulators of the card host and the Pix PSP. [`integration/`](integration) explains how to connect it to a sponsor acquirer, Visa, Mastercard and a bank for Pix. Not legal advice. The regulatory reading in [00 §7](docs/00-executive-summary.md#7-regulatory-posture-brazil-first) must be confirmed by counsel. **goonersPAY** is the product name, in the Gooners family with Gooners and Gooners Law. Run an INPI trademark search (class 36, financial services) and register the domains before public launch. The platform's hosts use the reserved `.example` domain.
+> **Status: specification plus a tested reference implementation.** [`platform/`](platform) is the Go implementation of the integration layer (ISO 8583 switch, ledger, Pix through API Pix, receipts, API), with simulators of the card host and the Pix PSP. [`mobile/`](mobile) holds the first Android and iOS merchant apps, which pair, log in with NIP-98 and DPoP, sell by card (sandbox reader) and Pix, and pay out. [`integration/`](integration) explains how to connect it to a sponsor acquirer, Visa, Mastercard and a bank for Pix. Not legal advice. The regulatory reading in [00 §7](docs/00-executive-summary.md#7-regulatory-posture-brazil-first) must be confirmed by counsel. **goonersPAY** is the product name, in the Gooners family with Gooners and Gooners Law. Run an INPI trademark search (class 36, financial services) and register the domains before public launch. The platform's hosts use the reserved `.example` domain.
 
 ## What changed from the brief
 
@@ -43,6 +43,7 @@ Seven premises of the original brief would fail regulation, certification or phy
 | [tools/](tools) | Example generator and the specification checker |
 | [platform/](platform) | **Reference implementation (Go)**: ISO 8583 codec and dialects, scheme sessions, authorization switch with reversals, ledger, Pix (BR Code, API Pix, webhook, payouts), Nostr receipts, vault, HTTP API, simulators, Docker stack |
 | [integration/](integration) | **Integration kit**: sponsor acquirer, Visa, Mastercard, Pix with a bank, key custody (HSM) adapters, certification test plan |
+| [mobile/](mobile) | **Merchant apps**: Android (Kotlin, Compose) and iOS (Swift, SwiftUI) with their protocol cores, tested against the platform's conformance vectors and a live sandbox |
 
 ## Verify the specification
 

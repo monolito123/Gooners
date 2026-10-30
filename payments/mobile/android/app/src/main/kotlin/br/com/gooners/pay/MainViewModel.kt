@@ -155,6 +155,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun pair(apiUrl: String, code: String, sandboxCardKey: String) = run {
         check(!needsScreenLock) { "Configure um bloqueio de tela (PIN, padrão ou biometria) antes de parear." }
         val url = apiUrl.trim().trimEnd('/')
+        check(BuildConfig.DEBUG || url.startsWith("https://", ignoreCase = true)) { "O endereço da plataforma precisa começar com https://." }
         val api = c.api(url)
         val enrollment = api.lookupEnrollment(code.trim())
         forget()

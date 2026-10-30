@@ -288,7 +288,7 @@ Server-only features add the cardholder side: the last seen application transact
 | Property | Value |
 |----------|-------|
 | Type | Gradient-boosted trees, about 40 features, 200 trees of depth 6 |
-| Packaging | Compiled to native code in the shared KMP core (no interpreter), plus Core ML on iOS where faster |
+| Packaging | Compiled into each platform's native core (no interpreter), plus Core ML on iOS where faster |
 | Size / latency | ≤ 200 KB, ≤ 5 ms on a mid-range phone, computed while the card is in the field |
 | Output | Calibrated probability + up to 5 signal codes (for example `apdu_rtt_p99_exceeded`, `overlay_active`) |
 | Integrity | The model file is signed (Ed25519). The app verifies it before loading, and the model hash is part of the attested request |
