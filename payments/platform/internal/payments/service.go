@@ -20,6 +20,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -45,6 +46,8 @@ type Config struct {
 	// TransparencyPadTo pads each day's transparency log to a multiple of this many leaves
 	// (docs/03 §6.4). Default 4096.
 	TransparencyPadTo int
+	// PlatformDocument is the platform's CNPJ: the beneficiary of the assignments it registers.
+	PlatformDocument string
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -65,6 +68,7 @@ type Service struct {
 	publisher    *receipts.Publisher
 	attest       Attestor
 	transparency nostr.Author
+	registrar    registrar.Registrar
 	log          *slog.Logger
 }
 
@@ -83,7 +87,10 @@ type Deps struct {
 	// Transparency signs the daily public roots (kind 7715). With Receipts, it turns on
 	// daily statements; in production it is the attested enclave signer.
 	Transparency nostr.Author
-	Logger       *slog.Logger
+	// Registrar registers receivable units and the platform's contract effects before any
+	// advance (docs/07 §1.6). Required in production; the sandbox uses an in-memory one.
+	Registrar registrar.Registrar
+	Logger    *slog.Logger
 }
 
 // New returns the service.
@@ -110,19 +117,21 @@ func New(cfg Config, d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
-		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, log: d.Logger}
+		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger}
 }
 
 // Errors surfaced to the API as problem details.
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrConflict  = errors.New("conflict")
-	ErrInvalid   = errors.New("invalid request")
-	ErrDisabled  = errors.New("not configured")
-	ErrDeclined  = errors.New("declined")
-	ErrFunds     = errors.New("insufficient funds")
-	ErrExpired   = errors.New("expired")
-	ErrSandboxed = errors.New("not allowed outside the sandbox")
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict")
+	ErrInvalid  = errors.New("invalid request")
+	ErrDisabled = errors.New("not configured")
+	ErrDeclined = errors.New("declined")
+	ErrFunds    = errors.New("insufficient funds")
+	ErrExpired  = errors.New("expired")
+	// ErrUnavailable is an upstream the operation needs (the receivables registrar) not answering.
+	ErrUnavailable = errors.New("upstream unavailable")
+	ErrSandboxed   = errors.New("not allowed outside the sandbox")
 )
 
 func invalid(format string, a ...any) error {

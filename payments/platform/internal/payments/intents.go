@@ -357,20 +357,37 @@ func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *M
 	parts := pricing.Split(payable, len(dates))
 	annual, eligible := s.cfg.Costs.AnnualRate(m.Plan.Tier)
 	instant := m.Plan.Instant && eligible
-	var feeTotal int64
+	arr := arrangement(brand, funding)
+	recIDs := make([]int64, len(dates))
 	for i, d := range dates {
-		status, fee := "pending", int64(0)
-		if instant {
-			fee = pricing.AdvanceFee(parts[i], annual, pricing.BusinessDaysBetween(s.cfg.Now(), d))
+		if err := s.pool.QueryRow(ctx, `INSERT INTO receivables (tenant_id, merchant_id, payment_intent_id, brand, arrangement, settles_on, amount, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending') RETURNING id`, tenantID, m.ID, pi.ID, brand, arr, d, parts[i]).Scan(&recIDs[i]); err != nil {
+			return nil, err
+		}
+	}
+	// Instant settlement advances the receivables: their assignment to the platform is
+	// registered first. Without it the sale settles on schedule (docs/07 §1.6).
+	if instant && s.registrar != nil {
+		lines, err := s.receivableLines(ctx, tenantID, recIDs)
+		if err == nil {
+			err = s.commitAdvance(ctx, tenantID, m.ID, "capture:"+pi.ID, "instant_release", pi.ID, lines)
+		}
+		if err != nil {
+			s.log.Warn("instant settlement not registered; the sale settles on schedule", "payment_intent", pi.ID, "err", err)
+			instant = false
+		}
+	}
+	var feeTotal int64
+	if instant {
+		for i, d := range dates {
+			fee := pricing.AdvanceFee(parts[i], annual, pricing.BusinessDaysBetween(s.cfg.Now(), d))
 			if err := s.post(ctx, tenantID, fmt.Sprintf("release:%s:%d", pi.ID, i), "instant_release", pi.ID, releaseInstant(m.ID, parts[i], fee)); err != nil {
 				return nil, err
 			}
-			status = "advanced"
+			if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $2 WHERE id = $1`, recIDs[i], fee); err != nil {
+				return nil, err
+			}
 			feeTotal += fee
-		}
-		if _, err := s.pool.Exec(ctx, `INSERT INTO receivables (tenant_id, merchant_id, payment_intent_id, brand, settles_on, amount, status, advance_fee)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, tenantID, m.ID, pi.ID, brand, d, parts[i], status, fee); err != nil {
-			return nil, err
 		}
 	}
 	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = amount, fee = $4, settlement_mode = $5, captured_at = $6, updated_at = now()
@@ -712,8 +729,17 @@ func (s *Service) reverseCaptureJournals(ctx context.Context, tenantID string, p
 	if err := s.post(ctx, tenantID, "cancel:"+pi.ID, "card_capture_reversal", pi.ID, ps); err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `UPDATE receivables SET status = 'reversed' WHERE tenant_id = $1 AND payment_intent_id = $2`, tenantID, pi.ID)
-	return err
+	if _, err = s.pool.Exec(ctx, `UPDATE receivables SET status = 'reversed' WHERE tenant_id = $1 AND payment_intent_id = $2`, tenantID, pi.ID); err != nil {
+		return err
+	}
+	if s.registrar != nil {
+		// The platform no longer finances the reversed sale: free its assignment at the
+		// registrar. The unit's lower total is registered by the next SyncReceivableUnits.
+		if err := s.registrar.CancelEffect(ctx, "capture:"+pi.ID); err != nil {
+			s.log.Error("cancel the registrar effect of a reversed sale", "payment_intent", pi.ID, "err", err)
+		}
+	}
+	return nil
 }
 
 // Refund is the API view of a refund.

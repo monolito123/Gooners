@@ -50,6 +50,11 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	} else if n > 0 {
 		s.log.Info("disputes accepted at their deadline", "count", n)
 	}
+	if n, err := s.SyncReceivableUnits(ctx, now); err != nil {
+		s.log.Error("register receivable units", "err", err)
+	} else if n > 0 {
+		s.log.Info("receivable units registered", "count", n)
+	}
 	if n, err := s.CloseDueDays(ctx, now); err != nil {
 		s.log.Error("close days", "err", err)
 	} else if n > 0 {

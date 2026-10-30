@@ -58,6 +58,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
@@ -305,6 +306,12 @@ func serve(ctx context.Context) error {
 	if deps.Attestor, err = attestor(c); err != nil {
 		return err
 	}
+	switch {
+	case c.RegistrarURL != "":
+		deps.Registrar = &registrar.Client{BaseURL: c.RegistrarURL}
+	case c.Env == config.Sandbox:
+		deps.Registrar = registrar.NewMemory() // the sandbox's own registrar: advances still register first
+	}
 	if len(c.TransparencySecret) == 32 {
 		k, err := nostr.KeysFromSecret(c.TransparencySecret)
 		if err != nil {
@@ -314,7 +321,7 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("transparency signer", "npub", npub)
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo}, deps)
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)

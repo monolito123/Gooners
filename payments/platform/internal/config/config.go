@@ -86,8 +86,13 @@ type Config struct {
 	AppAttestProduction                     bool
 	AndroidAttestationRoots, AndroidPackage string   // PEM file of Google's hardware attestation roots; application ID
 	AndroidSigningDigests                   [][]byte // SHA-256 of the app signing certificates
-	Relays                                  []string
-	ClaimBase                               string
+
+	// Receivables registrar (docs/07 §1.6): an adapter speaking internal/registrar's JSON
+	// contract. The sandbox runs an in-memory registrar when it is not set.
+	RegistrarURL     string
+	PlatformDocument string // the platform's CNPJ, beneficiary of its assignments
+	Relays           []string
+	ClaimBase        string
 
 	BootstrapTenant  string
 	BootstrapCapital int64
@@ -180,6 +185,7 @@ func Load() (*Config, error) {
 	if c.AndroidAttestationRoots != "" && len(c.AndroidSigningDigests) == 0 {
 		return nil, fmt.Errorf("config: ANDROID_ATTESTATION_ROOTS needs ANDROID_SIGNING_DIGESTS")
 	}
+	c.RegistrarURL, c.PlatformDocument = os.Getenv("REGISTRAR_URL"), os.Getenv("PLATFORM_DOCUMENT")
 	if r := os.Getenv("RELAYS"); r != "" {
 		c.Relays = strings.Split(r, ",")
 	}
@@ -258,6 +264,8 @@ func (c *Config) Validate() error {
 			return errors.New("config: production cannot hold the receipts key in process memory; wire the enclave signer")
 		case len(c.TransparencySecret) > 0:
 			return errors.New("config: production cannot hold the transparency key in process memory; wire the enclave signer")
+		case c.RegistrarURL == "" || c.PlatformDocument == "":
+			return errors.New("config: production registers receivables before any advance: set REGISTRAR_URL and PLATFORM_DOCUMENT")
 		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":
 			return errors.New("config: production verifies device attestation: set APPATTEST_ROOT_CA/APPATTEST_APP_ID and ANDROID_ATTESTATION_ROOTS/ANDROID_SIGNING_DIGESTS")
 		}
