@@ -60,7 +60,7 @@ jobs:
         run: |
           psql -h localhost -U postgres -c "CREATE DATABASE sandbox"
           DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" nohup go run ./cmd/smoke -serve "$GOONERSPAY_SANDBOX" > "$RUNNER_TEMP/sandbox.log" 2>&1 &
-          for i in $(seq 1 180); do [ -s "$GOONERSPAY_SANDBOX" ] && break; sleep 1; done
+          for i in $(seq 1 300); do [ -s "$GOONERSPAY_SANDBOX" ] && break; sleep 1; done
           cat "$RUNNER_TEMP/sandbox.log"
           test -s "$GOONERSPAY_SANDBOX"
 
@@ -117,7 +117,8 @@ jobs:
 
       - name: Projeto Xcode
         working-directory: payments/mobile/ios/App
-        run: "$RUNNER_TEMP/xcodegen/bin/xcodegen" generate
+        run: |
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" generate
 
       - name: App para simulador
         working-directory: payments/mobile/ios/App
