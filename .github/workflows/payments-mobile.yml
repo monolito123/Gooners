@@ -1,0 +1,139 @@
+name: goonersPAY mobile (Android, iOS)
+
+on:
+  push:
+    paths: ['payments/mobile/**', 'payments/platform/**', 'payments/nostr/examples/**', '.github/workflows/payments-mobile.yml']
+  pull_request:
+    paths: ['payments/mobile/**', 'payments/platform/**', 'payments/nostr/examples/**', '.github/workflows/payments-mobile.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payments-mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # O núcleo Kotlin e o pacote Swift contra os vetores de conformidade e contra um sandbox
+  # de verdade (plataforma, simuladores de bandeira e PSP, PostgreSQL); depois o app Android.
+  android-and-kit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-retries 30
+    env:
+      GOONERSPAY_SANDBOX: ${{ github.workspace }}/sandbox.json
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: payments/platform/go.mod
+          cache-dependency-path: payments/platform/go.sum
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Wrapper do Gradle íntegro
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Android SDK 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+
+      - name: Sandbox (plataforma + simuladores)
+        working-directory: payments/platform
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE sandbox"
+          DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" nohup go run ./cmd/smoke -serve "$GOONERSPAY_SANDBOX" > "$RUNNER_TEMP/sandbox.log" 2>&1 &
+          for i in $(seq 1 300); do [ -s "$GOONERSPAY_SANDBOX" ] && break; sleep 1; done
+          cat "$RUNNER_TEMP/sandbox.log"
+          test -s "$GOONERSPAY_SANDBOX"
+
+      - name: Núcleo Kotlin (conformidade + sandbox), app (debug, release, lint)
+        working-directory: payments/mobile/android
+        run: ./gradlew --no-configuration-cache :core:test :app:assembleDebug :app:assembleRelease :app:lintDebug
+
+      # O pacote Swift no Linux, na mesma rede do sandbox.
+      - name: GoonersPayKit (Swift, Linux)
+        run: |
+          docker run --rm --network host -v "$GITHUB_WORKSPACE:/w" -w /w/payments/mobile/ios \
+            -e GOONERSPAY_SANDBOX=/w/sandbox.json swift:6.2-noble swift test
+
+      - name: Relatórios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            payments/mobile/android/core/build/reports/tests/
+            payments/mobile/android/app/build/reports/lint-results-debug.html
+            ${{ runner.temp }}/sandbox.log
+          if-no-files-found: ignore
+
+      - name: APK de desenvolvimento
+        uses: actions/upload-artifact@v4
+        with:
+          name: goonerspay-debug-apk
+          path: payments/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+
+  # O pacote Swift com o SDK da Apple e o app SwiftUI para simulador e para aparelho
+  # (sem assinatura: o código do Secure Enclave só compila no destino de aparelho).
+  # -skipPackagePluginValidation: o swift-secp256k1 (versão fixa) gera fontes com um plug-in,
+  # que o Xcode só roda com aprovação interativa.
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Xcode mais recente
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: GoonersPayKit (Swift, macOS)
+        working-directory: payments/mobile/ios
+        run: swift test
+
+      - name: XcodeGen 2.46.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
+
+      - name: Projeto Xcode
+        working-directory: payments/mobile/ios/App
+        run: |
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" generate
+
+      - name: App para simulador
+        working-directory: payments/mobile/ios/App
+        run: |
+          xcodebuild -project GoonersPay.xcodeproj -scheme GoonersPay -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/sim.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/sim.log" | sort -u | head -100; tail -40 "$RUNNER_TEMP/sim.log"; exit 1; }
+          grep -E "GoonersPay/.*(warning|error):" "$RUNNER_TEMP/sim.log" | sort -u || true
+
+      - name: App para aparelho (Release, sem assinatura)
+        working-directory: payments/mobile/ios/App
+        run: |
+          xcodebuild -project GoonersPay.xcodeproj -scheme GoonersPay -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/dd" \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/device.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/device.log" | sort -u | head -100; tail -40 "$RUNNER_TEMP/device.log"; exit 1; }
+          grep -E "GoonersPay/.*(warning|error):" "$RUNNER_TEMP/device.log" | sort -u || true

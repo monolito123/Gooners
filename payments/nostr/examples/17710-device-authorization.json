@@ -1,0 +1,32 @@
+{
+  "id": "eeb8fda719fa5813d637989236a770842af723e978911f8c8506f14f4923e8bf",
+  "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
+  "created_at": 1793275930,
+  "kind": 17710,
+  "tags": [
+    [
+      "v",
+      "1"
+    ],
+    [
+      "merchant",
+      "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"
+    ],
+    [
+      "device",
+      "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+      "android",
+      "Caixa 1",
+      "1793275930"
+    ],
+    [
+      "device",
+      "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510",
+      "ios",
+      "iPad balcão",
+      "1793275930"
+    ]
+  ],
+  "content": "",
+  "sig": "b19a1314953b8b64b8bc51bdac2ef1d9350d64e6b8818d28bd23d394a51c35239dadfdcc491ac62379d86587af0123317ce08f81ad6fb8dd244911abbef222ad"
+}

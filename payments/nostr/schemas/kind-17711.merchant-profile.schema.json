@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-17711.merchant-profile.schema.json",
+  "title": "Kind 17711: merchant payment profile (replaceable, signed by the merchant root key, public)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": { "kind": { "const": 17711 } },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "display_name", "nip05", "methods", "receipts"],
+      "properties": {
+        "v": { "const": 1 },
+        "display_name": { "type": "string" },
+        "nip05": { "type": "string", "pattern": "^[a-z0-9._-]+@[a-z0-9.-]+$" },
+        "cnpj": { "type": "string" },
+        "city": { "type": "string" },
+        "methods": { "type": "array", "items": { "enum": ["card_present", "card", "pix", "payment_link"] } },
+        "receipts": {
+          "type": "object",
+          "required": ["relays", "signer"],
+          "properties": {
+            "relays": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/relayUrl" } },
+            "signer": { "$ref": "common.schema.json#/$defs/hex32" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "574826e2711a552ef2b22fae86e432168bce1c2d5a4e67977bceb3651be3158a",
+  "pubkey": "efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6",
+  "created_at": 1793382130,
+  "kind": 7712,
+  "tags": [
+    [
+      "merchant",
+      "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+    ],
+    [
+      "e",
+      "b7ca94f3f94a6ab17c0812e0110636c8b55617a08271e188579296e4e26ac9f0",
+      "wss://relay.goonerspay.example",
+      "receipt"
+    ]
+  ],
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":10000},\"payment_intent_id\":\"pi_01JBK8V6B5N4M3Q2W1E0R9T8Y7\",\"processed_at\":\"2026-10-30T17:42:10Z\",\"reason\":\"requested_by_customer\",\"refund_id\":\"re_01JBMQ0A9S8D7F6G5H4J3K2M1N\",\"type\":\"refund\",\"v\":1}",
+  "sig": "5b12f4dafc3bc9e19d45fdab1bdddb57805ba3daf1c3448dc888b0c96bf8f2e39483945f0f629d90cfd146cde7f915987560773c12304c1fcaa2dcbdc1759ee6"
+}

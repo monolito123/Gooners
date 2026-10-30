@@ -1,0 +1,93 @@
+name: goonersPAY platform (Go)
+
+on:
+  push:
+    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
+  pull_request:
+    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payments-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: payments/platform
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: payments/platform/go.mod
+          cache-dependency-path: payments/platform/go.sum
+
+      - name: Formatação, vet e staticcheck
+        run: make lint
+
+      # Testes unitários e de integração (inclusive o fluxo ponta a ponta pela API, simuladores e PostgreSQL).
+      - name: Testes (race detector)
+        run: go test -race -count=1 ./...
+
+      # Contagem de execuções, não duração: com -fuzztime em segundos o coordenador do Go às vezes
+      # lê o fim do prazo antes de o contexto filho ser cancelado e o reporta como falha
+      # ("context deadline exceeded", sem entrada que falhe). Com contagem não há prazo.
+      - name: Fuzz curto (ISO 8583, EMV, BR Code, Nostr, arquivos do subcredenciador)
+        run: |
+          go test -run=^$ -fuzz=FuzzUnpack -fuzztime=1000000x ./pkg/iso8583/
+          go test -run=^$ -fuzz=FuzzParse -fuzztime=500000x ./pkg/emv/
+          go test -run=^$ -fuzz=FuzzDecode -fuzztime=1000000x ./pkg/brcode/
+          go test -run=^$ -fuzz=FuzzVerify -fuzztime=300000x ./pkg/nostr/
+          go test -run=^$ -fuzz=FuzzParseSettlementCSV -fuzztime=300000x ./internal/payments/
+          go test -run=^$ -fuzz=FuzzParseDisputeCSV -fuzztime=300000x ./internal/payments/
+
+      # Os binários reais em processos separados, com sockets e mTLS de verdade.
+      - name: Smoke (schemesim + pixsim + platform)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: |
+          psql "$DATABASE_URL" -c "CREATE DATABASE smoke"
+          DATABASE_URL="postgres://postgres:postgres@localhost:5432/smoke?sslmode=disable" go run ./cmd/smoke
+
+      # Os apps testam contra estes vetores; eles precisam ser exatamente o que a plataforma gera hoje.
+      - name: Vetores de conformidade dos apps atualizados
+        run: |
+          go run ./cmd/conformance
+          git diff --exit-code -- ../mobile/conformance/vectors.json
+
+      - name: Vulnerabilidades (govulncheck)
+        run: make vuln
+
+      # Achados revisados estão anotados com #nosec e o motivo (payments/integration/security-assessment.md).
+      - name: Análise de segurança (gosec)
+        run: make sec
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Imagem Docker
+        run: docker build -t goonerspay-platform:ci .
+      - name: Compose válido
+        run: docker compose config -q

@@ -1,0 +1,20 @@
+{
+  "id": "5d42a2272879566eb1f918d738b223cdc5ac7135ae65aea020357110d69d809d",
+  "pubkey": "efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6",
+  "created_at": 1793325660,
+  "kind": 7713,
+  "tags": [
+    [
+      "merchant",
+      "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+    ],
+    [
+      "e",
+      "be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d",
+      "wss://relay.goonerspay.example",
+      "transparency"
+    ]
+  ],
+  "content": "{\"count\":4,\"currency\":\"BRL\",\"date\":\"2026-10-29\",\"lines\":[{\"amount\":12990,\"fee\":414,\"receipt_event_id\":\"ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2\",\"settles\":\"instant\"},{\"amount\":4500,\"fee\":62,\"receipt_event_id\":\"430b34814da944656fd339258212dbb06eb466a3a965e92dc2c34b5ea6b96422\",\"settles\":\"instant\"},{\"amount\":2390,\"fee\":0,\"receipt_event_id\":\"285d0cf3aa41e475eccc60d5f71204dff3c8d199177275337ad5e0f3256009a9\",\"settles\":\"instant\"},{\"amount\":31000,\"fee\":1547,\"receipt_event_id\":\"b7ca94f3f94a6ab17c0812e0110636c8b55617a08271e188579296e4e26ac9f0\",\"settles\":\"per_installment\"}],\"merchant_id\":\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\"receipts_root\":\"463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f\",\"receipts_tree\":\"rfc6962-sha256, leaves = receipt event ids (32 bytes) in capture order\",\"statement_commitment\":\"3acf12db8c6f7c767c6ea37396e222d7260d547c278fe92be0328c67c6b6cf5a\",\"totals\":{\"chargebacks\":0,\"fees\":2023,\"gross\":50880,\"net\":48857,\"refunds\":0},\"transparency\":{\"audit_path\":[\"05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc\",\"3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330\",\"b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022\"],\"leaf_index\":2,\"leaf_salt\":\"0e710581771871b231503a927622127ddeecab43018ccf88b36f90bf2a2af9a0\",\"root_event_id\":\"be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d\",\"tree_size\":8},\"v\":1}",
+  "sig": "9d0294ed328f69398529203bc9453d8da2d9cd61bc053dfa361d95ab2fe0835fc2aa2d07f98c57349baf08b5c561ab3e3b6cf88882e7b4f9ebf10371c01eef63"
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-7712.adjustment.schema.json",
+  "title": "Kind 7712: payment adjustment (refund, reversal, chargeback outcome) referencing a receipt",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": {
+    "kind": { "const": 7712 },
+    "tags": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/merchantTag" },
+        { "contains": { "type": "array", "prefixItems": [{ "const": "e" }, { "$ref": "common.schema.json#/$defs/hex32" }] } }
+      ]
+    }
+  },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "type", "payment_intent_id", "amount", "processed_at"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "enum": ["refund", "reversal", "chargeback", "chargeback_reversed"] },
+        "refund_id": { "$ref": "common.schema.json#/$defs/ulid" },
+        "payment_intent_id": { "$ref": "common.schema.json#/$defs/ulid" },
+        "amount": { "$ref": "common.schema.json#/$defs/money" },
+        "reason": { "type": "string" },
+        "processed_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

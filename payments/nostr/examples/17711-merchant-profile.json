@@ -1,0 +1,22 @@
+{
+  "id": "273c25b5c397eb4f03b864c456d8fc3ae35d47900b817b7915c57be2ae36019c",
+  "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
+  "created_at": 1793275940,
+  "kind": 17711,
+  "tags": [
+    [
+      "v",
+      "1"
+    ],
+    [
+      "relay",
+      "wss://relay.goonerspay.example"
+    ],
+    [
+      "relay",
+      "wss://relay2.goonerspay.example"
+    ]
+  ],
+  "content": "{\"city\":\"São Paulo\",\"cnpj\":\"12.345.678/0001-95\",\"display_name\":\"Café Aurora\",\"methods\":[\"card_present\",\"pix\",\"payment_link\"],\"nip05\":\"cafeaurora@goonerspay.example\",\"receipts\":{\"relays\":[\"wss://relay.goonerspay.example\",\"wss://relay2.goonerspay.example\"],\"signer\":\"efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6\"},\"v\":1}",
+  "sig": "003d1bb8c8fd1fe713d574f953a4e2a4e7510217d67751bed55cb5eaa4bc6ddc638d6e9a8dadc29f41c7562a89bc804002d0009a2e9cd4debccf236a707126a4"
+}

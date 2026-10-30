@@ -1,0 +1,26 @@
+{
+  "event": {
+    "id": "a9cbf2f84cf18c1bc0c8ca64f54541fc70ba739ae90c6e572ae4e3e375fd10e8",
+    "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+    "created_at": 1793295130,
+    "kind": 27235,
+    "tags": [
+      [
+        "u",
+        "https://api.goonerspay.example/v1/auth/nostr"
+      ],
+      [
+        "method",
+        "POST"
+      ],
+      [
+        "payload",
+        "f6c8ae46ac45625bd115419ce0922a5f7400ccb2c7c5fedd8ee2383b8d91fbd5"
+      ]
+    ],
+    "content": "",
+    "sig": "e2d7e76532d93d8a2cb388f6ca087ab55d257098c1aec37e16ba594e89e73297aba331c48fe642074412b1606406a920ec762072e18cb8cd61d5b127031442bc"
+  },
+  "request_body": "{\"dpop_jwk\":{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU\",\"y\":\"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0\"},\"device_id\":\"dev_01JB9A2B3C4D5E6F7G8H9J0K1M\"}",
+  "authorization_header": "Nostr eyJpZCI6ImE5Y2JmMmY4NGNmMThjMWJjMGM4Y2E2NGY1NDU0MWZjNzBiYTczOWFlOTBjNmU1NzJhZTRlM2UzNzVmZDEwZTgiLCJwdWJrZXkiOiI2YTIyZTQzY2M5YmRiZWZhZDdmNDdjZmEzMWQyYjRkYWE0YTE3NjI0NDViNjQ0MzA1YjhkOWE5MGZiN2VkZmUyIiwiY3JlYXRlZF9hdCI6MTc5MzI5NTEzMCwia2luZCI6MjcyMzUsInRhZ3MiOltbInUiLCJodHRwczovL2FwaS5nb29uZXJzcGF5LmV4YW1wbGUvdjEvYXV0aC9ub3N0ciJdLFsibWV0aG9kIiwiUE9TVCJdLFsicGF5bG9hZCIsImY2YzhhZTQ2YWM0NTYyNWJkMTE1NDE5Y2UwOTIyYTVmNzQwMGNjYjJjN2M1ZmVkZDhlZTIzODNiOGQ5MWZiZDUiXV0sImNvbnRlbnQiOiIiLCJzaWciOiJlMmQ3ZTc2NTMyZDkzZDhhMmNiMzg4ZjZjYTA4N2FiNTVkMjU3MDk4YzFhZWMzN2UxNmJhNTk0ZTg5ZTczMjk3YWJhMzMxYzQ4ZmU2NDIwNzQ0MTJiMTYwNjQwNmE5MjBlYzc2MjA3MmUxOGNiOGNkNjFkNWIxMjcwMzE0NDJiYyJ9"
+}

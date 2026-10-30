@@ -1,0 +1,40 @@
+{
+  "warning": "PUBLIC TEST KEYS. Secret key = SHA-256(\"goonerspay-spec/test-key/\" + role). Never use for anything real.",
+  "keys": [
+    {
+      "role": "platform-receipts",
+      "pubkey": "efdc9ee499d020d1fd772e619bf637377a9384624aaf4830e3b2740f84ff15f6",
+      "npub": "npub1alwfaeye6qsdrlth9eseha3hxaaf8przf2h5sv8rkf6qlp8lzhmqzdzty7"
+    },
+    {
+      "role": "platform-transparency",
+      "pubkey": "34decc3681764daa5132ca5fac8052d0db91b4d9bef3b5dfa7fa001bcadf9f89",
+      "npub": "npub1xn0vcd5pwex655fjef06eqzj6rderdxehmemtha8lgqphjkln7ysev2are"
+    },
+    {
+      "role": "platform-inbox",
+      "pubkey": "e14aa8263f35a66d97da6ea3513dc45dab21e1dc033eab7dc1f2fd403df0a671",
+      "npub": "npub1u992sf3lxknxm976d634z0wytk4jrcwuqvl2klwp7t75q00s5ecsp6euk0"
+    },
+    {
+      "role": "merchant-root",
+      "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
+      "npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9"
+    },
+    {
+      "role": "merchant-device-android",
+      "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+      "npub": "npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr"
+    },
+    {
+      "role": "merchant-device-ios",
+      "pubkey": "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510",
+      "npub": "npub1drzke9jsaafpp88qkx8ftujtqzpd5h7t3wm6a4c89zcgd9s2q5gq22qt3z"
+    },
+    {
+      "role": "customer-claim-1",
+      "pubkey": "fbf9807f9fc6fab9673dbce8550e07a9a20ed26c9d3dff703fd378c3983623ee",
+      "npub": "npub1l0ucqlulcmatjeeahn592rs84x3qa5nvn57l7upl6duv8xpky0hq82u4na"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-7714.terminal-journal.schema.json",
+  "title": "Kind 7714: terminal journal entry (device-signed, hash-chained, gift-wrapped to the platform and the merchant)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": {
+    "kind": { "const": 7714 },
+    "tags": { "$ref": "common.schema.json#/$defs/merchantTag" }
+  },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "seq", "prev", "type", "local_time", "app"],
+      "properties": {
+        "v": { "const": 1 },
+        "seq": { "type": "integer", "minimum": 0 },
+        "prev": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hex32" }, { "type": "null" }] },
+        "type": { "enum": ["session_start", "tap_started", "auth_result", "receipt_shown", "pix_static_shown", "cash_sale", "config_change", "attestation", "session_end"] },
+        "payment_intent_id": { "$ref": "common.schema.json#/$defs/ulid" },
+        "amount": { "$ref": "common.schema.json#/$defs/money" },
+        "result": { "enum": ["approved", "declined", "timeout", "canceled"] },
+        "terminal_id": { "type": "string" },
+        "stan": { "type": "string", "pattern": "^[0-9]{6}$" },
+        "local_time": { "type": "string", "format": "date-time" },
+        "app": { "type": "object", "required": ["version"], "properties": { "version": { "type": "string" }, "mpoc_sdk": { "type": "string" } } },
+        "device_risk": { "type": "object", "properties": { "score_milli": { "type": "integer", "minimum": 0, "maximum": 1000 }, "model": { "type": "string" } } }
+      }
+    }
+  }
+}

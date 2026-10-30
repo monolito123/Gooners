@@ -1,0 +1,59 @@
+# XcodeGen spec for the iOS app: xcodegen generate (docs: payments/mobile/README.md).
+name: GoonersPay
+options:
+  bundleIdPrefix: br.com.gooners
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  GoonersPayKit:
+    path: ..
+targets:
+  GoonersPay:
+    type: application
+    platform: iOS
+    sources:
+      - path: GoonersPay
+    dependencies:
+      - package: GoonersPayKit
+    info:
+      path: GoonersPay/Info.plist
+      properties:
+        CFBundleDisplayName: goonersPAY
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSFaceIDUsageDescription: O goonersPAY usa o Face ID para proteger as chaves da sua loja e confirmar saques.
+        ITSAppUsesNonExemptEncryption: false
+        GoonersPayAPIURL: $(GOONERSPAY_API_URL)
+        # The sandbox on a Mac is plain HTTP; release builds refuse anything but https:// at pairing.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    entitlements:
+      path: GoonersPay/GoonersPay.entitlements
+      properties:
+        com.apple.developer.devicecheck.appattest-environment: development
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: br.com.gooners.pay
+        PRODUCT_NAME: GoonersPay
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        DEAD_CODE_STRIPPING: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+          GOONERSPAY_API_URL: http://localhost:8080
+        Release:
+          GOONERSPAY_API_URL: https://api.goonerspay.com.br
+schemes:
+  GoonersPay:
+    build:
+      targets:
+        GoonersPay: all
+    run:
+      config: Debug
+    archive:
+      config: Release

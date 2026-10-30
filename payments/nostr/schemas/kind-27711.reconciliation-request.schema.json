@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/kind-27711.reconciliation-request.schema.json",
+  "title": "Kind 27711: reconciliation request from a device (ephemeral)",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/event" }],
+  "properties": { "kind": { "const": 27711 } },
+  "$defs": {
+    "content": {
+      "type": "object",
+      "required": ["v", "journal_head", "receipts_since"],
+      "properties": {
+        "v": { "const": 1 },
+        "journal_head": { "type": "object", "required": ["seq", "id"], "properties": { "seq": { "type": "integer" }, "id": { "$ref": "common.schema.json#/$defs/hex32" } } },
+        "receipts_since": { "type": "integer" },
+        "known_receipts": { "type": "integer" }
+      }
+    }
+  }
+}

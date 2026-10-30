@@ -1,0 +1,18 @@
+{
+  "id": "6e6de4463518d8806d3787cbd89991db6c45d9eb26e4781600111e9f7c831f47",
+  "pubkey": "34decc3681764daa5132ca5fac8052d0db91b4d9bef3b5dfa7fa001bcadf9f89",
+  "created_at": 1793239200,
+  "kind": 7715,
+  "tags": [
+    [
+      "log",
+      "goonerspay-settlement-v1"
+    ],
+    [
+      "date",
+      "2026-10-28"
+    ]
+  ],
+  "content": "{\"date\":\"2026-10-28\",\"log\":\"goonerspay-settlement-v1\",\"padding\":\"dummy leaves to a multiple of 8 (production: 4096)\",\"prev\":null,\"root\":\"7fa45c65de1306e350e50174aa670a07a11f3cb0489a55a598a7c28fb8702d3d\",\"tree_size\":8,\"v\":1}",
+  "sig": "ecf5fd490b24fe48573a8c0700944d437f4829d39ac123e9661482dc2fab5412a600d10b527f2a82197d9de3e23b4126404e5a31d9f3b96b8e65456f6b50869d"
+}

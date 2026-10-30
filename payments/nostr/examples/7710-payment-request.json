@@ -1,0 +1,18 @@
+{
+  "id": "3bcaecc054007ce74f8c7a244ee25c0e6307209fddc836834a533bfce8d8c2c3",
+  "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+  "created_at": 1793295700,
+  "kind": 7710,
+  "tags": [
+    [
+      "merchant",
+      "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+    ],
+    [
+      "expiration",
+      "1793296600"
+    ]
+  ],
+  "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"checkout_url\":\"https://pay.goonerspay.example/pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"description\":\"Mesa 4: 2 cappuccinos, 1 pão de queijo, 1 suco\",\"expires_at\":\"2026-10-29T17:56:40Z\",\"methods\":[\"card_present\",\"pix\"],\"pix_br_code\":\"00020101021226830014br.gov.bcb.pix2561pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***6304EC1C\",\"request_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"v\":1}",
+  "sig": "9281bd04fe9007168f3f4a262963fc8293d246e7571a6a23345896f7e2231b8cbfb26a59bf22d0fda8da5534cb26223ebad01ac46b1a572b16ab8067938897b1"
+}

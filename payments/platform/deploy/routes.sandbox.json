@@ -1,0 +1,12 @@
+[
+  {
+    "name": "sponsor",
+    "dialect": "generic-1987-ascii",
+    "addrs": ["schemesim:8583"],
+    "acquirer_id": "12345678",
+    "schemes": ["visa", "mastercard", "elo"],
+    "fee_bps": 35,
+    "per_attempt_cents": 5,
+    "approval_prior": 0.91
+  }
+]

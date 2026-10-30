@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+App/GoonersPay.xcodeproj/
+App/GoonersPay/Info.plist
+App/GoonersPay/GoonersPay.entitlements
+DerivedData/
+*.xcuserstate

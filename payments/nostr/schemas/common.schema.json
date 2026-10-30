@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.goonerspay.example/nostr/schemas/common.schema.json",
+  "title": "Shared definitions for the platform's Nostr event kinds",
+  "$defs": {
+    "hex32": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{128}$" },
+    "ulid": { "type": "string", "pattern": "^[a-z0-9]+(_[a-z0-9]+)*_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "money": {
+      "type": "object",
+      "required": ["value", "currency", "exponent"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "integer", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "exponent": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    "relayUrl": { "type": "string", "pattern": "^wss://" },
+    "event": {
+      "type": "object",
+      "required": ["id", "pubkey", "created_at", "kind", "tags", "content", "sig"],
+      "properties": {
+        "id": { "$ref": "#/$defs/hex32" },
+        "pubkey": { "$ref": "#/$defs/hex32" },
+        "created_at": { "type": "integer", "minimum": 0 },
+        "kind": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "tags": { "type": "array", "items": { "type": "array", "minItems": 1, "items": { "type": "string" } } },
+        "content": { "type": "string" },
+        "sig": { "$ref": "#/$defs/hex64" }
+      }
+    },
+    "merchantTag": {
+      "type": "array",
+      "contains": { "type": "array", "prefixItems": [{ "const": "merchant" }, { "$ref": "#/$defs/hex32" }] }
+    }
+  }
+}

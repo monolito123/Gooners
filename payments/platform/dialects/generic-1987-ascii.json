@@ -1,0 +1,236 @@
+{
+  "name": "generic-1987-ascii",
+  "description": "Platform reference dialect: ISO 8583:1987 with ASCII text, hex ASCII bitmap, ASCII length prefixes and a 2-byte binary frame length. Used between the switch, the scheme simulator and sponsor hosts that accept ISO 8583:1987 ASCII. Confirm the private fields (48, 60-63, 126) against the counterparty's host specification.",
+  "status": "verified",
+  "source": "ISO 8583:1987 field conventions; verified by this repository's codec and simulator tests",
+  "mti_enc": "ascii",
+  "bitmap_enc": "ascii",
+  "framing": {
+    "type": "binary",
+    "bytes": 2
+  },
+  "defaults": {
+    "enc": "ascii",
+    "len_enc": "ascii"
+  },
+  "fields": {
+    "2": {
+      "name": "Primary account number",
+      "type": "llvar",
+      "class": "n",
+      "max": 19,
+      "sensitive": true
+    },
+    "3": {
+      "name": "Processing code",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "4": {
+      "name": "Amount, transaction",
+      "type": "fixed",
+      "class": "n",
+      "length": 12
+    },
+    "7": {
+      "name": "Transmission date and time (MMDDhhmmss, UTC)",
+      "type": "fixed",
+      "class": "n",
+      "length": 10
+    },
+    "11": {
+      "name": "System trace audit number",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "12": {
+      "name": "Local transaction time (hhmmss)",
+      "type": "fixed",
+      "class": "n",
+      "length": 6
+    },
+    "13": {
+      "name": "Local transaction date (MMDD)",
+      "type": "fixed",
+      "class": "n",
+      "length": 4
+    },
+    "14": {
+      "name": "Expiration date (YYMM)",
+      "type": "fixed",
+      "class": "n",
+      "length": 4,
+      "sensitive": true
+    },
+    "18": {
+      "name": "Merchant category code",
+      "type": "fixed",
+      "class": "n",
+      "length": 4
+    },
+    "19": {
+      "name": "Acquiring institution country code",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "22": {
+      "name": "POS entry mode",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "23": {
+      "name": "Card sequence number",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "25": {
+      "name": "POS condition code",
+      "type": "fixed",
+      "class": "n",
+      "length": 2
+    },
+    "32": {
+      "name": "Acquiring institution ID",
+      "type": "llvar",
+      "class": "n",
+      "max": 11
+    },
+    "35": {
+      "name": "Track 2 equivalent data",
+      "type": "llvar",
+      "class": "z",
+      "max": 37,
+      "sensitive": true
+    },
+    "37": {
+      "name": "Retrieval reference number",
+      "type": "fixed",
+      "class": "an",
+      "length": 12
+    },
+    "38": {
+      "name": "Authorization ID response",
+      "type": "fixed",
+      "class": "an",
+      "length": 6
+    },
+    "39": {
+      "name": "Response code",
+      "type": "fixed",
+      "class": "an",
+      "length": 2
+    },
+    "41": {
+      "name": "Card acceptor terminal ID",
+      "type": "fixed",
+      "class": "ans",
+      "length": 8
+    },
+    "42": {
+      "name": "Card acceptor ID",
+      "type": "fixed",
+      "class": "ans",
+      "length": 15
+    },
+    "43": {
+      "name": "Card acceptor name/location",
+      "type": "fixed",
+      "class": "ans",
+      "length": 40
+    },
+    "48": {
+      "name": "Additional data, private",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "49": {
+      "name": "Currency code, transaction",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "52": {
+      "name": "PIN data (hex)",
+      "type": "fixed",
+      "class": "b",
+      "length": 16,
+      "enc": "ascii",
+      "sensitive": true
+    },
+    "54": {
+      "name": "Additional amounts",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 120
+    },
+    "55": {
+      "name": "ICC system-related data (EMV TLV, hex)",
+      "type": "lllvar",
+      "class": "b",
+      "max": 510,
+      "enc": "ascii",
+      "sensitive": true
+    },
+    "60": {
+      "name": "Private use 60",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "61": {
+      "name": "Private use 61 (POS data)",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "62": {
+      "name": "Private use 62 (network transaction ID)",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "63": {
+      "name": "Private use 63 (network data)",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "70": {
+      "name": "Network management information code",
+      "type": "fixed",
+      "class": "n",
+      "length": 3
+    },
+    "90": {
+      "name": "Original data elements",
+      "type": "fixed",
+      "class": "n",
+      "length": 42
+    },
+    "95": {
+      "name": "Replacement amounts",
+      "type": "fixed",
+      "class": "an",
+      "length": 42
+    },
+    "126": {
+      "name": "Private use 126 (authentication data)",
+      "type": "lllvar",
+      "class": "ans",
+      "max": 999
+    },
+    "128": {
+      "name": "Message authentication code (hex)",
+      "type": "fixed",
+      "class": "b",
+      "length": 16,
+      "enc": "ascii"
+    }
+  }
+}

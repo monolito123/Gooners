@@ -1,0 +1,24 @@
+{
+  "id": "be8254533179aec1f63b4adacbc3211997fdbe22c3d4f0dec36dbc87aef64f8d",
+  "pubkey": "34decc3681764daa5132ca5fac8052d0db91b4d9bef3b5dfa7fa001bcadf9f89",
+  "created_at": 1793325600,
+  "kind": 7715,
+  "tags": [
+    [
+      "log",
+      "goonerspay-settlement-v1"
+    ],
+    [
+      "date",
+      "2026-10-29"
+    ],
+    [
+      "e",
+      "6e6de4463518d8806d3787cbd89991db6c45d9eb26e4781600111e9f7c831f47",
+      "wss://relay.goonerspay.example",
+      "prev"
+    ]
+  ],
+  "content": "{\"date\":\"2026-10-29\",\"log\":\"goonerspay-settlement-v1\",\"padding\":\"dummy leaves to a multiple of 8 (production: 4096)\",\"prev\":\"6e6de4463518d8806d3787cbd89991db6c45d9eb26e4781600111e9f7c831f47\",\"root\":\"dd0bc1db86a3358f397bc33ab9506387e1c65ed8240063cc361b2fb6bd203dd8\",\"tree_size\":8,\"v\":1}",
+  "sig": "3660739aa05ab0f1b4973fecc871c9ce2ed207b9186f0bc7787f1cda71c6a52178b75cacd808280c3d7b362ff730a007b73b7f434f7481e2443234bdd5ddcc13"
+}
