@@ -8,12 +8,16 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/big"
 	"os"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -155,6 +159,44 @@ func main() {
 		chain = append(chain, map[string]any{"fields": f, "aux": hex.EncodeToString(a[:]), "event": ev})
 		prev = ev.ID
 	}
+	// Certificate pins: SHA-256 of the SubjectPublicKeyInfo, from the key as Apple's Security
+	// framework exports it (X9.63 point for EC, PKCS#1 for RSA).
+	var pins []map[string]any
+	for _, k := range []struct {
+		typ  string
+		bits int
+		seed string
+	}{{"ec", 256, "pin/p256"}, {"ec", 384, "pin/p384"}, {"rsa", 2048, "pin/rsa2048"}} {
+		var pub any
+		var external []byte
+		switch k.typ {
+		case "ec":
+			// A fixed scalar: ecdsa.GenerateKey is deliberately not reproducible.
+			curve, scalar := ecdh.P256(), det(k.seed)
+			if k.bits == 384 {
+				curve, scalar = ecdh.P384(), append(det(k.seed), det(k.seed + "/2")[:16]...)
+			}
+			key, err := curve.NewPrivateKey(scalar)
+			must(err)
+			pub = key.PublicKey()
+			external = key.PublicKey().Bytes()
+		case "rsa":
+			// A fixed modulus: RSA generation is not reproducible from a seed in Go.
+			n := new(big.Int).SetBytes(append([]byte{0xc0}, det(k.seed + "/modulus")[1:]...))
+			for i := 1; i < 8; i++ {
+				n = n.Lsh(n, 256).Or(n, new(big.Int).SetBytes(det(fmt.Sprintf("%s/modulus/%d", k.seed, i))))
+			}
+			rpub := &rsa.PublicKey{N: n, E: 65537}
+			pub = rpub
+			external = x509.MarshalPKCS1PublicKey(rpub)
+		}
+		spki, err := x509.MarshalPKIXPublicKey(pub)
+		must(err)
+		sum := sha256.Sum256(spki)
+		pins = append(pins, map[string]any{"type": k.typ, "bits": k.bits, "external": hex.EncodeToString(external), "pin": "sha256/" + base64.StdEncoding.EncodeToString(sum[:])})
+	}
+	v["spki_pins"] = pins
+
 	// The challenge an Android app passes to setAttestationChallenge for its DPoP key.
 	v["key_attestation_challenge"] = map[string]any{"device_pubkey": device.PubHex, "challenge": hex.EncodeToString(attest.Challenge(device.PubHex))}
 

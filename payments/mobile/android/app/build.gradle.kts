@@ -15,6 +15,11 @@ android {
         versionName = "0.1.0"
         // The sandbox server an emulator reaches on the host machine.
         buildConfigField("String", "DEFAULT_API_URL", "\"http://10.0.2.2:8080\"")
+        // Certificate pinning of the platform's API host: the SPKI hashes ("sha256/…") of its
+        // current key and a backup key, set for release builds with
+        // -Pgoonerspay.pins=sha256/AAA…,sha256/BBB… (payments/mobile/README.md).
+        buildConfigField("String", "PINNED_HOST", "\"${providers.gradleProperty("goonerspay.pinnedHost").getOrElse("api.goonerspay.com.br")}\"")
+        buildConfigField("String", "API_PINS", "\"${providers.gradleProperty("goonerspay.pins").getOrElse("")}\"")
     }
 
     buildTypes {
@@ -55,4 +60,5 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.zxing.core)
+    implementation(libs.zxing.embedded) // the owner's phone reads a new phone's npub QR
 }

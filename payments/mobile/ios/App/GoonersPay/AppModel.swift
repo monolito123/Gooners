@@ -131,6 +131,16 @@ final class AppModel {
     /// Production plugs in ProximityReader (Tap to Pay on iPhone) or a PCI PTS reader instead.
     var sandboxReader: SandboxCardReader? { box.sandboxReader(key: settings.sandboxCardKey) }
 
+    /// The API client, pinned to the platform's keys when the build carries pins.
+    nonisolated static func api(_ url: String) -> GoonersPayAPI {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let pins = Set(((info["GoonersPayPins"] as? String) ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("sha256/") })
+        let host = (info["GoonersPayPinnedHost"] as? String) ?? ""
+        guard !pins.isEmpty, URL(string: url)?.host == host else { return GoonersPayAPI(baseURL: url) }
+        return GoonersPayAPI(baseURL: url, pins: CertificatePins(host: host, pins: pins))
+    }
+
     nonisolated static var defaultAPIURL: String { Bundle.main.object(forInfoDictionaryKey: "GoonersPayAPIURL") as? String ?? "http://localhost:8080" }
 
     /// Drives the alert that shows `message`.
@@ -184,7 +194,7 @@ final class AppModel {
     }
 
     private func login() async throws {
-        let api = GoonersPayAPI(baseURL: settings.apiURL)
+        let api = Self.api(settings.apiURL)
         let dpop = try vault.dpopSigner()
         let deviceID = settings.deviceID.isEmpty ? nil : settings.deviceID
         journal()?.append("session_start")
@@ -226,7 +236,7 @@ final class AppModel {
             guard url.lowercased().hasPrefix("https://") else { throw AppError.notHTTPS } // only the sandbox on a Mac is plain HTTP
             #endif
             let code = rawCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            let api = GoonersPayAPI(baseURL: url)
+            let api = Self.api(url)
             let enrollment = try await api.lookupEnrollment(code: code)
             forget()
             settings.apiURL = url

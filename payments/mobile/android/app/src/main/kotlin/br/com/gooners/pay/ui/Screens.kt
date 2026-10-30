@@ -1,5 +1,6 @@
 package br.com.gooners.pay.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -65,6 +66,8 @@ import br.com.gooners.pay.core.checkout.CheckoutState
 import br.com.gooners.pay.core.nostr.Bech32
 import br.com.gooners.pay.core.sandbox.EmvApplication
 import br.com.gooners.pay.core.sandbox.SandboxCardReader
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @Composable
 fun AppRoot(vm: MainViewModel) {
@@ -388,8 +391,15 @@ private fun DevicesTab(vm: MainViewModel) {
         }
         HorizontalDivider()
         Text("Adicionar aparelho", style = MaterialTheme.typography.titleMedium)
-        Hint("No novo aparelho, use um código de pareamento. Ele mostra um código npub: cole-o aqui.")
+        Hint("No novo aparelho, use um código de pareamento. Ele mostra um código npub: leia-o com a câmera ou cole-o aqui.")
         OutlinedButton(vm::newEnrollmentCode, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Gerar código de pareamento") }
+        val scan = rememberLauncherForActivityResult(ScanContract()) { result ->
+            result.contents?.trim()?.takeIf { it.startsWith("npub1") }?.let { npub = it }
+        }
+        OutlinedButton({
+            scan.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Leia o código do novo aparelho")
+                .setBeepEnabled(false).setOrientationLocked(false))
+        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Ler o código do novo aparelho") }
         OutlinedTextField(npub, { npub = it }, label = { Text("Código do aparelho (npub…)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(label, { label = it }, label = { Text("Nome (ex.: Caixa 2)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -2,6 +2,9 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if canImport(Security)
+import Security
+#endif
 
 /// An error answer from the platform (RFC 9457 Problem Details).
 public struct APIError: Error, Sendable, CustomStringConvertible {
@@ -17,12 +20,41 @@ public struct APIError: Error, Sendable, CustomStringConvertible {
     public var attestationRequired: Bool { status == 401 && (problem?.detail ?? "").contains("attestation_required") }
 }
 
-/// Refuses redirects: a session token must never follow a 3xx to another host.
-private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+/// Refuses redirects (a session token must never follow a 3xx to another host) and, with
+/// pins, accepts the pinned host only when a pinned key is in its trusted chain.
+private final class SessionDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    let pins: CertificatePins?
+
+    init(pins: CertificatePins?) { self.pins = pins }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
         completionHandler(nil)
     }
+
+    #if canImport(Security)
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard let pins, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              challenge.protectionSpace.host == pins.host, let trust = challenge.protectionSpace.serverTrust else {
+            return completionHandler(.performDefaultHandling, nil)
+        }
+        // The chain must first be trusted as usual; pinning only narrows it.
+        guard SecTrustEvaluateWithError(trust, nil), let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate] else {
+            return completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+        for cert in chain {
+            guard let key = SecCertificateCopyKey(cert), let attrs = SecKeyCopyAttributes(key) as? [String: Any],
+                  let external = SecKeyCopyExternalRepresentation(key, nil) as Data? else { continue }
+            let type: CertificatePins.KeyType = (attrs[kSecAttrKeyType as String] as? String) == (kSecAttrKeyTypeRSA as String) ? .rsa : .ec
+            let bits = (attrs[kSecAttrKeySizeInBits as String] as? Int) ?? 0
+            if let pin = CertificatePins.pin(keyType: type, bits: bits, external: external), pins.pins.contains(pin) {
+                return completionHandler(.useCredential, URLCredential(trust: trust))
+            }
+        }
+        completionHandler(.cancelAuthenticationChallenge, nil)
+    }
+    #endif
 }
 
 /// The platform's merchant-app API (docs/02 §3.2, §8.2). Enrollment uses a single-use code,
@@ -33,7 +65,8 @@ public final class GoonersPayAPI: Sendable {
     private let session: URLSession
     private let clock: @Sendable () -> Int64
 
-    public init(baseURL: String, session: URLSession? = nil, clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
+    public init(baseURL: String, session: URLSession? = nil, clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) },
+                pins: CertificatePins? = nil) {
         self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
         self.clock = clock
         if let session {
@@ -43,7 +76,7 @@ public final class GoonersPayAPI: Sendable {
             config.timeoutIntervalForRequest = 30 // a card authorization may take the host's full timeout
             config.httpShouldSetCookies = false
             config.urlCache = nil
-            self.session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
+            self.session = URLSession(configuration: config, delegate: SessionDelegate(pins: pins), delegateQueue: nil)
         }
     }
 

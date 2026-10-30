@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import okhttp3.CertificatePinner
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -166,10 +167,21 @@ class GoonersPayApi(
     }
 
     companion object {
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+        /**
+         * The app's HTTP client. [pins] are "sha256/<base64 SPKI hash>" values for [host]: the
+         * platform's current key and a backup, so a user-installed or mis-issued certificate
+         * authority cannot read the app's traffic. No pins, no pinning (the sandbox).
+         */
+        fun defaultClient(host: String? = null, pins: List<String> = emptyList()): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS) // a card authorization may take the host's full timeout
             .followRedirects(false)
+            .followSslRedirects(false)
+            .apply {
+                if (host != null && pins.isNotEmpty()) {
+                    certificatePinner(CertificatePinner.Builder().apply { pins.forEach { add(host, it) } }.build())
+                }
+            }
             .build()
     }
 }

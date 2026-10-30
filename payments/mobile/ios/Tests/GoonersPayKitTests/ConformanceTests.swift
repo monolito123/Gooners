@@ -111,6 +111,17 @@ final class ConformanceTests: XCTestCase {
         return try! JSONDecoder().decode(RawVectors.self, from: data)
     }()
 
+    struct PinVector: Decodable { var type: String; var bits: Int; var external: String; var pin: String }
+
+    func testCertificatePins() throws {
+        struct File: Decodable { var spki_pins: [PinVector] }
+        let data = try Data(contentsOf: Self.mobile.appendingPathComponent("conformance/vectors.json"))
+        for x in try JSONDecoder().decode(File.self, from: data).spki_pins {
+            XCTAssertEqual(x.pin, CertificatePins.pin(keyType: x.type == "rsa" ? .rsa : .ec, bits: x.bits, external: Data(hex: x.external)!), "\(x.type) \(x.bits)")
+        }
+        XCTAssertNil(CertificatePins.pin(keyType: .ec, bits: 256, external: Data(count: 10)))
+    }
+
     func testCanonicalJSON() throws {
         for c in Self.raw.canonical_json {
             XCTAssertEqual(c.canonical, try JSONDecoder().decode(JSONValue.self, from: Data(c.json.utf8)).canonical)

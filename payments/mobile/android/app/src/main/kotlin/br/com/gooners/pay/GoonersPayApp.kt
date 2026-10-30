@@ -26,7 +26,12 @@ class AppContainer(context: Context) {
     val unlocker = Unlocker()
     val integrity: IntegrityProvider by lazy { KeyAttestationIntegrity(vault) }
 
-    fun api(url: String = settings.apiUrl) = GoonersPayApi(url)
+    fun api(url: String = settings.apiUrl): GoonersPayApi {
+        val pins = BuildConfig.API_PINS.split(',').map { it.trim() }.filter { it.startsWith("sha256/") }
+        val host = runCatching { java.net.URI(url).host }.getOrNull()
+        if (pins.isNotEmpty() && host == BuildConfig.PINNED_HOST) return GoonersPayApi(url, GoonersPayApi.defaultClient(host, pins))
+        return GoonersPayApi(url)
+    }
 
     /**
      * The card reader. Production plugs in the licensed MPoC SDK here; until then only the

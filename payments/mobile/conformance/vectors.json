@@ -345,6 +345,26 @@
     "method": "POST",
     "url": "https://api.goonerspay.example/v1/auth/nostr"
   },
+  "spki_pins": [
+    {
+      "bits": 256,
+      "external": "04a4f5349c79bd87f08d94b7806acd690647306f129a7a235e25dbbb3800b4d7b8596a4bd6acb8143f316c6945e525eb52aec73b874427cf0f5be205395c03f4fb",
+      "pin": "sha256/NE9iXcyzsKzPQCI00IIwyHRjsRMNEiCPor29lMaH49c=",
+      "type": "ec"
+    },
+    {
+      "bits": 384,
+      "external": "048c5db06e51f2d0ba983e6b91d8297826292d79a21fd68c06f6078f0dd7d633b5bf686a8884f6d5e4676ba8b27f6345a1920c1aebec6e9fad6d98a8498110668b696c27a77091fc31f57c84bba97806d82b423d17113d27318d833b9a0653f789",
+      "pin": "sha256/T6Nu3DeFjO7iYAG4mFFHRW7K8DlRuNffKz7zt6fyQ7k=",
+      "type": "ec"
+    },
+    {
+      "bits": 2048,
+      "external": "3082010a0282010100c0174c0d956c7dbb0ce5f995bf4f18d2e9c6276657358107e525a9396a4eae8886893dc39d373af9808a49cdbe403ef44f864af33f979ee958d45f498257351f8fe9883ed06b9195d864e0af7cce0c50c313feaf0267495c36b70605a9cb99b6fa5a65442562b6473f9216783ad3b91ea040fb0ea8bcf042625443fb8ca66122cb8377c0dd034b067d54cc32a8b587e4fdb2c7e52ee105ad6fd8f568836ce093e08c244b7173198aef81a5caf118df5c4b054e867647fbcd056fb756eb3b2cd4ba71ec7868e20c712ab39c54324d86bddaa9b498add8c9cf2339ab8b3d837dbec8765ad6baeb54f4b1ec2d454262d10ee1ee897a6b78b5dd5a5b7796da6affa50203010001",
+      "pin": "sha256/4r6RmPNPhO2D5PK9sO5pHTxZgca/svMzsHg9HYcMlYk=",
+      "type": "rsa"
+    }
+  ],
   "test_keys": [
     {
       "npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",

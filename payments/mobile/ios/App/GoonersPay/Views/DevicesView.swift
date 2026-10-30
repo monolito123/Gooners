@@ -6,6 +6,7 @@ struct DevicesView: View {
     @State private var npub = ""
     @State private var label = ""
     @State private var platform = "android"
+    @State private var scanning = false
 
     var body: some View {
         List {
@@ -31,6 +32,9 @@ struct DevicesView: View {
             }
             Section {
                 Button("Gerar código de pareamento") { model.newEnrollmentCode() }.disabled(model.busy)
+                if QRScannerView.isAvailable {
+                    Button { scanning = true } label: { Label("Ler o código do novo aparelho", systemImage: "qrcode.viewfinder") }
+                }
                 TextField("Código do aparelho (npub…)", text: $npub)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -51,8 +55,16 @@ struct DevicesView: View {
             } header: {
                 Text("Adicionar aparelho")
             } footer: {
-                Text("No novo aparelho, use um código de pareamento. Ele mostra um código npub: cole-o aqui.")
+                Text("No novo aparelho, use um código de pareamento. Ele mostra um código npub: leia-o com a câmera ou cole-o aqui.")
             }
+        }
+        .sheet(isPresented: $scanning) {
+            QRScannerView { code in
+                let c = code.trimmingCharacters(in: .whitespacesAndNewlines)
+                if c.hasPrefix("npub1") { npub = c }
+                scanning = false
+            }
+            .ignoresSafeArea()
         }
     }
 }
