@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -138,6 +139,12 @@ func TestStatementsAndTransparencyLog(t *testing.T) {
 	next, err := st.svc.CloseDay(ctx, time.Now().AddDate(0, 0, 1))
 	if err != nil || next.Previous != root.Event.ID || next.Event.Tag("e")[1] != root.Event.ID {
 		t.Fatalf("next day's root: %v %+v", err, next)
+	}
+
+	// Days close in order: closing today again after tomorrow is a no-op, and a day before
+	// the last root is refused rather than forking the chain.
+	if _, err := st.svc.CloseDay(ctx, time.Now().AddDate(0, 0, -3)); !errors.Is(err, payments.ErrConflict) {
+		t.Fatalf("closing a day before the last root: %v", err)
 	}
 
 	// Another tenant sees nothing.

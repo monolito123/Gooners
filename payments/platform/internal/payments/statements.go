@@ -152,6 +152,15 @@ func (s *Service) CloseDay(ctx context.Context, day time.Time) (*TransparencyRoo
 		return nil, err
 	}
 
+	// Days close in order: a root names the previous day's, so closing a day before one
+	// already closed would fork the public chain.
+	var later bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM transparency_roots WHERE log_date > $1)`, start).Scan(&later); err != nil {
+		return nil, err
+	}
+	if later {
+		return nil, fmt.Errorf("%w: a later day is already in the transparency log; days close in order", ErrConflict)
+	}
 	drafts, err := s.statementDrafts(ctx, start, end, date)
 	if err != nil {
 		return nil, err

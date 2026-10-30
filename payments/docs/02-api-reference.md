@@ -172,6 +172,8 @@ The body goes on the wire in compact form, and the event's `payload` tag is the 
 }
 ```
 
+When the platform verifies attestation and the device has not attested yet (a phone the owner added by its npub), the login is refused with `attestation_required`: the app logs in again with its evidence in an `attestation` member next to `dpop_jwk` (App Attest on iOS; the Keystore attestation of the DPoP key, generated with a challenge bound to the device key, on Android). An Android device's sessions are then pinned to its attested DPoP key.
+
 Every later request carries `Authorization: DPoP <session_token>` and a `DPoP` header: a proof JWT (RFC 9449) signed by the key of `dpop_jwk`, for the request's method and URL, with `ath` = SHA-256 of the token and a `jti` used once. The DPoP key is generated in the phone's secure hardware (Android Keystore, Secure Enclave) and never leaves it, so a stolen token is useless on its own. A session can call only the app routes (payment intents, terminal authorizations from its own terminal, its balance and entries, payouts, its devices and enrollment codes), and only for its own merchant. Removing the device from the device list ends its sessions at once.
 
 The server checks, in order: the event signature; `kind == 27235`; `created_at` within ±60 s; the `u` and `method` tags against the request; the `payload` hash against the body; that the event ID has not been seen before (a 120 s replay cache); and that the signing key is in the merchant's current device authorization list ([03 §4.2](03-nostr-layer.md#42-device-authorization)).

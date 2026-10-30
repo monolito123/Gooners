@@ -11,6 +11,9 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 )
 
+// registrarBudget bounds the registrar calls made while a card authorization waits.
+const registrarBudget = 2 * time.Second
+
 // arrangement is the payment arrangement code of a card receivable: the brand's letter and
 // CC (credit) or CD (debit and prepaid), as registrars name them (VCC, MCD, ECC…).
 func arrangement(brand, funding string) string {

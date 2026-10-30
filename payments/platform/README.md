@@ -23,6 +23,10 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/pricing` | MDR, cost estimates, ANBIMA national holidays, DU/252 advance fees | [07 §1.3](../docs/07-enhancements.md#13-pricing-an-advance) |
 | `internal/payments`, `internal/api` | Business flows and the HTTP API: API keys with scopes, terminal certificates, idempotency keys, Problem Details | [02](../docs/02-api-reference.md) |
 | `internal/payments` (operations) | Merchant lifecycle, terminal and API key revocation with an audit trail; chargebacks (intake, evidence, outcomes, deadlines, shortfall recovery); settlement-report and daily Pix reconciliation with true-ups, suspense and an exception queue; MED returns; periodic jobs under a lease | [runbook](../integration/operations-runbook.md) |
+| `internal/transparency` | Daily statements (kind 7713): RFC 6962 trees over receipt IDs, salted commitments, the padded daily log sorted by hash, and the chain of signed kind 7715 roots; reproduces the spec's statement and roots byte for byte | [03 §6](../docs/03-nostr-layer.md#6-verifiable-settlement-transparency-log) |
+| `internal/payments` (journal) | The devices' hash-chained terminal journals (kind 7714): signature, merchant and chain checks, gaps reported back, forks kept as proof and the terminal frozen | [03 §7](../docs/03-nostr-layer.md#7-terminal-journal-and-offline-first-logging) |
+| `internal/attest` | Offline verification of Apple App Attest and Android hardware key attestation against configured roots; `attest/attesttest` builds evidence under a throwaway CA for tests | [05 §2.4](../docs/05-mobile.md#24-attestation-and-device-integrity) |
+| `internal/registrar` | Receivable units and contract effects at a receivables registrar: the interface, an in-memory registrar (sandbox, tests) and a generic JSON contract an adapter to CERC, Núclea, B3 or TAG translates | [07 §1.6](../docs/07-enhancements.md#16-registrar-interplay) |
 | `internal/mobileauth` | NIP-98 login verification, DPoP proofs (RFC 9449) and JWK thumbprints, kind 17710 device lists; checked against the spec's signed examples | [02 §3.2](../docs/02-api-reference.md#32-post-v1authnostr-merchant-apps) |
 | `internal/metrics` | Prometheus text exposition: request, authorization and dispute counters; backlog, exception, safeguarding-headroom and shortfall gauges | [runbook §3](../integration/operations-runbook.md#3-alerts) |
 | `internal/webhooks` | Standard Webhooks delivery with retries; matches the spec's test vector | [02 §10](../docs/02-api-reference.md#10-webhooks) |
@@ -87,6 +91,10 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `VAULT_KEK_HEX`, `VAULT_FINGERPRINT_KEY_HEX` | Software KEK and fingerprint key: **sandbox and certification only** |
 | `CARDDATA_DEV_KEY_HEX` | Development terminal format: **sandbox and certification only** |
 | `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page |
+| `TRANSPARENCY_SECRET_HEX`, `TRANSPARENCY_PAD_TO` | Signs the daily public roots (enclave in production); log padding (default 4096 leaves). With the receipts key, turns on daily statements |
+| `APPATTEST_ROOT_CA`, `APPATTEST_APP_ID`, `APPATTEST_ENVIRONMENT` | Apple App Attestation Root CA (PEM file), `TEAMID.bundle`, `production` or development |
+| `ANDROID_ATTESTATION_ROOTS`, `ANDROID_PACKAGE`, `ANDROID_SIGNING_DIGESTS` | Google's hardware attestation roots (PEM file), application ID, SHA-256 of the signing certificates (comma-separated). Either set of roots makes attestation strict |
+| `REGISTRAR_URL`, `PLATFORM_DOCUMENT` | Receivables registrar adapter and the platform's CNPJ (the beneficiary of its assignments). The sandbox uses an in-memory registrar without them |
 | `BOOTSTRAP_TENANT`, `BOOTSTRAP_CAPITAL` | Create a tenant's accounts at start; opening capital in the sandbox only |
 | `METRICS_ADDR` | Internal listener for `GET /metrics` (Prometheus). Keep it off the public network |
 | `RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`, `AUTH_FAILURES_PER_MINUTE` | Per-replica limits (defaults 50/s, 100, 30/min); the edge enforces the global ones |
@@ -99,11 +107,12 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | Plain TCP to a card host | allowed | refused | refused |
 | `template-unverified` dialects | allowed | refused | refused |
 | Opening capital | allowed | refused | refused |
-| Software KEK, development decryptor, in-process receipts key | allowed | allowed (test cards only) | refused |
+| Software KEK, development decryptor, in-process receipts and transparency keys | allowed | allowed (test cards only) | refused |
+| No receivables registrar, no attestation roots | allowed (in-memory registrar, attestation recorded) | allowed | refused |
 
 ## Implemented API surface
 
-Implemented and covered by the end-to-end tests: the merchant app protocol (`POST /v1/merchants/{id}/enrollment-codes`, `GET/POST /v1/enrollment`, `POST /v1/merchants/{id}/devices` with the root-signed kind 17710, `POST /v1/auth/nostr` with NIP-98, and DPoP-bound sessions held to their merchant and terminal), `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
+Implemented and covered by the end-to-end tests: the merchant app protocol (`POST /v1/merchants/{id}/enrollment-codes`, `GET/POST /v1/enrollment`, `POST /v1/merchants/{id}/devices` with the root-signed kind 17710, `POST /v1/auth/nostr` with NIP-98, and DPoP-bound sessions held to their merchant and terminal), `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, the statements and proofs (`GET /v1/settlements`, `…/{id}`, `…/{id}/statement`, `…/{id}/proofs/{receipt_event_id}`, and the public `GET /v1/transparency/{date}`), the terminal journal (`POST/GET /v1/terminal/journal`, `GET /v1/payment-intents/{id}/journal`), and the PSP webhook `POST {webhook}/pix`. `platform close-day -date` closes a business day by hand; `serve` does it every night after 01:00 in Brasília. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
 
 Specified but not built yet. The API answers these explicitly rather than half-working:
 
@@ -112,9 +121,10 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 | Card-not-present (`confirm` with a card) | `501` | EMVCo-certified 3DS server, network tokens ([01 §4–§5](../docs/01-acquiring-engine.md#4-emv-3-d-secure-card-not-present)) |
 | Split payments | `422 splits_not_supported` | Multi-recipient capture journals |
 | `/oauth2/token` (mTLS-bound partner tokens) | API keys with scopes | Token service at the edge |
-| Device attestation verification (Android key attestation, Play Integrity, App Attest) | Recorded, marked `unverified` in the sandbox; production refuses to bind devices without a verifier | An `Attestor` adapter |
+| Play Integrity verdicts | App Attest and Android key attestation are verified; Play Integrity is not | Google's `decodeIntegrityToken` API with a service account |
+| RFC 3161 and OpenTimestamps anchoring of the daily roots ([03 §6.6](../docs/03-nostr-layer.md#66-anchoring)) | Roots are signed, chained and published | An ICP-Brasil TSA contract |
 | Pre-dispute alerts (Visa RDR, Ethoca), arbitration | Handled by operations at the sponsor | Alert feeds through the sponsor |
-| `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers`, settlement proofs | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
+| `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers` | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
 | CSR signing on `/v1/terminals` | `501` | Terminal PKI after attestation |
 
 ## Verification

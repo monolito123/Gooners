@@ -10,7 +10,7 @@ An internal assessment of the Go platform ([`../platform`](../platform)), made w
 | Static analysis | gosec v2.29.0, staticcheck v0.8.2, `go vet` | Production code. Simulators and test tools are excluded from gosec |
 | Dependency vulnerabilities | govulncheck v1.8.0 | Reachable call paths only |
 | Dynamic tests | `internal/e2e/security_test.go`, against the real API, PostgreSQL and the simulators | Tenancy, scopes, input, headers, rate limits, SSRF, secrets at rest, card data in logs and columns, STAN reuse |
-| Fuzzing | `FuzzUnpack` (ISO 8583), `FuzzParse` (EMV TLV), `FuzzDecode` (BR Code), `FuzzVerify` (Nostr), `FuzzParseSettlementCSV`, `FuzzParseDisputeCSV` | 40 s each during the assessment; short runs in CI |
+| Fuzzing | `FuzzUnpack` (ISO 8583), `FuzzParse` (EMV TLV), `FuzzDecode` (BR Code), `FuzzVerify` (Nostr), `FuzzParseSettlementCSV`, `FuzzParseDisputeCSV`, `FuzzCBOR` (App Attest objects) | 40 s each during the assessment; short runs in CI |
 | Concurrency | `go test -race` over the whole suite; the ledger's concurrent-payout test | Data races, double spending |
 
 ## 2. Findings
@@ -57,8 +57,11 @@ The other gosec results were reviewed and are false positives (conversions bound
 | The audit trail lives in the platform database | A database administrator could alter it | Export it to write-once storage (WORM) |
 | Operator commands need database credentials | Access to them is access to money | Run them only through a bastion with SSO and session recording |
 | Secrets come from environment variables | They show up in process listings and crash dumps | A secrets manager, and the HSM adapters ([hsm.md](hsm.md)) |
-| Device attestation | The sandbox attestor records App Attest and Play Integrity evidence without verifying it, and phones the owner adds by `npub` send none | Verify both at enrollment and at the first login of an added phone, before the production pilot ([mobile/README.md](../mobile/README.md#status-and-next-steps)) |
-| Certificate pinning in the apps | A user-installed CA could read app traffic on a compromised phone | Pin the API host's key in both apps |
+| Play Integrity, App Attest assertions | Attestation is verified once (enrollment or first login); a phone that is compromised later keeps its session until the next check | Play Integrity at session start (Google's decode API) and App Attest assertions over each authorization ([05 §2.4](../docs/05-mobile.md#24-attestation-and-device-integrity)) |
+| App Attest client data is the device key, not a server challenge | A captured attestation could be replayed with a stolen device key on another iPhone (Android is not affected: its sessions are pinned to the attested DPoP key) | A one-time server challenge in the client data |
+| Attestation revocation | Google's attestation revocation list is not consulted | Fetch and check it at verification |
+| Pins in release builds | Pinning is on only when the build carries the API host's SPKI hashes | Set `goonerspay.pins` / `GOONERSPAY_PINS` in the release pipeline, with a backup key |
+| Transparency anchoring | Roots are signed and chained but not yet timestamped by a third party | RFC 3161 (ICP-Brasil TSA) and OpenTimestamps ([03 §6.6](../docs/03-nostr-layer.md#66-anchoring)) |
 
 ## 5. Merchant app protocol
 
@@ -69,6 +72,11 @@ Tested by `internal/e2e/mobile_test.go` against the real API and PostgreSQL, and
 - **DPoP.** A session is bound to the RFC 7638 thumbprint of the key it logged in with. A proof signed by another key, for another method or URL, without the token's hash, outside 60 s, or replayed is refused, so a stolen session token alone is useless.
 - **Scope.** Sessions reach only the merchant-app routes, only their merchant's account, payments and devices, and only their own terminal ID.
 - **Device lists** (kind 17710) must be signed by the merchant's root key, name the merchant, be newer than the last accepted list, and be dated no more than 10 minutes ahead. A list signed by a device key, or an older list replayed, is refused. Dropping a device ends its sessions and revokes its terminal in the same transaction.
+- **Device attestation** (`internal/e2e/attestation_test.go`, `internal/attest`). With roots configured, App Attest and Android key attestation are verified offline: the chain, the nonce or challenge bound to the device's Nostr key, secure hardware, a locked bootloader with verified boot, and the app's identity and signing certificate. Rooted phones, cloned and re-signed apps, and evidence made for another device are refused. A phone the owner adds attests at its first login, and an Android device's sessions are pinned to its attested DPoP key, so a stolen device key opens nothing on another phone.
+- **Terminal journal** (`internal/e2e/journal_test.go`). Entries must be signed by the session's own device key and name the merchant; a second entry at a stored `seq`, or a broken `prev` chain, is kept as signed proof of a fork and freezes the terminal. Tampered, foreign and future entries are refused.
+- **Certificate pinning.** Both apps refuse a trusted chain that holds none of the pinned keys before any request leaves the phone (`PinningTest`, with a real TLS server); the iOS SPKI computation is held to Go's by conformance vectors.
+- **Statements and the transparency log** (`internal/e2e/statements_test.go`). Every receipt proves its way to the day's public root from the API's answers alone; roots chain in order and a day cannot be closed behind a later one.
+- **Receivables** (`internal/e2e/registrar_test.go`). Nothing is advanced, at capture or in a payout, without first registering the platform's assignment on the receivable unit, so the same receivable cannot be financed twice; another institution's lien, a lien between quote and payout, and a registrar outage all stop the advance, never the sale.
 - **On the phones**, the DPoP key never leaves the Keystore or the Secure Enclave, and the Nostr keys are unwrapped only for a signature, behind biometrics. §4 lists what remains.
 
 ## 6. How to repeat it

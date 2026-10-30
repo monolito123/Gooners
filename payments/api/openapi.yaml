@@ -101,6 +101,10 @@ paths:
                   additionalProperties: true
                 device_id:
                   $ref: "#/components/schemas/Id"
+                attestation:
+                  type: object
+                  description: Platform attestation evidence, sent when a login is refused with `attestation_required` (a phone the owner added). Same forms as at enrollment.
+                  additionalProperties: true
       responses:
         "200":
           description: Session issued

@@ -368,10 +368,14 @@ func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *M
 	// Instant settlement advances the receivables: their assignment to the platform is
 	// registered first. Without it the sale settles on schedule (docs/07 §1.6).
 	if instant && s.registrar != nil {
-		lines, err := s.receivableLines(ctx, tenantID, recIDs)
+		// The card authorization is waiting: a slow registrar costs the merchant the instant
+		// release, never the sale.
+		rctx, cancel := context.WithTimeout(ctx, registrarBudget)
+		lines, err := s.receivableLines(rctx, tenantID, recIDs)
 		if err == nil {
-			err = s.commitAdvance(ctx, tenantID, m.ID, "capture:"+pi.ID, "instant_release", pi.ID, lines)
+			err = s.commitAdvance(rctx, tenantID, m.ID, "capture:"+pi.ID, "instant_release", pi.ID, lines)
 		}
+		cancel()
 		if err != nil {
 			s.log.Warn("instant settlement not registered; the sale settles on schedule", "payment_intent", pi.ID, "err", err)
 			instant = false
