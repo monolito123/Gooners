@@ -136,7 +136,7 @@ func (s *Server) revokeTerminal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listDisputes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	ds, err := s.svc.ListDisputes(r.Context(), from(r.Context()).tenantID, q.Get("status"), q.Get("merchant_id"), limit)
+	ds, more, err := s.svc.ListDisputes(r.Context(), from(r.Context()).tenantID, q.Get("status"), q.Get("merchant_id"), q.Get("starting_after"), limit)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -144,7 +144,11 @@ func (s *Server) listDisputes(w http.ResponseWriter, r *http.Request) {
 	if ds == nil {
 		ds = []*payments.Dispute{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": ds, "has_more": false, "next_cursor": nil})
+	var next any
+	if more {
+		next = ds[len(ds)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": ds, "has_more": more, "next_cursor": next})
 }
 
 func (s *Server) getDispute(w http.ResponseWriter, r *http.Request) {
@@ -370,12 +374,12 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) entries(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	es, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit)
+	es, more, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": es, "has_more": false})
+	writeJSON(w, http.StatusOK, map[string]any{"data": es, "has_more": more})
 }
 
 func (s *Server) quote(w http.ResponseWriter, r *http.Request) {
@@ -409,6 +413,22 @@ func (s *Server) payout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, po)
+}
+
+func (s *Server) replayWebhooks(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Since time.Time `json:"since"`
+		Until time.Time `json:"until"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	n, err := s.svc.ReplayWebhooks(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in.Since, in.Until)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"replayed": n})
 }
 
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {

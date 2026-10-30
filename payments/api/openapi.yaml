@@ -949,9 +949,22 @@ paths:
                 until:
                   type: string
                   format: date-time
+      description: |
+        Schedules every delivery of the endpoint created in [since, until) again, delivered or
+        not, with its original webhook-id so the receiver can deduplicate. At most the last 30
+        days and 10 000 deliveries per call.
       responses:
         "202":
           description: Replay scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [replayed]
+                properties:
+                  replayed:
+                    type: integer
+                    minimum: 0
         "4XX":
           $ref: "#/components/responses/Problem"
 

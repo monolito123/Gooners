@@ -39,7 +39,14 @@ type Config struct {
 	RelayURL        string
 	NIP05Domain     string
 	Now             func() time.Time
+	// MaxPaymentAmount caps one payment intent (centavos), limiting what a stolen credential
+	// can charge or move in one request. Default R$ 1.000.000,00; never above MaxAmount.
+	MaxPaymentAmount int64
 }
+
+// MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
+// and an API Pix valor has at most ten integer digits; both stop at R$ 9.999.999.999,99.
+const MaxAmount int64 = 999_999_999_999
 
 // Service wires the components.
 type Service struct {
@@ -86,6 +93,9 @@ func New(cfg Config, d Deps) *Service {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.MaxPaymentAmount <= 0 || cfg.MaxPaymentAmount > MaxAmount {
+		cfg.MaxPaymentAmount = 100_000_000
 	}
 	if d.Logger == nil {
 		d.Logger = slog.Default()

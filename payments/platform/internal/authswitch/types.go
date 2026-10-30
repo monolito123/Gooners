@@ -149,6 +149,10 @@ type Reversal struct {
 // ErrInFlight is returned when the same terminal STAN is still being processed.
 var ErrInFlight = errors.New("authswitch: authorization with this terminal STAN is in flight")
 
+// ErrSTANReused is returned when a terminal STAN already identifies a different request
+// that day. Only an identical request is answered from the stored result.
+var ErrSTANReused = errors.New("authswitch: terminal STAN already used for a different request")
+
 // ErrNotFound is returned for unknown authorizations.
 var ErrNotFound = errors.New("authswitch: authorization not found")
 

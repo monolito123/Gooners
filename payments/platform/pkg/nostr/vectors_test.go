@@ -213,3 +213,22 @@ func TestCanonicalJSON(t *testing.T) {
 		t.Fatal("float accepted")
 	}
 }
+
+// FuzzVerify feeds arbitrary JSON to the event parser and verifier: never a panic, and
+// nothing verifies unless its ID and signature are right.
+func FuzzVerify(f *testing.F) {
+	f.Add(`{"id":"00","pubkey":"00","created_at":1,"kind":1,"tags":[],"content":"","sig":"00"}`)
+	f.Add(`{"kind":7711,"tags":[["e","x"]],"content":" "}`)
+	f.Fuzz(func(t *testing.T, s string) {
+		var e Event
+		if json.Unmarshal([]byte(s), &e) != nil {
+			return
+		}
+		if e.Verify() == nil {
+			id, err := e.ComputeID()
+			if err != nil || id != e.ID {
+				t.Fatalf("verified an event whose ID is wrong: %s", s)
+			}
+		}
+	})
+}

@@ -10,9 +10,11 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -141,6 +143,18 @@ func (v *Vault) Store(ctx context.Context, tenantID, pan string) (Card, error) {
 	if !Luhn(pan) {
 		return Card{}, errors.New("vault: PAN fails the Luhn check")
 	}
+	// One record per card and tenant: a returning card reuses its token, so the vault
+	// never holds more encrypted copies of a PAN than it needs.
+	fp := v.Fingerprint(pan)
+	existing := Card{Fingerprint: fp}
+	err := v.pool.QueryRow(ctx, `SELECT token, bin, last4 FROM card_vault WHERE tenant_id = $1 AND fingerprint = $2 ORDER BY created_at LIMIT 1`, tenantID, fp).
+		Scan(&existing.Token, &existing.BIN, &existing.Last4)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Card{}, err
+	}
 	dek := make([]byte, 32)
 	if _, err := rand.Read(dek); err != nil {
 		return Card{}, err
@@ -189,4 +203,62 @@ func (v *Vault) RevealPAN(ctx context.Context, token string) (string, error) {
 		return "", fmt.Errorf("vault: decrypt: %w", err)
 	}
 	return string(pan), nil
+}
+
+// SealSecret encrypts a small secret (a webhook signing secret) under a fresh data key
+// wrapped by the KEK, bound to aad (the owning record's ID). The result is printable.
+func (v *Vault) SealSecret(ctx context.Context, secret, aad string) (string, error) {
+	dek := make([]byte, 32)
+	if _, err := rand.Read(dek); err != nil {
+		return "", err
+	}
+	defer clear(dek)
+	a, err := newGCM(dek)
+	if err != nil {
+		return "", err
+	}
+	ct, err := seal(a, []byte(secret), []byte(aad))
+	if err != nil {
+		return "", err
+	}
+	wrapped, err := v.kek.Wrap(ctx, dek)
+	if err != nil {
+		return "", fmt.Errorf("vault: wrap: %w", err)
+	}
+	return sealedPrefix + v.kek.ID() + "." + base64.RawURLEncoding.EncodeToString(wrapped) + "." + base64.RawURLEncoding.EncodeToString(ct), nil
+}
+
+const sealedPrefix = "sealed.v1."
+
+// IsSealed reports whether s was produced by SealSecret.
+func IsSealed(s string) bool { return strings.HasPrefix(s, sealedPrefix) }
+
+// OpenSecret reverses SealSecret.
+func (v *Vault) OpenSecret(ctx context.Context, sealed, aad string) (string, error) {
+	parts := strings.Split(strings.TrimPrefix(sealed, sealedPrefix), ".")
+	if !IsSealed(sealed) || len(parts) != 3 {
+		return "", errors.New("vault: not a sealed secret")
+	}
+	if parts[0] != v.kek.ID() {
+		return "", fmt.Errorf("vault: secret sealed under KEK %s, not %s", parts[0], v.kek.ID())
+	}
+	wrapped, err1 := base64.RawURLEncoding.DecodeString(parts[1])
+	ct, err2 := base64.RawURLEncoding.DecodeString(parts[2])
+	if err1 != nil || err2 != nil {
+		return "", errors.New("vault: malformed sealed secret")
+	}
+	dek, err := v.kek.Unwrap(ctx, wrapped)
+	if err != nil {
+		return "", fmt.Errorf("vault: unwrap: %w", err)
+	}
+	defer clear(dek)
+	a, err := newGCM(dek)
+	if err != nil {
+		return "", err
+	}
+	pt, err := open(a, ct, []byte(aad))
+	if err != nil {
+		return "", fmt.Errorf("vault: decrypt: %w", err)
+	}
+	return string(pt), nil
 }

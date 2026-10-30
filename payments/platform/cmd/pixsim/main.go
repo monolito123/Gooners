@@ -37,7 +37,7 @@ func main() {
 		}
 	}
 	readPool := func(path string) *x509.CertPool {
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(path) // #nosec G304 -- simulator, file named on its command line
 		must(err)
 		p := x509.NewCertPool()
 		p.AppendCertsFromPEM(b)

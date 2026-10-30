@@ -55,3 +55,4 @@ These are the scenarios card hosts and PSPs ask an acquirer or receiving user to
 | G7 | Merchant status enforced (no payments or payouts unless active); revoked terminals and API keys refused; every change audited | `TestOperations` (lifecycle, revocation) |
 | G8 | Periodic jobs run on one replica at a time | `TestOperations` (jobs lease) |
 | G9 | Operator commands and `/metrics` against the real binaries | `go run ./cmd/smoke` (chargeback import, card and Pix reconciliation, scrape) |
+| G10 | Security controls: tenant isolation, scopes, input limits, rate limits, SSRF, sealed secrets, no card data in logs or columns, STAN reuse | `internal/e2e/security_test.go` ([security assessment](security-assessment.md)) |

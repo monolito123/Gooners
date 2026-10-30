@@ -24,6 +24,16 @@ import (
 // the binary free of a tzdata dependency.
 var brt = time.FixedZone("BRT", -3*3600)
 
+// BRT is Brasília time. Business days are calendar dates there: pass a time whose date in
+// BRT is the day (time.ParseInLocation(…, payments.BRT) for a typed date).
+var BRT = brt
+
+// businessDay returns midnight, Brasília time, of t's date in Brasília.
+func businessDay(t time.Time) time.Time {
+	d := t.In(brt)
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, brt)
+}
+
 // SettlementLine is one line of a card settlement report (sponsor acquirer or scheme), in
 // the platform's import format (integration/operations-runbook.md §2). Amounts are centavos;
 // Net is signed: what the line adds to (or takes from) the cash settled.
@@ -157,6 +167,7 @@ func (s *Service) ReconcileCardReport(ctx context.Context, tenantID, reportID st
 	if done {
 		return nil, fmt.Errorf("%w: report %s is already reconciled", ErrConflict, reportID)
 	}
+	day = businessDay(day)
 	run := &ReconRun{ID: ids.New("rec"), Kind: "card_settlement", Source: reportID, Date: day.Format("2006-01-02")}
 	bal := signed{}
 	counts := map[string]int{}
@@ -347,7 +358,7 @@ func (s *Service) journalLines(ctx context.Context, tenantID, key string) (map[s
 
 // unsettledCaptures lists card captures two to seven days old that no report has settled.
 func (s *Service) unsettledCaptures(ctx context.Context, tenantID string, day time.Time) ([]ReconItem, error) {
-	end := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, brt).AddDate(0, 0, -1)
+	end := businessDay(day).AddDate(0, 0, -1)
 	rows, err := s.pool.Query(ctx, `SELECT p.id, p.amount_captured FROM payment_intents p
 		WHERE p.tenant_id = $1 AND p.auth_id IS NOT NULL AND p.amount_captured > 0 AND p.status <> 'canceled'
 		AND p.created_at >= $2 AND p.created_at < $3
@@ -377,7 +388,7 @@ func (s *Service) ReconcilePix(ctx context.Context, tenantID string, day time.Ti
 	if s.pix == nil {
 		return nil, fmt.Errorf("%w: Pix PSP", ErrDisabled)
 	}
-	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, brt)
+	start := businessDay(day)
 	end := start.AddDate(0, 0, 1)
 	list, err := s.pix.ListPix(ctx, start, end)
 	if err != nil {

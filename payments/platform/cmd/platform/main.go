@@ -297,7 +297,7 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("receipts signer", "npub", npub)
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, "")}, deps)
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)
@@ -309,15 +309,15 @@ func serve(ctx context.Context) error {
 		}
 	}
 
-	srv := api.New(api.Config{Env: c.Env}, svc, pool, log)
-	disp := &webhooks.Dispatcher{Pool: pool, Logger: log}
+	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy}, svc, pool, log)
+	disp := &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	go disp.Run(ctx, time.Second)
 	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])
 	go every(ctx, time.Minute, func() { svc.RunPeriodic(ctx, holder) })
 	svc.RegisterMetrics(metrics.Default)
 	metrics.Default.Logger = log
 
-	servers := []*http.Server{{Addr: c.HTTPAddr, Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}}
+	servers := []*http.Server{newServer(c.HTTPAddr, srv.Handler(), c.CardPresentTimeout)}
 	if c.HTTPTLS != nil {
 		if servers[0].TLSConfig, err = loadTLS(c.HTTPTLS, false); err != nil {
 			return err
@@ -329,7 +329,9 @@ func serve(ctx context.Context) error {
 		if err != nil || t == nil {
 			return fmt.Errorf("terminal listener needs TERMINAL_TLS_CERT/KEY/CA: %v", err)
 		}
-		servers = append(servers, &http.Server{Addr: c.TerminalAddr, Handler: srv.Handler(), TLSConfig: t, ReadHeaderTimeout: 5 * time.Second})
+		ts := newServer(c.TerminalAddr, srv.Handler(), c.CardPresentTimeout)
+		ts.TLSConfig = t
+		servers = append(servers, ts)
 	}
 	if c.PixWebhookAddr != "" {
 		t, err := loadTLS(c.PixWebhookTLS, true)
@@ -337,12 +339,14 @@ func serve(ctx context.Context) error {
 			return err
 		}
 		t.MinVersion = tls.VersionTLS12 // PSPs' webhook clients may still negotiate TLS 1.2
-		servers = append(servers, &http.Server{Addr: c.PixWebhookAddr, Handler: srv.PixWebhookHandler(), TLSConfig: t, ReadHeaderTimeout: 5 * time.Second})
+		ps := newServer(c.PixWebhookAddr, srv.PixWebhookHandler(), c.CardPresentTimeout)
+		ps.TLSConfig = t
+		servers = append(servers, ps)
 	}
 	if c.MetricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", metrics.Default.Handler())
-		servers = append(servers, &http.Server{Addr: c.MetricsAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second})
+		servers = append(servers, newServer(c.MetricsAddr, mux, c.CardPresentTimeout))
 	}
 	errc := make(chan error, len(servers))
 	for _, s := range servers {
@@ -366,6 +370,19 @@ func serve(ctx context.Context) error {
 		_ = s.Shutdown(shutdown)
 	}
 	return nil
+}
+
+// newServer sets every timeout, so slow or idle clients (slowloris) cannot hold connections.
+// Writes may take as long as a card-present authorization plus a margin.
+func newServer(addr string, h http.Handler, authTimeout time.Duration) *http.Server {
+	return &http.Server{
+		Addr: addr, Handler: h,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      authTimeout + 20*time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    32 << 10,
+	}
 }
 
 func firstOr(xs []string, d string) string {

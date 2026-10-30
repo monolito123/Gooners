@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -356,3 +357,87 @@ func withLine(l payments.SettlementLine, n int) payments.SettlementLine { l.Line
 
 // pricingIC is the interchange the capture journal estimated for a credit sale.
 func pricingIC(amount int64) int64 { return pricing.DefaultCosts.Interchange(amount, "credit") }
+
+func TestPaginationReplayAndQuotes(t *testing.T) {
+	st := newStack(t)
+	ctx := context.Background()
+	merchant, account := st.merchant(st.key)
+	_, term := st.call("POST", "/v1/terminals", map[string]any{"merchant_id": merchant}, 201)
+	terminal := term["terminal_id"].(string)
+
+	// Dispute pages: newest first, has_more and next_cursor, then the next page.
+	for i := 0; i < 3; i++ {
+		pi := st.sale(merchant, terminal, int64(3000+i))
+		rrn, code := st.authOf(pi)
+		if _, err := st.svc.ApplyDisputeNotice(ctx, tenant, payments.DisputeNotice{Event: payments.NoticeOpened, Scheme: "visa", NetworkCaseID: fmt.Sprintf("PAGE-%d", i),
+			ReasonCode: "10.4", Category: "fraud", Amount: 100, RRN: rrn, AuthCode: code, EvidenceDueAt: time.Now().Add(240 * time.Hour), Source: "test"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; page < 3; page++ {
+		_, p := st.call("GET", "/v1/disputes?limit=2"+map[bool]string{true: "&starting_after=" + cursor, false: ""}[cursor != ""], nil, 200)
+		for _, d := range p["data"].([]any) {
+			id := d.(map[string]any)["id"].(string)
+			if seen[id] {
+				t.Fatalf("dispute %s on two pages", id)
+			}
+			seen[id] = true
+		}
+		if p["has_more"] != (page == 0) {
+			t.Fatalf("page %d has_more %v", page, p["has_more"])
+		}
+		if page == 1 {
+			break
+		}
+		cursor = p["next_cursor"].(string)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("pages covered %d disputes", len(seen))
+	}
+	_, entries := st.call("GET", "/v1/accounts/"+account+"/entries?limit=2", nil, 200)
+	if len(entries["data"].([]any)) != 2 || entries["has_more"] != true {
+		t.Fatalf("entries page %v", entries)
+	}
+
+	// Replay: everything since an hour ago is delivered again with the same webhook-id.
+	n, err := st.dispatch.Once(ctx)
+	if err != nil || n == 0 {
+		t.Fatalf("first delivery: %d %v", n, err)
+	}
+	first := map[string]bool{}
+	for i := 0; i < n; i++ {
+		first[(<-st.hooks).id] = true
+	}
+	var endpoint string
+	_ = st.pool.QueryRow(ctx, `SELECT id FROM webhook_endpoints WHERE tenant_id = $1 ORDER BY created_at LIMIT 1`, tenant).Scan(&endpoint)
+	_, rp := st.call("POST", "/v1/webhook-endpoints/"+endpoint+"/replay", map[string]any{"since": time.Now().Add(-time.Hour).Format(time.RFC3339)}, 202)
+	if int(num(rp["replayed"])) < n {
+		t.Fatalf("replayed %v of %d", rp["replayed"], n)
+	}
+	again, _ := st.dispatch.Once(ctx)
+	for i := 0; i < again; i++ {
+		if id := (<-st.hooks).id; !first[id] {
+			t.Fatalf("replay sent a new webhook-id %s", id)
+		}
+	}
+	if code, _ := st.call("POST", "/v1/webhook-endpoints/"+endpoint+"/replay", map[string]any{"since": time.Now().Add(-40 * 24 * time.Hour).Format(time.RFC3339)}, 0); code != http.StatusUnprocessableEntity {
+		t.Fatalf("replay beyond 30 days: HTTP %d", code)
+	}
+
+	// A refused payout leaves its quote usable.
+	_, q := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": 500, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}}, 201)
+	if _, err := st.svc.SetMerchantStatus(ctx, tenant, merchant, payments.MerchantRestricted, "review", "ops:test"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := st.call("POST", "/v1/payouts", map[string]any{"quote_id": q["id"]}, 0); code != http.StatusConflict {
+		t.Fatalf("payout while restricted: HTTP %d", code)
+	}
+	if _, err := st.svc.SetMerchantStatus(ctx, tenant, merchant, payments.MerchantActive, "cleared", "ops:test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, po := st.call("POST", "/v1/payouts", map[string]any{"quote_id": q["id"]}, 201); po["status"] != "paid" {
+		t.Fatalf("payout with the same quote after the restriction: %v", po)
+	}
+}

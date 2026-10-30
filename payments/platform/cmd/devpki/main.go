@@ -24,7 +24,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	must(os.MkdirAll(*out, 0o755))
+	must(os.MkdirAll(*out, 0o750)) // every service runs as the same non-root user
 	ca, err := testpki.NewCA("goonersPAY dev CA")
 	must(err)
 	must(os.WriteFile(filepath.Join(*out, "ca.pem"), ca.PEM, 0o644))

@@ -44,12 +44,12 @@ func convertBits(data []byte, from, to uint, pad bool) ([]byte, error) {
 		bitsN += from
 		for bitsN >= to {
 			bitsN -= to
-			out = append(out, byte(acc>>bitsN&maxv))
+			out = append(out, byte(acc>>bitsN&maxv)) // #nosec G115 -- 5-bit bech32 values
 		}
 	}
 	if pad {
 		if bitsN > 0 {
-			out = append(out, byte(acc<<(to-bitsN)&maxv))
+			out = append(out, byte(acc<<(to-bitsN)&maxv)) // #nosec G115 -- 5-bit bech32 values
 		}
 	} else if bitsN >= from || acc<<(to-bitsN)&maxv != 0 {
 		return nil, errors.New("bech32: invalid padding")
@@ -89,7 +89,7 @@ func DecodeNpub(s string) (string, error) {
 		if i < 0 {
 			return "", errors.New("bech32: invalid character")
 		}
-		data = append(data, byte(i))
+		data = append(data, byte(i)) // #nosec G115 -- 5-bit bech32 values
 	}
 	if polymod(append(hrpExpand("npub"), data...)) != 1 {
 		return "", errors.New("bech32: bad checksum")

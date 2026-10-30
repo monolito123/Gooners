@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -160,6 +161,32 @@ func TestIdempotentReplay(t *testing.T) {
 	}
 	if n := len(e.sim.ReceivedMTI("0100")); n != 1 {
 		t.Fatalf("host received %d authorizations for one terminal STAN", n)
+	}
+}
+
+// The stored result answers only the same request: another amount, payment or card under
+// the same terminal STAN is refused, never approved by replay.
+func TestSTANReuseWithAnotherRequestIsRefused(t *testing.T) {
+	e := newEnv(t)
+	req := request(4500)
+	if _, err := e.sw.Authorize(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*authswitch.Request){
+		"amount":         func(r *authswitch.Request) { r.Amount = 99999 },
+		"payment intent": func(r *authswitch.Request) { r.PaymentIntentID = "pi_other" },
+		"card":           func(r *authswitch.Request) { r.Card.PANRef = "pm_card_other" },
+		"kind":           func(r *authswitch.Request) { r.Kind = authswitch.Refund },
+	} {
+		other := req
+		other.AuthID = "auth_" + strings.ReplaceAll(name, " ", "_")
+		change(&other)
+		if res, err := e.sw.Authorize(context.Background(), other); !errors.Is(err, authswitch.ErrSTANReused) || res.Approved {
+			t.Errorf("%s changed under the same STAN: %+v %v", name, res, err)
+		}
+	}
+	if n := len(e.sim.ReceivedMTI("0100")); n != 1 {
+		t.Fatalf("host received %d authorizations", n)
 	}
 }
 

@@ -107,34 +107,38 @@ func (s *Service) GetDispute(ctx context.Context, tenantID, id string) (*Dispute
 }
 
 // ListDisputes lists a tenant's disputes, newest first, optionally by status and merchant.
-func (s *Service) ListDisputes(ctx context.Context, tenantID, status, merchantID string, limit int) ([]*Dispute, error) {
+// startingAfter is the last ID of the previous page; hasMore says whether another page exists.
+func (s *Service) ListDisputes(ctx context.Context, tenantID, status, merchantID, startingAfter string, limit int) (out []*Dispute, hasMore bool, err error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows, err := s.pool.Query(ctx, `SELECT `+disputeCols+` FROM disputes WHERE tenant_id = $1 AND ($2 = '' OR status = $2) AND ($3 = '' OR merchant_id = $3)
-		ORDER BY created_at DESC, id DESC LIMIT $4`, tenantID, status, merchantID, limit)
+	rows, err := s.pool.Query(ctx, `SELECT `+disputeCols+` FROM disputes d WHERE tenant_id = $1 AND ($2 = '' OR status = $2) AND ($3 = '' OR merchant_id = $3)
+		AND ($4 = '' OR (created_at, id) < (SELECT created_at, id FROM disputes WHERE tenant_id = $1 AND id = $4))
+		ORDER BY created_at DESC, id DESC LIMIT $5`, tenantID, status, merchantID, startingAfter, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var out []*Dispute
 	for rows.Next() {
 		d, err := scanDispute(rows)
 		if err != nil {
 			rows.Close()
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, d)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	if len(out) > limit {
+		out, hasMore = out[:limit], true
 	}
 	for _, d := range out {
 		if err := s.enrich(ctx, d); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return out, nil
+	return out, hasMore, nil
 }
 
 // enrich assembles the evidence the platform already holds (docs/01 §7.2) and a recommendation.

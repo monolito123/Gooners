@@ -13,6 +13,8 @@ This folder explains how to connect the platform ([`../platform`](../platform)) 
 | **Operations** (day to day) | Merchant lifecycle (KYB approval, restriction, closure), terminal and API key revocation, chargeback intake and outcomes, settlement and Pix reconciliation with an exception queue, an audit trail, Prometheus metrics | Operators with SSO identities; a Prometheus and alerting stack | A back-office UI over the same commands | [operations-runbook.md](operations-runbook.md) |
 | **Key custody** (production) | Typed seams: `vault.KEK`, `carddata.Decryptor`, `nostr.Author` | An HSM / KMS, a payment HSM, an enclave | Three adapters | [hsm.md](hsm.md) |
 
+[security-assessment.md](security-assessment.md) is the internal security assessment: method, findings and their fixes, controls verified, and what an independent test must still cover.
+
 [certification-test-plan.md](certification-test-plan.md) maps every scenario a counterparty will ask you to prove onto the simulator command or the automated test that exercises it today.
 
 ## Recommended order

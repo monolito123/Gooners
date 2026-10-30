@@ -263,9 +263,9 @@ func encodeLength(f *FieldSpec, n int) ([]byte, error) {
 		w := prefixBytes(f.Type)
 		b := make([]byte, w)
 		if w == 1 {
-			b[0] = byte(n)
+			b[0] = byte(n) // #nosec G115 -- LoadSpec caps Max at 255 for one-byte binary prefixes
 		} else {
-			binary.BigEndian.PutUint16(b, uint16(n))
+			binary.BigEndian.PutUint16(b, uint16(n)) // #nosec G115 -- LoadSpec caps Max at 65535 for two-byte binary prefixes
 		}
 		return b, nil
 	case BCD:

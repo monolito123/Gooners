@@ -66,7 +66,7 @@ func (p *Pool) WaitReady(ctx context.Context) error {
 // Exchange sends req on the next signed-on session, round robin.
 func (p *Pool) Exchange(ctx context.Context, req *iso8583.Message, timeout time.Duration) (*iso8583.Message, error) {
 	n := len(p.sessions)
-	start := int(p.rr.Add(1))
+	start := int(p.rr.Add(1) % uint64(n)) // #nosec G115 -- reduced modulo the session count first; the raw counter would not fit an int on 32-bit builds
 	for i := 0; i < n; i++ {
 		s := p.sessions[(start+i)%n]
 		if s.State() != SignedOn {

@@ -15,9 +15,11 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,14 +33,26 @@ import (
 // Config of the API server.
 type Config struct {
 	Env string // sandbox or production
+	// Per-credential rate limit (requests per second and burst) on this replica. The edge
+	// enforces the global limits; this one stops a single key from starving the others.
+	RatePerSecond, RateBurst float64
+	// Failed authentications allowed per client IP and minute before 429.
+	AuthFailuresPerMinute float64
+	// TrustProxy takes the client IP from the last X-Forwarded-For entry (behind the edge).
+	TrustProxy bool
 }
+
+// MaxBody is the largest request body accepted.
+const MaxBody = 1 << 20
 
 // Server serves the API.
 type Server struct {
-	cfg  Config
-	svc  *payments.Service
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	cfg      Config
+	svc      *payments.Service
+	pool     *pgxpool.Pool
+	log      *slog.Logger
+	perKey   *limiter
+	failures *limiter
 }
 
 // New returns a server.
@@ -46,7 +60,17 @@ func New(cfg Config, svc *payments.Service, pool *pgxpool.Pool, log *slog.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, svc: svc, pool: pool, log: log}
+	if cfg.RatePerSecond == 0 {
+		cfg.RatePerSecond, cfg.RateBurst = 50, 100
+	}
+	if cfg.RateBurst == 0 {
+		cfg.RateBurst = 2 * cfg.RatePerSecond
+	}
+	if cfg.AuthFailuresPerMinute == 0 {
+		cfg.AuthFailuresPerMinute = 30
+	}
+	return &Server{cfg: cfg, svc: svc, pool: pool, log: log,
+		perKey: newLimiter(cfg.RatePerSecond, cfg.RateBurst), failures: newLimiter(cfg.AuthFailuresPerMinute/60, cfg.AuthFailuresPerMinute)}
 }
 
 type principal struct {
@@ -54,6 +78,14 @@ type principal struct {
 	scopes   map[string]bool
 	terminal string // set when authenticated by a terminal certificate
 	keyID    string // set when authenticated by an API key
+}
+
+// limitKey identifies the credential for rate limiting.
+func (p principal) limitKey() string {
+	if p.terminal != "" {
+		return "terminal:" + p.tenantID + ":" + p.terminal
+	}
+	return "key:" + p.keyID
 }
 
 // actor names the caller in the audit trail.
@@ -101,7 +133,8 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/disputes/{id}/evidence", "disputes:write", true, s.disputeEvidence)
 	route("POST /v1/disputes/{id}/accept", "disputes:write", true, s.acceptDispute)
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
-	return s.recover(s.requestID(mux))
+	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
+	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a
@@ -116,7 +149,8 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	if err := s.pool.Ping(ctx); err != nil {
-		problem(w, r, http.StatusServiceUnavailable, "not-ready", "Database unavailable", err.Error())
+		s.log.Error("readiness", "err", err) // the cause stays in the logs: this endpoint is unauthenticated
+		problem(w, r, http.StatusServiceUnavailable, "not-ready", "Not ready", "")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -167,6 +201,49 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 	})
 }
 
+// secureHeaders marks every response as non-cacheable, non-sniffable JSON that no page may
+// frame or load resources for. HSTS is set when the request arrived over TLS.
+func secureHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Cache-Control", "no-store")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		h.Set("Referrer-Policy", "no-referrer")
+		if r.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// limitBody caps request bodies; handlers answer 413 when the cap is hit.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cleanInput refuses paths and query strings that are not valid UTF-8 or contain NUL:
+// PostgreSQL rejects those bytes, and they have no business in an identifier or a filter.
+func cleanInput(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, v := range []string{r.URL.Path, r.URL.RawQuery} {
+			if u, err := url.PathUnescape(v); err != nil || !utf8.ValidString(u) || strings.ContainsRune(u, 0) {
+				problem(w, r, http.StatusBadRequest, "bad-request", "Invalid characters in the URL", "")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func tooLarge(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
+}
+
 func (s *Server) recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -203,27 +280,45 @@ func hashKey(k string) string { h := sha256.Sum256([]byte(k)); return hex.Encode
 func CertFingerprint(der []byte) string { h := sha256.Sum256(der); return hex.EncodeToString(h[:]) }
 
 func (s *Server) authenticate(scope string, next http.HandlerFunc) http.Handler {
+	authenticated := func(w http.ResponseWriter, r *http.Request, p principal) {
+		if ok, wait := s.perKey.take(p.limitKey()); !ok {
+			w.Header().Set("Retry-After", retryAfter(wait))
+			problem(w, r, http.StatusTooManyRequests, "rate-limited", "Too many requests", "slow down and retry after the Retry-After delay")
+			return
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only failed attempts count against the client's IP, so a client sharing an address
+		// (carrier-grade NAT) with an attacker is never locked out with a valid credential.
+		unauthorized := func(code, title, detail string) {
+			if ok, wait := s.failures.take(clientIP(r, s.cfg.TrustProxy)); !ok {
+				w.Header().Set("Retry-After", retryAfter(wait))
+				problem(w, r, http.StatusTooManyRequests, "rate-limited", "Too many failed authentications", "")
+				return
+			}
+			problem(w, r, http.StatusUnauthorized, code, title, detail)
+		}
 		// Terminals authenticate with their mutual-TLS certificate.
 		if scope == "terminal" && r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
 			tenant, terminal, err := s.svc.TerminalByFingerprint(r.Context(), CertFingerprint(r.TLS.PeerCertificates[0].Raw))
 			if err != nil {
-				problem(w, r, http.StatusUnauthorized, "unknown-terminal", "Unknown terminal certificate", "")
+				unauthorized("unknown-terminal", "Unknown terminal certificate", "")
 				return
 			}
-			next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, principal{tenantID: tenant, terminal: terminal})))
+			authenticated(w, r, principal{tenantID: tenant, terminal: terminal})
 			return
 		}
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if key == "" || key == r.Header.Get("Authorization") {
-			problem(w, r, http.StatusUnauthorized, "unauthorized", "Missing API key", "send Authorization: Bearer <key>")
+			unauthorized("unauthorized", "Missing API key", "send Authorization: Bearer <key>")
 			return
 		}
 		var tenant string
 		var scopes []string
 		err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`, hashKey(key)).Scan(&tenant, &scopes)
 		if err != nil {
-			problem(w, r, http.StatusUnauthorized, "unauthorized", "Invalid API key", "")
+			unauthorized("unauthorized", "Invalid API key", "")
 			return
 		}
 		p := principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}
@@ -242,7 +337,7 @@ func (s *Server) authenticate(scope string, next http.HandlerFunc) http.Handler 
 			problem(w, r, http.StatusForbidden, "forbidden", "Missing scope", scope)
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
+		authenticated(w, r, p)
 	})
 }
 
@@ -270,7 +365,11 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			problem(w, r, http.StatusBadRequest, "idempotency-key-required", "Idempotency-Key header required", "8 to 64 characters")
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body, err := io.ReadAll(r.Body)
+		if tooLarge(err) {
+			problem(w, r, http.StatusRequestEntityTooLarge, "body-too-large", "Request body too large", "the limit is 1 MiB")
+			return
+		}
 		if err != nil {
 			problem(w, r, http.StatusBadRequest, "bad-body", "Unreadable body", "")
 			return
@@ -364,10 +463,29 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	body, err := io.ReadAll(r.Body)
+	if tooLarge(err) {
+		problem(w, r, http.StatusRequestEntityTooLarge, "body-too-large", "Request body too large", "the limit is 1 MiB")
+		return false
+	}
+	if err != nil {
+		problem(w, r, http.StatusBadRequest, "bad-body", "Unreadable body", "")
+		return false
+	}
+	// Raw NUL is invalid JSON already; the escaped form would decode and then be refused by
+	// PostgreSQL. Invalid UTF-8 is replaced silently by encoding/json, so refuse it here.
+	if bytes.Contains(bytes.ToLower(body), []byte(`\u0000`)) || !utf8.Valid(body) {
+		problem(w, r, http.StatusBadRequest, "bad-json", "Malformed JSON", "NUL characters and invalid UTF-8 are not accepted")
+		return false
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		problem(w, r, http.StatusBadRequest, "bad-json", "Malformed JSON", err.Error())
+		return false
+	}
+	if dec.More() {
+		problem(w, r, http.StatusBadRequest, "bad-json", "Malformed JSON", "one JSON object per request")
 		return false
 	}
 	return true

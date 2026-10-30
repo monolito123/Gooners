@@ -88,6 +88,9 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page |
 | `BOOTSTRAP_TENANT`, `BOOTSTRAP_CAPITAL` | Create a tenant's accounts at start; opening capital in the sandbox only |
 | `METRICS_ADDR` | Internal listener for `GET /metrics` (Prometheus). Keep it off the public network |
+| `RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`, `AUTH_FAILURES_PER_MINUTE` | Per-replica limits (defaults 50/s, 100, 30/min); the edge enforces the global ones |
+| `TRUST_PROXY` | `true` behind the edge: the client address is the last `X-Forwarded-For` entry |
+| `MAX_PAYMENT_AMOUNT` | Ceiling per payment intent in centavos (default 100000000, R$ 1.000.000,00) |
 
 | Guard | sandbox | certification | production |
 |-------|:-------:|:-------------:|:----------:|
@@ -98,7 +101,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 
 ## Implemented API surface
 
-Implemented and covered by the end-to-end tests: `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
+Implemented and covered by the end-to-end tests: `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
 
 Specified but not built yet. The API answers these explicitly rather than half-working:
 
@@ -108,7 +111,7 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 | Split payments | `422 splits_not_supported` | Multi-recipient capture journals |
 | `/oauth2/token` (mTLS-bound tokens), `/v1/auth/nostr` (NIP-98) | API keys with scopes | Token service at the edge |
 | Pre-dispute alerts (Visa RDR, Ethoca), arbitration | Handled by operations at the sponsor | Alert feeds through the sponsor |
-| `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers`, settlement proofs, webhook replay | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
+| `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers`, settlement proofs | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
 | CSR signing on `/v1/terminals` | `501` | Terminal PKI after attestation |
 
 ## Verification
@@ -126,7 +129,9 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 - the full API flow, ending with L1–L5 and verified webhook signatures;
 - operations: merchant lifecycle and revocations with their audit rows, a chargeback larger than the balance (booked as owed, recovered after the win), merchant acceptance and deadline expiry, a settlement report with true-ups, suspense, duplicate and replay protection, a lost Pix webhook healed by reconciliation, a MED return applied once, the jobs lease and the metrics.
 
-CI (`.github/workflows/payments-platform.yml`) adds staticcheck, short fuzzing, the multi-process smoke test (which also runs the operator commands and scrapes `/metrics`), govulncheck, and the Docker image build.
+- security: tenant isolation on every route, scopes, input hardening, headers, rate limits, webhook SSRF and redirects, sealed webhook secrets, card data in no log or clear column, and STAN reuse ([security assessment](../integration/security-assessment.md)).
+
+CI (`.github/workflows/payments-platform.yml`) adds staticcheck, gosec, short fuzzing, the multi-process smoke test (which also runs the operator commands and scrapes `/metrics`), govulncheck, and the Docker image build.
 
 ## Operations
 

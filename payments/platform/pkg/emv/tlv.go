@@ -116,7 +116,7 @@ func Encode(objs []TLV) ([]byte, error) {
 		case n <= 0xFF:
 			out = append(out, 0x81, byte(n))
 		case n <= 0xFFFF:
-			out = append(out, 0x82, byte(n>>8), byte(n))
+			out = append(out, 0x82, byte(n>>8), byte(n)) // #nosec G115 -- the case guard bounds n
 		default:
 			return nil, fmt.Errorf("emv: value of tag %s too long", o.Tag)
 		}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
+	"github.com/monolito123/Gooners/payments/platform/internal/netguard"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
@@ -65,21 +66,28 @@ func (s *Service) GetBalance(ctx context.Context, tenantID, accountID string) (*
 	return b, rows.Err()
 }
 
-// Entries lists the wallet's ledger postings.
-func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit int) ([]map[string]any, error) {
+// Entries lists the wallet's latest ledger postings and whether there are older ones.
+func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit int) ([]map[string]any, bool, error) {
 	m, err := s.merchantByAccount(ctx, tenantID, accountID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	es, err := s.ledger.Entries(ctx, tenantID, ledger.MerchantWallet(m.ID), limit)
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	es, err := s.ledger.Entries(ctx, tenantID, ledger.MerchantWallet(m.ID), limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	more := len(es) > limit
+	if more {
+		es = es[:limit]
 	}
 	out := make([]map[string]any, 0, len(es))
 	for _, e := range es {
 		out = append(out, map[string]any{"journal_id": e.JournalID, "direction": e.Direction, "amount": e.Amount, "type": e.Type, "reference": e.Reference, "posted_at": e.PostedAt.UTC().Format(time.RFC3339)})
 	}
-	return out, nil
+	return out, more, nil
 }
 
 // Destination of a payout.
@@ -114,8 +122,8 @@ type Quote struct {
 // QuotePayout prices a payout: available balance first, then pending receivables in date
 // order, each advanced at amount × ((1 + r)^(du/252) − 1).
 func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, amount int64, dest Destination) (*Quote, error) {
-	if amount <= 0 {
-		return nil, invalid("amount must be positive")
+	if amount <= 0 || amount > MaxAmount {
+		return nil, invalid("amount must be positive and at most %d centavos", MaxAmount)
 	}
 	if dest.Type != "pix" || dest.Key == "" || dest.KeyType == "" {
 		return nil, invalid("destination must be a Pix key with key_type")
@@ -207,17 +215,16 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 	var amount, fees int64
 	var detail, destJSON []byte
 	var expires time.Time
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `UPDATE payout_quotes SET used = true WHERE tenant_id = $1 AND id = $2 AND NOT used
-			RETURNING merchant_id, amount, fee_total, detail, destination, expires_at`, tenantID, quoteID).Scan(&merchantID, &amount, &fees, &detail, &destJSON, &expires)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("%w: quote not found or already used", ErrConflict)
-		}
-		return err
-	})
+	var used bool
+	err := s.pool.QueryRow(ctx, `SELECT merchant_id, amount, fee_total, detail, destination, expires_at, used FROM payout_quotes WHERE tenant_id = $1 AND id = $2`,
+		tenantID, quoteID).Scan(&merchantID, &amount, &fees, &detail, &destJSON, &expires, &used)
+	if errors.Is(err, pgx.ErrNoRows) || used {
+		return nil, fmt.Errorf("%w: quote not found or already used", ErrConflict)
+	}
 	if err != nil {
 		return nil, err
 	}
+	// Check everything that can refuse the payout before the quote is spent.
 	if s.cfg.Now().After(expires) {
 		return nil, fmt.Errorf("%w: quote expired at %s", ErrExpired, expires.UTC().Format(time.RFC3339))
 	}
@@ -227,6 +234,13 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 	}
 	if err := requireActive(m); err != nil {
 		return nil, err // restricted after the quote was issued
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE payout_quotes SET used = true WHERE tenant_id = $1 AND id = $2 AND NOT used`, tenantID, quoteID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, fmt.Errorf("%w: quote not found or already used", ErrConflict) // a concurrent request spent it
 	}
 	var lines []advanceLine
 	_ = json.Unmarshal(detail, &lines)
@@ -381,16 +395,52 @@ type WebhookEndpoint struct {
 	Secret string   `json:"secret,omitempty"`
 }
 
-// CreateWebhookEndpoint registers an endpoint.
+// ReplayWebhooks schedules an endpoint's deliveries in [since, until) again (docs/02 §10).
+func (s *Service) ReplayWebhooks(ctx context.Context, tenantID, endpointID string, since, until time.Time) (int64, error) {
+	if until.IsZero() {
+		until = s.cfg.Now()
+	}
+	if !since.Before(until) || since.Before(s.cfg.Now().Add(-30*24*time.Hour)) {
+		return 0, invalid("since must be before until and within the last 30 days")
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM webhook_endpoints WHERE tenant_id = $1 AND id = $2)`, tenantID, endpointID).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, ErrNotFound
+	}
+	return webhooks.Replay(ctx, s.pool, tenantID, endpointID, since, until)
+}
+
+// WebhookPolicy is where partner webhook URLs may point: anywhere in the sandbox (partners'
+// local receivers), public https addresses everywhere else.
+func (s *Service) WebhookPolicy() netguard.Policy {
+	sandbox := s.cfg.Env == "" || s.cfg.Env == "sandbox"
+	return netguard.Policy{AllowPrivate: sandbox, RequireHTTPS: !sandbox}
+}
+
+// CreateWebhookEndpoint registers an endpoint. The signing secret is returned once and
+// stored sealed under the vault's KEK.
 func (s *Service) CreateWebhookEndpoint(ctx context.Context, tenantID, url string, events []string) (*WebhookEndpoint, error) {
-	if len(url) < 8 || (url[:8] != "https://" && s.cfg.Env == "production") {
-		return nil, invalid("webhook URLs must be https")
+	if err := s.WebhookPolicy().ValidateURL(ctx, url); err != nil {
+		return nil, invalid("%v", err)
 	}
 	if len(events) == 0 {
 		events = []string{"*"}
 	}
 	e := &WebhookEndpoint{ID: ids.New("we"), Object: "webhook_endpoint", URL: url, Events: events, Secret: webhooks.NewSecret()}
-	_, err := s.pool.Exec(ctx, `INSERT INTO webhook_endpoints (id, tenant_id, url, secret, events) VALUES ($1, $2, $3, $4, $5)`, e.ID, tenantID, url, e.Secret, events)
+	stored := e.Secret
+	if s.vault != nil {
+		sealed, err := s.vault.SealSecret(ctx, e.Secret, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		stored = sealed
+	} else if s.cfg.Env == "production" {
+		return nil, fmt.Errorf("%w: the vault is required to store webhook secrets", ErrDisabled)
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO webhook_endpoints (id, tenant_id, url, secret, events) VALUES ($1, $2, $3, $4, $5)`, e.ID, tenantID, url, stored, events)
 	return e, err
 }
 

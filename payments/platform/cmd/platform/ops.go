@@ -157,7 +157,7 @@ func disputesImport(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(file)
+	f, err := os.Open(file) // #nosec G304 -- operator command, file named on its command line
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func disputesList(ctx context.Context, args []string) error {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
-		ds, err := svc.ListDisputes(ctx, *o.tenant, status, "", 100)
+		ds, _, err := svc.ListDisputes(ctx, *o.tenant, status, "", "", 100)
 		if err != nil {
 			return err
 		}
@@ -221,17 +221,17 @@ func reconCard(ctx context.Context, args []string) error {
 	var report, date, file string
 	o, err := newOps("recon-card", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&report, "report", "", "settlement report ID (unique per report)")
-		fs.StringVar(&date, "date", time.Now().Format("2006-01-02"), "settlement date")
+		fs.StringVar(&date, "date", time.Now().In(payments.BRT).Format("2006-01-02"), "settlement date (Brasília)")
 		fs.StringVar(&file, "file", "", "settlement report CSV")
 	})
 	if err != nil {
 		return err
 	}
-	day, err := time.Parse("2006-01-02", date)
+	day, err := time.ParseInLocation("2006-01-02", date, payments.BRT)
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(file)
+	f, err := os.Open(file) // #nosec G304 -- operator command, file named on its command line
 	if err != nil {
 		return err
 	}
@@ -252,12 +252,12 @@ func reconCard(ctx context.Context, args []string) error {
 func reconPix(ctx context.Context, args []string) error {
 	var date string
 	o, err := newOps("recon-pix", args, func(fs *flag.FlagSet) {
-		fs.StringVar(&date, "date", time.Now().AddDate(0, 0, -1).Format("2006-01-02"), "business day (Brasília time)")
+		fs.StringVar(&date, "date", time.Now().In(payments.BRT).AddDate(0, 0, -1).Format("2006-01-02"), "business day (Brasília time)")
 	})
 	if err != nil {
 		return err
 	}
-	day, err := time.Parse("2006-01-02", date)
+	day, err := time.ParseInLocation("2006-01-02", date, payments.BRT)
 	if err != nil {
 		return err
 	}

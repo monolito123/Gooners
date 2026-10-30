@@ -23,16 +23,27 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 		}
 		return
 	}
+	// Each job renews the lease first; if another replica took it meanwhile, stop here.
+	renew := func() bool {
+		ok, err := db.TryLease(ctx, s.pool, "periodic-jobs", holder, 2*time.Minute)
+		return err == nil && ok
+	}
 	now := s.cfg.Now()
 	if n, err := s.ReleaseDue(ctx, now); err != nil {
 		s.log.Error("release due", "err", err)
 	} else if n > 0 {
 		s.log.Info("released receivables", "count", n)
 	}
+	if !renew() {
+		return
+	}
 	if s.payout != nil {
 		if err := s.ReconcilePayouts(ctx); err != nil {
 			s.log.Error("reconcile payouts", "err", err)
 		}
+	}
+	if !renew() {
+		return
 	}
 	if n, err := s.SweepDisputes(ctx, now); err != nil {
 		s.log.Error("sweep disputes", "err", err)
@@ -61,6 +72,9 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 		}
 		rows.Close()
 		for _, t := range tenants {
+			if !renew() {
+				return
+			}
 			run, err := s.ReconcilePix(ctx, t, day)
 			if err != nil {
 				s.log.Error("pix reconciliation", "tenant", t, "err", err)

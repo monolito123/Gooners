@@ -3,6 +3,7 @@ package payments
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSettlementCSV(t *testing.T) {
@@ -44,4 +45,41 @@ func TestParseDisputeCSV(t *testing.T) {
 	if _, err := ParseDisputeCSV(strings.NewReader("event,scheme,network_case_id,reason_code,category,amount,rrn,auth_code,evidence_due_at\nopened,visa,X,1,fraud,1,2,3,18/11/2026\n"), "f"); err == nil {
 		t.Error("a non-RFC 3339 deadline was accepted")
 	}
+}
+
+func TestBusinessDayIsTheBrasiliaDate(t *testing.T) {
+	for in, want := range map[string]string{
+		"2026-10-30T00:30:00Z":      "2026-10-29", // 21:30 in Brasília
+		"2026-10-30T03:00:00Z":      "2026-10-30",
+		"2026-10-29T23:59:59-03:00": "2026-10-29",
+	} {
+		ts, _ := time.Parse(time.RFC3339, in)
+		if got := businessDay(ts); got.Format("2006-01-02") != want || got.Hour() != 0 || got.Location() != BRT {
+			t.Errorf("businessDay(%s) = %s", in, got)
+		}
+	}
+}
+
+func FuzzParseSettlementCSV(f *testing.F) {
+	f.Add("record_type,brand,rrn,auth_code,amount,interchange,scheme_fees,net,case_id\nsale,visa,1,A,100,1,1,98,\n")
+	f.Add("record_type,brand,rrn,auth_code,amount,interchange,scheme_fees,net,case_id\nchargeback,visa,1,,100,,,-100,X\n")
+	f.Fuzz(func(t *testing.T, s string) {
+		lines, err := ParseSettlementCSV(strings.NewReader(s))
+		if err != nil {
+			return
+		}
+		for _, l := range lines { // whatever parses obeys the sign rules
+			if l.Amount <= 0 || l.RRN == "" || ((l.RecordType == "sale" || l.RecordType == "chargeback_reversal") && l.Net < 0) ||
+				((l.RecordType == "refund" || l.RecordType == "chargeback") && l.Net > 0) {
+				t.Fatalf("accepted %+v", l)
+			}
+		}
+	})
+}
+
+func FuzzParseDisputeCSV(f *testing.F) {
+	f.Add("event,scheme,network_case_id,reason_code,category,amount,rrn,auth_code,evidence_due_at\nopened,visa,X,10.4,fraud,100,1,A,2026-11-18T23:59:59Z\n")
+	f.Fuzz(func(t *testing.T, s string) {
+		_, _ = ParseDisputeCSV(strings.NewReader(s), "fuzz") // must never panic
+	})
 }

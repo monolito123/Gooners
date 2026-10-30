@@ -21,6 +21,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/netguard"
+	"github.com/monolito123/Gooners/payments/platform/internal/vault"
+
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 )
 
@@ -88,9 +91,20 @@ func Enqueue(ctx context.Context, tx pgx.Tx, tenantID, eventType string, data an
 
 // Dispatcher sends due deliveries.
 type Dispatcher struct {
-	Pool   *pgxpool.Pool
+	Pool *pgxpool.Pool
+	// Client overrides the HTTP client. By default deliveries use a netguard client: public
+	// addresses only (unless Policy allows private ones), no redirects.
 	Client *http.Client
-	Logger *slog.Logger
+	Policy netguard.Policy
+	// Secrets opens signing secrets stored sealed (vault.SealSecret). Secrets stored before
+	// sealing was introduced are used as they are.
+	Secrets SecretOpener
+	Logger  *slog.Logger
+}
+
+// SecretOpener decrypts a sealed signing secret; aad is the endpoint ID.
+type SecretOpener interface {
+	OpenSecret(ctx context.Context, sealed, aad string) (string, error)
 }
 
 var schedule = []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute, time.Hour, 3 * time.Hour}
@@ -123,20 +137,20 @@ func (d *Dispatcher) log() *slog.Logger {
 // Once makes one pass and returns the number of successful deliveries.
 func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 	type job struct {
-		id                    int64
-		url, secret, msg, typ string
-		body                  string
-		attempts              int
-		created               time.Time
+		id                              int64
+		endpoint, url, secret, msg, typ string
+		body                            string
+		attempts                        int
+		created                         time.Time
 	}
 	var jobs []job
 	err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
 		// Deliveries that kept failing for maxAge are abandoned (the partner replays them).
 		if _, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET abandoned_at = now()
-			WHERE delivered_at IS NULL AND abandoned_at IS NULL AND created_at < now() - $1::interval`, fmt.Sprintf("%d seconds", int(maxAge.Seconds()))); err != nil {
+			WHERE delivered_at IS NULL AND abandoned_at IS NULL AND COALESCE(replayed_at, created_at) < now() - $1::interval`, fmt.Sprintf("%d seconds", int(maxAge.Seconds()))); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT w.id, e.url, e.secret, w.message_id, w.type, w.body, w.attempts, w.created_at
+		rows, err := tx.Query(ctx, `SELECT w.id, e.id, e.url, e.secret, w.message_id, w.type, w.body, w.attempts, w.created_at
 			FROM webhook_deliveries w JOIN webhook_endpoints e ON e.id = w.endpoint_id
 			WHERE w.delivered_at IS NULL AND w.abandoned_at IS NULL AND w.next_at <= now() ORDER BY w.id LIMIT 50 FOR UPDATE OF w SKIP LOCKED`)
 		if err != nil {
@@ -144,7 +158,7 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 		}
 		for rows.Next() {
 			var j job
-			if err := rows.Scan(&j.id, &j.url, &j.secret, &j.msg, &j.typ, &j.body, &j.attempts, &j.created); err != nil {
+			if err := rows.Scan(&j.id, &j.endpoint, &j.url, &j.secret, &j.msg, &j.typ, &j.body, &j.attempts, &j.created); err != nil {
 				rows.Close()
 				return err
 			}
@@ -163,12 +177,21 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 	}
 	client := d.Client
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = d.Policy.Client(10 * time.Second)
 	}
 	ok := 0
 	for _, j := range jobs {
+		secret := j.secret
+		if vault.IsSealed(secret) {
+			if d.Secrets == nil {
+				return ok, fmt.Errorf("webhooks: endpoint %s has a sealed secret and no SecretOpener is configured", j.endpoint)
+			}
+			if secret, err = d.Secrets.OpenSecret(ctx, secret, j.endpoint); err != nil {
+				return ok, err
+			}
+		}
 		ts := time.Now().Unix()
-		sig, err := Sign(j.secret, j.msg, ts, []byte(j.body))
+		sig, err := Sign(secret, j.msg, ts, []byte(j.body))
 		if err != nil {
 			return ok, err
 		}
@@ -194,4 +217,16 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 		d.log().Warn("webhook delivery failed", "url", j.url, "type", j.typ, "status", status, "err", err)
 	}
 	return ok, nil
+}
+
+// Replay schedules every delivery of an endpoint created in [since, until) again, delivered
+// or not, with its original webhook-id so the receiver can deduplicate. It covers at most
+// the last 30 days and 10 000 deliveries per call.
+func Replay(ctx context.Context, pool *pgxpool.Pool, tenantID, endpointID string, since, until time.Time) (int64, error) {
+	tag, err := pool.Exec(ctx, `UPDATE webhook_deliveries d SET delivered_at = NULL, abandoned_at = NULL, attempts = 0, next_at = now(), replayed_at = now()
+		FROM webhook_endpoints e
+		WHERE e.id = d.endpoint_id AND e.tenant_id = $1 AND e.id = $2 AND d.created_at >= $3 AND d.created_at < $4
+		AND d.id IN (SELECT id FROM webhook_deliveries WHERE endpoint_id = $2 AND created_at >= $3 AND created_at < $4 ORDER BY id LIMIT 10000)`,
+		tenantID, endpointID, since, until)
+	return tag.RowsAffected(), err
 }

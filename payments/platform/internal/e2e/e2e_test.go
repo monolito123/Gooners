@@ -64,7 +64,23 @@ type stack struct {
 	dispatch *webhooks.Dispatcher
 	svc      *payments.Service
 	pool     *pgxpool.Pool
+	vault    *vault.Vault
+	logs     *syncBuffer // everything every component logged, at debug level
 }
+
+// syncBuffer collects logs from concurrent goroutines.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 type delivered struct {
 	id, ts, sig string
@@ -78,8 +94,8 @@ func newStack(t *testing.T) *stack {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	pool := testpg.Pool(t)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st := &stack{t: t, hooks: make(chan delivered, 64), devKey: rnd(32)}
+	st := &stack{t: t, hooks: make(chan delivered, 64), devKey: rnd(32), logs: &syncBuffer{}}
+	log := slog.New(slog.NewTextHandler(st.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	// Scheme host simulator and the switch.
 	codec := iso8583.NewCodec(dialects.MustLoad(dialects.Generic))
@@ -127,7 +143,7 @@ func newStack(t *testing.T) *stack {
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Logger: log,
 	})
 	st.ledger = ledger.New(pool, log)
-	st.svc, st.pool = svc, pool
+	st.svc, st.pool, st.vault = svc, pool, v
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {
 		t.Fatal(err)
 	}
@@ -158,11 +174,17 @@ func newStack(t *testing.T) *stack {
 	t.Cleanup(receiver.Close)
 	_, we := st.call("POST", "/v1/webhook-endpoints", map[string]any{"url": receiver.URL, "events": []string{"*"}}, 201)
 	st.hookSec = we["secret"].(string)
-	st.dispatch = &webhooks.Dispatcher{Pool: pool, Logger: log}
+	st.dispatch = &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	return st
 }
 
 func (st *stack) call(method, path string, body any, want int) (int, map[string]any) {
+	st.t.Helper()
+	return st.callAs(st.key, method, path, body, want)
+}
+
+// callAs calls the API with another credential.
+func (st *stack) callAs(key, method, path string, body any, want int) (int, map[string]any) {
 	st.t.Helper()
 	var rd io.Reader
 	if body != nil {
@@ -170,7 +192,7 @@ func (st *stack) call(method, path string, body any, want int) (int, map[string]
 		rd = bytes.NewReader(b)
 	}
 	req, _ := http.NewRequest(method, st.api+path, rd)
-	req.Header.Set("Authorization", "Bearer "+st.key)
+	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Api-Version", "2026-10-01")
 	if method == "POST" {
 		req.Header.Set("Idempotency-Key", ids.ULID())
@@ -206,18 +228,24 @@ var stan int
 func (st *stack) tap(pi, terminal string, pan, aid, app string) map[string]any {
 	st.t.Helper()
 	stan++
-	ksn := fmt.Sprintf("FFFF9876543210E%05d", stan)
+	_, out := st.tapWithSTAN(pi, terminal, pan, aid, app, fmt.Sprintf("%06d", stan), 200)
+	return out
+}
+
+// tapWithSTAN sends a terminal authorization with an explicit terminal STAN.
+func (st *stack) tapWithSTAN(pi, terminal, pan, aid, app, terminalSTAN string, want int) (int, map[string]any) {
+	st.t.Helper()
+	ksn := fmt.Sprintf("FFFF9876543210E%05d", len(terminalSTAN)+int(time.Now().UnixNano()%90000))
 	blob, err := carddata.DevEncrypt(st.devKey, ksn, carddata.Card{PAN: pan, Expiry: "2911", AID: aid,
 		EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100"})
 	if err != nil {
 		st.t.Fatal(err)
 	}
-	_, out := st.call("POST", "/v1/terminal/authorizations", map[string]any{
-		"payment_intent_id": pi, "terminal_id": terminal, "stan": fmt.Sprintf("%06d", stan), "emv_application": app,
+	return st.call("POST", "/v1/terminal/authorizations", map[string]any{
+		"payment_intent_id": pi, "terminal_id": terminal, "stan": terminalSTAN, "emv_application": app,
 		"local_time": time.Now().Format(time.RFC3339),
 		"sred":       map[string]any{"format": carddata.DevFormat, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
-	}, 200)
-	return out
+	}, want)
 }
 
 func (st *stack) balance(acc string) map[string]any {

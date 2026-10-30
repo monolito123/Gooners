@@ -49,11 +49,14 @@ jobs:
       - name: Testes (race detector)
         run: go test -race -count=1 ./...
 
-      - name: Fuzz curto (ISO 8583, EMV, BR Code)
+      - name: Fuzz curto (ISO 8583, EMV, BR Code, Nostr, arquivos do subcredenciador)
         run: |
           go test -run=^$ -fuzz=FuzzUnpack -fuzztime=20s ./pkg/iso8583/
           go test -run=^$ -fuzz=FuzzParse -fuzztime=10s ./pkg/emv/
           go test -run=^$ -fuzz=FuzzDecode -fuzztime=10s ./pkg/brcode/
+          go test -run=^$ -fuzz=FuzzVerify -fuzztime=10s ./pkg/nostr/
+          go test -run=^$ -fuzz=FuzzParseSettlementCSV -fuzztime=10s ./internal/payments/
+          go test -run=^$ -fuzz=FuzzParseDisputeCSV -fuzztime=10s ./internal/payments/
 
       # Os binários reais em processos separados, com sockets e mTLS de verdade.
       - name: Smoke (schemesim + pixsim + platform)
@@ -65,6 +68,10 @@ jobs:
 
       - name: Vulnerabilidades (govulncheck)
         run: make vuln
+
+      # Achados revisados estão anotados com #nosec e o motivo (payments/integration/security-assessment.md).
+      - name: Análise de segurança (gosec)
+        run: make sec
 
   image:
     runs-on: ubuntu-latest

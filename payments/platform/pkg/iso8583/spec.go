@@ -117,7 +117,7 @@ func LoadSpec(r io.Reader) (*Spec, error) {
 
 // LoadSpecFile reads a dialect from a file.
 func LoadSpecFile(path string) (*Spec, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- dialect files are named by the operator
 	if err != nil {
 		return nil, err
 	}

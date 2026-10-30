@@ -126,7 +126,7 @@ func (s *Session) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff + time.Duration(rand.Int64N(int64(backoff/2)+1))):
+		case <-time.After(backoff + time.Duration(rand.Int64N(int64(backoff/2)+1))): // #nosec G404 -- reconnect jitter, not a secret
 		}
 		if backoff < 30*time.Second {
 			backoff *= 2
@@ -383,7 +383,7 @@ type STANSource struct{ n atomic.Uint32 }
 // NewSTANSource starts at a random point so restarts do not reuse recent STANs.
 func NewSTANSource() *STANSource {
 	s := &STANSource{}
-	s.n.Store(uint32(rand.IntN(900000)))
+	s.n.Store(uint32(rand.IntN(900000))) // #nosec G115 G404 -- a starting point below 900000, not a secret
 	return s
 }
 

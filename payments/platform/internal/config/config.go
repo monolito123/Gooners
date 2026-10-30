@@ -82,6 +82,10 @@ type Config struct {
 
 	BootstrapTenant  string
 	BootstrapCapital int64
+
+	RatePerSecond, RateBurst, AuthFailuresPerMinute float64 // per replica; 0 = defaults
+	TrustProxy                                      bool    // behind the edge: client IP from X-Forwarded-For
+	MaxPaymentAmount                                int64   // centavos per payment intent; 0 = default
 }
 
 func env(k, def string) string {
@@ -142,6 +146,19 @@ func Load() (*Config, error) {
 	if r := os.Getenv("RELAYS"); r != "" {
 		c.Relays = strings.Split(r, ",")
 	}
+	for name, dst := range map[string]*float64{"RATE_LIMIT_PER_SECOND": &c.RatePerSecond, "RATE_LIMIT_BURST": &c.RateBurst, "AUTH_FAILURES_PER_MINUTE": &c.AuthFailuresPerMinute} {
+		if v := os.Getenv(name); v != "" {
+			if *dst, err = strconv.ParseFloat(v, 64); err != nil || *dst <= 0 {
+				return nil, fmt.Errorf("config: %s must be a positive number", name)
+			}
+		}
+	}
+	c.TrustProxy = os.Getenv("TRUST_PROXY") == "true"
+	if v := os.Getenv("MAX_PAYMENT_AMOUNT"); v != "" {
+		if c.MaxPaymentAmount, err = strconv.ParseInt(v, 10, 64); err != nil || c.MaxPaymentAmount <= 0 {
+			return nil, fmt.Errorf("config: MAX_PAYMENT_AMOUNT must be a positive number of centavos")
+		}
+	}
 	if v := os.Getenv("BOOTSTRAP_CAPITAL"); v != "" {
 		if c.BootstrapCapital, err = strconv.ParseInt(v, 10, 64); err != nil {
 			return nil, fmt.Errorf("config: BOOTSTRAP_CAPITAL: %w", err)
@@ -154,7 +171,7 @@ func Load() (*Config, error) {
 		}
 	}
 	if f := os.Getenv("ROUTES_FILE"); f != "" {
-		b, err := os.ReadFile(f)
+		b, err := os.ReadFile(f) // #nosec G304 G703 -- ROUTES_FILE is set by the operator
 		if err != nil {
 			return nil, fmt.Errorf("config: ROUTES_FILE: %w", err)
 		}

@@ -100,6 +100,11 @@ func (s *Switch) Authorize(ctx context.Context, r Request) (Result, error) {
 		return Result{}, err
 	}
 	if existing != nil {
+		// A retry of the same request gets the stored outcome. Anything else under the same
+		// STAN would otherwise inherit an approval no issuer gave for it.
+		if !sameRequest(existing, rec) {
+			return Result{}, ErrSTANReused
+		}
 		return s.replay(existing)
 	}
 
@@ -205,6 +210,14 @@ func (s *Switch) timedOut(ctx context.Context, authID string, rt *Route, stan, r
 		Decline: Decline{Code: "processing_error", Retry: RetryCascade, CustomerMessage: "Tempo esgotado. Aproxime o cartão de novo."},
 		SentAt:  sentAt, CompletedAt: now,
 	}, nil
+}
+
+// sameRequest reports whether a request repeats the stored one: same payment, kind, amount,
+// card, processing code and merchant.
+func sameRequest(stored, r *Record) bool {
+	return stored.PaymentIntentID == r.PaymentIntentID && stored.Kind == r.Kind && stored.Amount == r.Amount &&
+		stored.PANRef == r.PANRef && stored.ProcessingCode == r.ProcessingCode && stored.MerchantMID == r.MerchantMID &&
+		stored.CurrencyNumeric == r.CurrencyNumeric
 }
 
 func (s *Switch) replay(rec *Record) (Result, error) {

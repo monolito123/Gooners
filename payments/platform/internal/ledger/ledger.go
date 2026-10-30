@@ -177,7 +177,7 @@ func shardOf(journalID string, shards int) int {
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(journalID))
-	return int(h.Sum32() % uint32(shards))
+	return int(h.Sum32() % uint32(shards)) // #nosec G115 -- shard counts are 1 to 256 (CHECK in the schema)
 }
 
 // Post posts a journal. Posting the same idempotency key again returns the original journal
@@ -197,7 +197,7 @@ func (l *Ledger) Post(ctx context.Context, j Journal) (Result, error) {
 		if err == nil || !db.IsRetryable(err) {
 			return res, err
 		}
-		time.Sleep(time.Duration(1<<attempt)*time.Millisecond + time.Duration(rand.IntN(5))*time.Millisecond)
+		time.Sleep(time.Duration(1<<attempt)*time.Millisecond + time.Duration(rand.IntN(5))*time.Millisecond) // #nosec G404 -- retry jitter, not a secret
 	}
 	return res, fmt.Errorf("ledger: gave up after serialization conflicts: %w", err)
 }
@@ -374,7 +374,7 @@ type Entry struct {
 
 // Entries lists postings on an account, newest first.
 func (l *Ledger) Entries(ctx context.Context, tenantID, accountID string, limit int) ([]Entry, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > 501 {
 		limit = 100
 	}
 	rows, err := l.pool.Query(ctx, `SELECT p.journal_id, p.seq, p.direction, p.amount, j.type, COALESCE(j.reference, ''), j.posted_at

@@ -2,9 +2,12 @@ package payments
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -129,6 +132,9 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 	if in.Amount <= 0 {
 		return nil, invalid("amount must be a positive integer in centavos")
 	}
+	if in.Amount > s.cfg.MaxPaymentAmount {
+		return nil, invalid("amount is above the limit of %d centavos per payment", s.cfg.MaxPaymentAmount)
+	}
 	if in.Currency == "" {
 		in.Currency = s.cfg.Currency
 	}
@@ -239,6 +245,9 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 	if pi.Channel != "card_present" {
 		return nil, invalid("payment intent channel is %s", pi.Channel)
 	}
+	if !terminalSTAN.MatchString(ta.TerminalSTAN) {
+		return nil, invalid("stan must be the terminal's 6-digit trace number")
+	}
 	var termMerchant string
 	if err := s.pool.QueryRow(ctx, `SELECT merchant_id FROM terminals WHERE tenant_id = $1 AND id = $2 AND status = 'active'`, tenantID, ta.TerminalID).Scan(&termMerchant); err != nil {
 		return nil, fmt.Errorf("%w: unknown terminal", ErrNotFound)
@@ -291,8 +300,10 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 		Merchant: authswitch.Merchant{SchemeMID: m.SchemeMID, MCC: m.MCC, Name: firstNonEmpty(pi.descriptor, m.TradeName), City: m.City, Country: "BR"},
 	})
 	card = carddata.Card{} // drop clear card data as soon as the switch has it
-	if errors.Is(err, authswitch.ErrInFlight) {
-		return nil, fmt.Errorf("%w: an authorization with this terminal STAN is in flight", ErrConflict)
+	if errors.Is(err, authswitch.ErrInFlight) || errors.Is(err, authswitch.ErrSTANReused) {
+		// Nothing was sent for this payment: release it so the terminal can retry with a fresh STAN.
+		_ = s.claim(ctx, tenantID, pi.ID, StatusRequiresPaymentMethod, StatusProcessing)
+		return nil, fmt.Errorf("%w: terminal STAN %s is already used today (%v)", ErrConflict, ta.TerminalSTAN, err)
 	}
 	if err != nil {
 		fail("processing_error")
@@ -396,7 +407,7 @@ func (s *Service) issueReceipt(ctx context.Context, tenantID string, pi *Intent,
 	}
 	if s.publisher != nil {
 		go func() {
-			c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second) // publishing outlives the request
 			defer cancel()
 			if _, err := s.publisher.Publish(c, evs...); err != nil {
 				s.log.Warn("publish receipt", "payment_intent", pi.ID, "err", err) // republished from the archive by the sweeper (docs/03 §9)
@@ -449,6 +460,15 @@ func (s *Service) ConfirmPix(ctx context.Context, tenantID, id string) (*Intent,
 	}
 	s.notify(ctx, tenantID, "payment_intent.requires_action", map[string]any{"id": id, "next_action": "pix_qr"})
 	return s.GetIntent(ctx, tenantID, id)
+}
+
+var terminalSTAN = regexp.MustCompile(`^[0-9]{6}$`)
+
+// platformSTAN is the terminal-STAN idempotency key of a platform-initiated message: "R" and
+// five base-32 characters of the SHA-256 of its ID.
+func platformSTAN(id string) string {
+	h := sha256.Sum256([]byte(id))
+	return "R" + base32.StdEncoding.EncodeToString(h[:])[:5]
 }
 
 func firstNonEmpty(a, b string) string {
@@ -781,15 +801,11 @@ func (s *Service) refundCard(ctx context.Context, tenantID string, pi *Intent, r
 	if err != nil {
 		return err
 	}
-	// Refunds are not tapped, so the switch gets a platform-assigned STAN on the same terminal.
-	var stan int64
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(terminal_stan::int), 0) + 1 FROM authorizations WHERE terminal_id = $1 AND local_date = $2`,
-		terminal, pricing.Date(s.cfg.Now()).Format("20060102")).Scan(&stan); err != nil {
-		return err
-	}
+	// Refunds are not tapped. Their idempotency key on the terminal comes from a namespace the
+	// terminal can never use (terminal STANs are digits), derived from the refund ID.
 	res, err := s.sw.Authorize(ctx, authswitch.Request{
 		AuthID: ids.New("auth"), TenantID: tenantID, PaymentIntentID: pi.ID, Kind: authswitch.Refund, Amount: ref.Amount,
-		CurrencyNumeric: s.cfg.CurrencyNumeric, Channel: "card_present", TerminalID: terminal, TerminalSTAN: fmt.Sprintf("%06d", stan%1000000),
+		CurrencyNumeric: s.cfg.CurrencyNumeric, Channel: "card_present", TerminalID: terminal, TerminalSTAN: platformSTAN(ref.ID),
 		AcquirerID: s.cfg.AcquirerID,
 		Card:       authswitch.Card{PAN: pan, PANRef: pi.panToken, EntryMode: "012", Funding: pi.funding, Brand: pi.brand},
 		Merchant:   authswitch.Merchant{SchemeMID: mid, MCC: mcc, Name: name, City: city, Country: "BR"},
