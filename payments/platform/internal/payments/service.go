@@ -187,8 +187,14 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 		}
 		in.SchemeMID = string(mid)
 	}
-	if l := len(in.Document); l != 11 && l != 14 {
-		return nil, invalid("document must be a CPF (11) or CNPJ (14) without punctuation")
+	if !ValidCPF(in.Document) && !ValidCNPJ(in.Document) {
+		return nil, invalid("document must be a valid CPF (11 digits) or CNPJ (14 digits) without punctuation")
+	}
+	if in.PixKey != "" || in.PixKeyType != "" {
+		var err error
+		if in.PixKeyType, in.PixKey, err = normalizePixKey(in.PixKeyType, in.PixKey); err != nil {
+			return nil, err
+		}
 	}
 	rootHex := ""
 	if in.RootNpub != "" {

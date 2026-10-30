@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -151,6 +152,9 @@ func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, a
 	if err != nil {
 		return nil, err
 	}
+	if dest.KeyType, dest.Key, err = normalizePixKey(dest.KeyType, dest.Key); err != nil {
+		return nil, err
+	}
 	if err := requireActive(m); err != nil {
 		return nil, err // restricted merchants' funds stay held
 	}
@@ -290,7 +294,7 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 		po.ID, tenantID, merchantID, quoteID, net); err != nil {
 		return nil, err
 	}
-	res, err := s.payout.Send(ctx, pixout.Transfer{IdempotencyKey: po.ID, Amount: net, KeyType: dest.KeyType, Key: dest.Key, Description: "Repasse " + po.ID})
+	res, err := s.payout.Send(ctx, pixout.Transfer{IdempotencyKey: po.ID, Amount: net, KeyType: strings.ToUpper(dest.KeyType), Key: dest.Key, Description: "Repasse " + po.ID})
 	if err != nil && !errors.Is(err, pixout.ErrRejected) {
 		s.log.Warn("payout outcome unknown; ReconcilePayouts will resolve it", "payout", po.ID, "err", err)
 		return po, nil

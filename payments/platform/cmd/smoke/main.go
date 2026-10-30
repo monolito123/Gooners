@@ -4,6 +4,10 @@
 // operator commands (chargeback import, card and Pix reconciliation) and scrapes /metrics.
 // It exits non-zero on any failure. Needs DATABASE_URL pointing to an empty database.
 //
+// With -serve FILE it only starts the stack, creates a sandbox API key and a merchant
+// without a root key, writes the connection details to FILE as JSON and keeps running until
+// interrupted: the Android and iOS integration tests enroll against it.
+//
 //	DATABASE_URL=postgres://… go run ./cmd/smoke
 package main
 
@@ -15,14 +19,17 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -74,6 +81,8 @@ func waitTCP(addr string) {
 func hexKey() string { b := make([]byte, 32); _, _ = rand.Read(b); return hex.EncodeToString(b) }
 
 func main() {
+	serve := flag.String("serve", "", "write the sandbox connection details to this file and keep running")
+	flag.Parse()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		fail("DATABASE_URL is required")
@@ -146,6 +155,18 @@ func main() {
 	}
 	m := call("POST", "/v1/merchants", map[string]any{"legal": map[string]any{"document": map[string]any{"type": "cnpj", "number": "12345678000195"},
 		"legal_name": "Cafe Aurora Ltda", "trade_name": "Café Aurora", "mcc": "5812", "city": "São Paulo"}, "scheme_mid": "000000004127731"}, 201)
+	if *serve != "" {
+		info, _ := json.MarshalIndent(map[string]any{"api_url": api, "api_key": key, "tenant": tenant, "merchant_id": m["id"], "account_id": m["account_id"],
+			"dev_card_key": devKey, "metrics_url": "http://" + metricsAddr + "/metrics"}, "", "  ")
+		if err := os.WriteFile(*serve, info, 0o600); err != nil {
+			fail("write %s: %v", *serve, err)
+		}
+		ok("sandbox ready; connection details in %s (Ctrl-C to stop)", *serve)
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		return
+	}
 	term := call("POST", "/v1/terminals", map[string]any{"merchant_id": m["id"]}, 201)
 	ok("merchant %s and terminal %s created", m["id"], term["terminal_id"])
 

@@ -63,18 +63,32 @@ func EncodeNpub(pubHex string) (string, error) {
 	if err != nil || len(b) != 32 {
 		return "", errors.New("bech32: public key must be 32 bytes of hex")
 	}
+	return EncodeBech32("npub", b), nil
+}
+
+// EncodeNsec encodes a 32-byte secret key as an nsec (NIP-19), the form the apps show for a
+// root key backup.
+func EncodeNsec(secret []byte) (string, error) {
+	if len(secret) != 32 {
+		return "", errors.New("bech32: secret key must be 32 bytes")
+	}
+	return EncodeBech32("nsec", secret), nil
+}
+
+// EncodeBech32 encodes data under a human-readable part (BIP-173).
+func EncodeBech32(hrp string, b []byte) string {
 	data, _ := convertBits(b, 8, 5, true)
-	values := append(hrpExpand("npub"), data...)
+	values := append(hrpExpand(hrp), data...)
 	pm := polymod(append(values, 0, 0, 0, 0, 0, 0)) ^ 1
 	var sb strings.Builder
-	sb.WriteString("npub1")
+	sb.WriteString(hrp + "1")
 	for _, d := range data {
 		sb.WriteByte(charset[d])
 	}
 	for i := 0; i < 6; i++ {
 		sb.WriteByte(charset[(pm>>uint(5*(5-i)))&31])
 	}
-	return sb.String(), nil
+	return sb.String()
 }
 
 // DecodeNpub returns the hex public key of an npub, verifying the checksum.

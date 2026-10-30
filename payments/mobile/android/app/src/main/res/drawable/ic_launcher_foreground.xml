@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A mint "g" on midnight: the goonersPAY mark until the brand assets exist. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#10B981"
+        android:pathData="M54,30a18,18 0 1,0 0,36a18,18 0 0,0 12,-4.6v6.6a12,12 0 0,1 -12,12h-8v8h8a20,20 0 0,0 20,-20v-20a20,20 0 0,0 -20,-18zM54,38a10,10 0 1,1 0,20a10,10 0 0,1 0,-20z" />
+</vector>

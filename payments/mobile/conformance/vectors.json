@@ -1,0 +1,287 @@
+{
+  "bip340": [
+    {
+      "aux": "734c3518a01dea9670d6bf694c20d912ec7a7276e86956bb23caadc2a54b1538",
+      "message": "0553d863aafffddcb748de15b7ab6c5c811d9831691d2256f389421ad9bd2ec7",
+      "pubkey": "46e4f15f061f6c93e852ecb49ffd2137a1fa18c66cb888ce013c8e0a568fbd3e",
+      "secret": "b107ce45c25c320d8490f79f76562b58f8c0a1fafe673a728f2c198077133918",
+      "signature": "2fc6a393dc6915858f2c1d08e7e8139eeb9cc709fc280d1a699b1a6eca0a8e3fade584234534c2436df23d26de7ad54b65dd2e655462d22306a42f29338e9074"
+    },
+    {
+      "aux": "a56d03eac950f6d2708f4f63a9484750a044518f9280c1e6e6e1d1a271ccd950",
+      "message": "84096d1d50ed5118cb2dcd63247bf86c4526ec4c3797e10059d05aee29a633eb",
+      "pubkey": "a43dbea1ea6484ea8640c93a081db549eb48d66e5e1524a22f0c515cfe18fe84",
+      "secret": "98baf898581f2e20f3081449c1f0cbea45b49722a7f06f3167f8657170172b05",
+      "signature": "a89d4550675390b6f3ae2aacec47fb483039f6471ffe22e5fe3eabe41b7ee026f2929503311e54bf1c3b2aa6683e3d93e4e904ded9f6fde4af6c35b9053dc268"
+    },
+    {
+      "aux": "0a3002aa0d2b6b268dbfedef16c361f4c2cd6caa3a4f80fa12f5488af4f05a8a",
+      "message": "9d1479424e9a23226e6e5cd05077f4d114dcecc56ce791256d6329d3e9710a4a",
+      "pubkey": "3525762a87ee3877f8e6ebe5ff576a5bb15ee8c606a1821044f258f488f586c3",
+      "secret": "3a033475f8b776af26570c1870ee6b014fe4dc46021dfca794f5c8f1f2bdecf1",
+      "signature": "6c4d1bc6840f1d72f2321d31493fc575efd87a2068c1c95efab8a6c63616ef054da4e938cfcf6797f85290f2bf733e3662cb792de6b2ddfd358fc6d55d63dbc1"
+    }
+  ],
+  "brcode": [
+    {
+      "amount": "129.90",
+      "code": "00020101021226830014br.gov.bcb.pix2561pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca255204000053039865406129.905802BR5911CAFE AURORA6009SAO PAULO62070503***6304EC1C",
+      "dynamic": true,
+      "key": "",
+      "merchant_city": "SAO PAULO",
+      "merchant_name": "CAFE AURORA",
+      "url": "pix.goonerspay.example/qr/v2/9d36b84fc70b478fb95c12729b90ca25"
+    },
+    {
+      "amount": "23.90",
+      "code": "00020126360014br.gov.bcb.pix011412345678000195520400005303986540523.905802BR5911CAFE AURORA6009SAO PAULO62090505MESA46304EC5F",
+      "dynamic": false,
+      "key": "12345678000195",
+      "merchant_city": "SAO PAULO",
+      "merchant_name": "CAFE AURORA",
+      "url": ""
+    }
+  ],
+  "dev_card": {
+    "ciphertext_base64": "wvQEhAkbB6ypn7bTQbYTzGsLzVT0kvwyUnK1nBCsAd91HPAJwdqNdUZDa+mSiI0NQq3FyM92d/kR2AeJlZSi+NiaJn5vcbA5zZRFxr6L6hpx5uPPv3aeviR9/aCKv4QDC/y1uUSziaJ90fWFdBWVOzdXxEavOqZAMMIxKjWdqvl4RZ6RGcB4BadSWd0GYbJOeL4=",
+    "format": "dev-aesgcm-v1",
+    "key": "a6c243a18702e0955418dfffdaff5794fcaefd2c52276d9ac980ff21dac79ae4",
+    "ksn": "FFFF9876543210E00001",
+    "nonce": "c2f40484091b07aca99fb6d3",
+    "plaintext": "{\"pan\":\"4111111111111111\",\"expiry\":\"2911\",\"emv\":\"9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE11\",\"aid\":\"A0000000031010\"}"
+  },
+  "device_list": {
+    "aux": "fb812ec7b1912963bf214e251d8ce534a7fcc8c0822d612e9ef217dfd361c7cb",
+    "event": {
+      "id": "eeb8fda719fa5813d637989236a770842af723e978911f8c8506f14f4923e8bf",
+      "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
+      "created_at": 1793275930,
+      "kind": 17710,
+      "tags": [
+        [
+          "v",
+          "1"
+        ],
+        [
+          "merchant",
+          "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"
+        ],
+        [
+          "device",
+          "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+          "android",
+          "Caixa 1",
+          "1793275930"
+        ],
+        [
+          "device",
+          "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510",
+          "ios",
+          "iPad balcão",
+          "1793275930"
+        ]
+      ],
+      "content": "",
+      "sig": "f5881dbfefbbbea0a1282c4cae7bb0f2af2d6749ffe4144cc8793d06714eef677ec175365905afc5ea6eed1f2b3978bf98815b8be8c7fed899bd5acc600bea26"
+    }
+  },
+  "events": [
+    {
+      "aux": "7b352322bbc0c41d23fa74b9da89095b39362cdbcc72ee9564dc3a6e87d6eb03",
+      "event": {
+        "id": "cb043ad17540c2cb159aea443fb0db8d546ad5a7f6475a7284e375f36ef7f7f1",
+        "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+        "created_at": 1793275930,
+        "kind": 7714,
+        "tags": [
+          [
+            "merchant",
+            "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"
+          ],
+          [
+            "t",
+            "plain"
+          ]
+        ],
+        "content": "Pagamento aprovado",
+        "sig": "2cf1b4bd5ce9051bd41d31a666c82da58dcf091c951fbccd4dea7d320298cace04f4eebb7ee7b2caa7935d5ad8c7d4f9ae2749e37ece50c7faa1faf8f6d2a449"
+      },
+      "name": "plain",
+      "serialization": "[0,\"6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2\",1793275930,7714,[[\"merchant\",\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"],[\"t\",\"plain\"]],\"Pagamento aprovado\"]"
+    },
+    {
+      "aux": "23c761b0fce730d53f9d7291fdd6de87200a1185cf741f9535fe7b56144083d0",
+      "event": {
+        "id": "c93b20ff96e3ee1ab9024e7176c28565944c4b912c59687396a2267ab061d45d",
+        "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+        "created_at": 1793275930,
+        "kind": 7714,
+        "tags": [
+          [
+            "merchant",
+            "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"
+          ],
+          [
+            "t",
+            "escapes"
+          ]
+        ],
+        "content": "quote \" backslash \\ newline \n return \r tab \t backspace \b formfeed \f bell \u0007 unit \u001f",
+        "sig": "0e7ce0904c6b1e356ef6cd69c36c1485ce4debeb33ca5d73916383c8f2850820a4cb384c0d0d97608b93dc1d5e15e473d03f884697771c1843f3a124b96aacfd"
+      },
+      "name": "escapes",
+      "serialization": "[0,\"6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2\",1793275930,7714,[[\"merchant\",\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"],[\"t\",\"escapes\"]],\"quote \\\" backslash \\\\ newline \\n return \\r tab \\t backspace \\b formfeed \\f bell \\u0007 unit \\u001f\"]"
+    },
+    {
+      "aux": "d2813fd2a324b2c03f507b3d1b7250768136e7cbd32e695ed1299ff59a491b57",
+      "event": {
+        "id": "49eaf08dc9bcc55e7c445358fafce41f3d103313146bf7a05ed41f8707caab42",
+        "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+        "created_at": 1793275930,
+        "kind": 7714,
+        "tags": [
+          [
+            "merchant",
+            "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"
+          ],
+          [
+            "t",
+            "unicode"
+          ]
+        ],
+        "content": "Café • R$ 129,90 • 😀 • line separator \u2028 • paragraph \u2029 • ﷽",
+        "sig": "f2c9d8d8050eab9f572d361d458b58115be76470b3da1cffe1ecf8a636defa4ec1c9d440e44f487eb1b31da8f8a0ba7b2bb699a1a97e6b6c0495659ebd5e0315"
+      },
+      "name": "unicode",
+      "serialization": "[0,\"6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2\",1793275930,7714,[[\"merchant\",\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"],[\"t\",\"unicode\"]],\"Café • R$ 129,90 • 😀 • line separator \u2028 • paragraph \u2029 • ﷽\"]"
+    },
+    {
+      "aux": "724674084a8bf5c3abc99a00faae537370ae49c99afb84caf761f1300f9d689c",
+      "event": {
+        "id": "d3bba0d04b8511f4047b3bcf82077ad550528871c74b84ab039e700c9677dfb7",
+        "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+        "created_at": 1793275930,
+        "kind": 7714,
+        "tags": [
+          [
+            "merchant",
+            "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P"
+          ],
+          [
+            "t",
+            "empty"
+          ]
+        ],
+        "content": "",
+        "sig": "125698b50909a9c6c6ae25ffacd9fce97c2648e05500dfe1c74ef317c5bf0aaaaf582d3ac04ae538249a4bb030ab782a601b90b0380896819ea403474f3b0a13"
+      },
+      "name": "empty",
+      "serialization": "[0,\"6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2\",1793275930,7714,[[\"merchant\",\"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"],[\"t\",\"empty\"]],\"\"]"
+    }
+  ],
+  "generated_by": "payments/platform/cmd/conformance",
+  "jwk_thumbprint": {
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+    },
+    "thumbprint": "oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U"
+  },
+  "money": [
+    {
+      "centavos": 0,
+      "display": "R$ 0,00"
+    },
+    {
+      "centavos": 5,
+      "display": "R$ 0,05"
+    },
+    {
+      "centavos": 99,
+      "display": "R$ 0,99"
+    },
+    {
+      "centavos": 100,
+      "display": "R$ 1,00"
+    },
+    {
+      "centavos": 12990,
+      "display": "R$ 129,90"
+    },
+    {
+      "centavos": 100000,
+      "display": "R$ 1.000,00"
+    },
+    {
+      "centavos": 184220,
+      "display": "R$ 1.842,20"
+    },
+    {
+      "centavos": 123456789,
+      "display": "R$ 1.234.567,89"
+    },
+    {
+      "centavos": -12990,
+      "display": "-R$ 129,90"
+    },
+    {
+      "centavos": 999999999999,
+      "display": "R$ 9.999.999.999,99"
+    }
+  ],
+  "nip98": {
+    "authorization_header": "Nostr eyJpZCI6IjY3ZGVjYWNjM2JlYjYzMGM4ZWUwMzc2YWM3ZTkwOTAzYTdkZTM1NWU1MWYzNjhkODUxZGIwZDE0OTllN2JiMTIiLCJwdWJrZXkiOiI2YTIyZTQzY2M5YmRiZWZhZDdmNDdjZmEzMWQyYjRkYWE0YTE3NjI0NDViNjQ0MzA1YjhkOWE5MGZiN2VkZmUyIiwiY3JlYXRlZF9hdCI6MTc5MzI5NTEzMCwia2luZCI6MjcyMzUsInRhZ3MiOltbInUiLCJodHRwczovL2FwaS5nb29uZXJzcGF5LmV4YW1wbGUvdjEvYXV0aC9ub3N0ciJdLFsibWV0aG9kIiwiUE9TVCJdLFsicGF5bG9hZCIsIjIyOTZmZmNhMjhlYzM0NzM1YWVkNDc1NzdiYzZhNmRjZGU4ZmJiMTA0MTEzMDA1YmQ1YzcwNTg3MzVkOTJmMWQiXV0sImNvbnRlbnQiOiIiLCJzaWciOiJlOTYyOTU0ZmFiYmFhODU1MDEwNDE5YTVlMjlmZjE2ZTFhYTk1MDk2MWZjMTUwZWU2NjU5YTU0NjIzY2ZlYzRkMDA2NTQ1ZTY1OWMwOGQ4MGNjYjQ1NjEwZWMyNzEzNmNiOWU1MGIxYTUzZjdlZDYzNGI4ZDI0MTA2YzM3ZmJiNSJ9",
+    "aux": "42db914468a0b71dc26ddb011932144983e8dacc967b8802eedd54d9dbb89caf",
+    "body": "{\"dpop_jwk\":{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU\",\"y\":\"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0\"}}",
+    "event": {
+      "id": "67decacc3beb630c8ee0376ac7e90903a7de355e51f368d851db0d1499e7bb12",
+      "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+      "created_at": 1793295130,
+      "kind": 27235,
+      "tags": [
+        [
+          "u",
+          "https://api.goonerspay.example/v1/auth/nostr"
+        ],
+        [
+          "method",
+          "POST"
+        ],
+        [
+          "payload",
+          "2296ffca28ec34735aed47577bc6a6dcde8fbb104113005bd5c7058735d92f1d"
+        ]
+      ],
+      "content": "",
+      "sig": "e962954fabbaa855010419a5e29ff16e1aa950961fc150ee6659a54623cfec4d006545e659c08d80ccb45610ec27136cb9e50b1a53f7ed634b8d24106c37fbb5"
+    },
+    "method": "POST",
+    "url": "https://api.goonerspay.example/v1/auth/nostr"
+  },
+  "test_keys": [
+    {
+      "npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",
+      "nsec": "nsec1djs0r0ax8uswjc9vkhh8qt82f0jzfyyfmchcn8xtuwdfh5xp4rvsh84e98",
+      "pubkey": "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0",
+      "role": "merchant-root",
+      "secret": "6ca0f1bfa63f20e960acb5ee702cea4be4249089de2f899ccbe39a9bd0c1a8d9"
+    },
+    {
+      "npub": "npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr",
+      "nsec": "nsec136utu7n6ptz8crma992j6y3xd3ky6q5h264dpjq4rnkjkke0ah8qm474lw",
+      "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+      "role": "merchant-device-android",
+      "secret": "8eb8be7a7a0ac47c0f7d29552d12266c6c4d029756aad0c8151ced2b5b2fedce"
+    },
+    {
+      "npub": "npub1drzke9jsaafpp88qkx8ftujtqzpd5h7t3wm6a4c89zcgd9s2q5gq22qt3z",
+      "nsec": "nsec1ptl3yjrhu668rt62q5lhzp6tlc3lp8u2k53swtqr2de62p004hzs6t7ha9",
+      "pubkey": "68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510",
+      "role": "merchant-device-ios",
+      "secret": "0aff124877e6b471af4a053f71074bfe23f09f8ab523072c035373a505efadc5"
+    }
+  ],
+  "warning": "PUBLIC TEST VECTORS. Every secret here is derived from a public label. Never use any of them for anything real."
+}

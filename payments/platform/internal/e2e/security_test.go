@@ -185,7 +185,7 @@ func TestAuthenticationAndScopes(t *testing.T) {
 
 func TestInputHardening(t *testing.T) {
 	st := newStack(t)
-	merchant, _ := st.merchant(st.key)
+	merchant, account := st.merchant(st.key)
 	raw := func(method, path string, body []byte, idem bool) (int, http.Header, string) {
 		req, _ := http.NewRequest(method, st.api+path, bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+st.key)
@@ -223,6 +223,22 @@ func TestInputHardening(t *testing.T) {
 		if code, _ := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": merchant, "amount": amount}, 0); code != http.StatusUnprocessableEntity {
 			t.Errorf("amount %s: HTTP %d", name, code)
 		}
+	}
+	// Pix keys and documents that cannot exist are refused before reaching the PSP.
+	for name, dest := range map[string]map[string]any{
+		"unknown key type":  {"type": "pix", "key_type": "iban", "key": "DE89370400440532013000"},
+		"CNPJ check digits": {"type": "pix", "key_type": "cnpj", "key": "12345678000194"},
+		"CPF all equal":     {"type": "pix", "key_type": "cpf", "key": "11111111111"},
+		"phone not E.164":   {"type": "pix", "key_type": "phone", "key": "11987654321"},
+		"EVP not a UUID":    {"type": "pix", "key_type": "evp", "key": "' OR 1=1 --"},
+	} {
+		if code, _ := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": 100, "destination": dest}, 0); code != http.StatusUnprocessableEntity {
+			t.Errorf("payout to %s: HTTP %d", name, code)
+		}
+	}
+	if code, _ := st.call("POST", "/v1/merchants", map[string]any{"legal": map[string]any{"document": map[string]any{"type": "cnpj", "number": "12345678000194"},
+		"legal_name": "Erro Ltda", "trade_name": "Erro", "mcc": "5812", "city": "Natal"}}, 0); code != http.StatusUnprocessableEntity {
+		t.Errorf("a CNPJ with wrong check digits: HTTP %d", code)
 	}
 	if code, _, _ := raw("POST", "/v1/payment-intents", []byte(`{}`), false); code != http.StatusBadRequest {
 		t.Errorf("missing Idempotency-Key: HTTP %d", code)
