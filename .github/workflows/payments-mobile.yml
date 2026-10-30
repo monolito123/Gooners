@@ -93,6 +93,8 @@ jobs:
 
   # O pacote Swift com o SDK da Apple e o app SwiftUI para simulador e para aparelho
   # (sem assinatura: o código do Secure Enclave só compila no destino de aparelho).
+  # -skipPackagePluginValidation: o swift-secp256k1 (versão fixa) gera fontes com um plug-in,
+  # que o Xcode só roda com aprovação interativa.
   ios:
     runs-on: macos-15
     timeout-minutes: 40
@@ -125,7 +127,7 @@ jobs:
         run: |
           xcodebuild -project GoonersPay.xcodeproj -scheme GoonersPay -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/sim.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/sim.log" | sort -u | head -100; tail -40 "$RUNNER_TEMP/sim.log"; exit 1; }
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/sim.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/sim.log" | sort -u | head -100; tail -40 "$RUNNER_TEMP/sim.log"; exit 1; }
           grep -E "GoonersPay/.*(warning|error):" "$RUNNER_TEMP/sim.log" | sort -u || true
 
       - name: App para aparelho (Release, sem assinatura)
@@ -133,5 +135,5 @@ jobs:
         run: |
           xcodebuild -project GoonersPay.xcodeproj -scheme GoonersPay -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/dd" \
-            CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/device.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/device.log" | sort -u | head -100; tail -40 "$RUNNER_TEMP/device.log"; exit 1; }
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/device.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/device.log" | sort -u | head -100; tail -40 "$RUNNER_TEMP/device.log"; exit 1; }
           grep -E "GoonersPay/.*(warning|error):" "$RUNNER_TEMP/device.log" | sort -u || true
