@@ -373,7 +373,8 @@ func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *M
 			return nil, err
 		}
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = amount, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, StatusCaptured); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = amount, fee = $4, settlement_mode = $5, captured_at = $6, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, StatusCaptured, mdr, settlementMode(instant, len(dates)), s.cfg.Now()); err != nil {
 		return nil, err
 	}
 	mode := "standard"
@@ -525,8 +526,9 @@ func (s *Service) OnPix(ctx context.Context, hint apipix.Pix) error {
 	if err := s.post(ctx, tenantID, "pix:"+p.EndToEndID, "pix_received", pi.ID, pixReceived(m.ID, amount, fee)); err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = $4, pix_e2e = $5, updated_at = now() WHERE tenant_id = $1 AND id = $2 AND status = $6`,
-		tenantID, pi.ID, StatusCaptured, amount, p.EndToEndID, StatusRequiresAction)
+	tag, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = $4, pix_e2e = $5, fee = $7, settlement_mode = 'instant', captured_at = $8, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2 AND status = $6`,
+		tenantID, pi.ID, StatusCaptured, amount, p.EndToEndID, StatusRequiresAction, fee, s.cfg.Now())
 	if err != nil {
 		return err
 	}

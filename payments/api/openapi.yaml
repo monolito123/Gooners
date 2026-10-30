@@ -909,6 +909,107 @@ paths:
         "4XX":
           $ref: "#/components/responses/Problem"
 
+  /v1/settlements:
+    get:
+      tags: [settlements]
+      operationId: listSettlements
+      summary: List daily settlement statements, newest day first
+      description: An app session sees only its own merchant's statements.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - name: merchant_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/Id"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: starting_after
+          in: query
+          schema:
+            $ref: "#/components/schemas/Id"
+      responses:
+        "200":
+          description: A page of settlements
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, has_more]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Settlement"
+                  has_more:
+                    type: boolean
+                  next_cursor:
+                    type: [string, "null"]
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/settlements/{id}/statement:
+    get:
+      tags: [settlements]
+      operationId: getSettlementStatement
+      summary: The signed kind 7713 statement, as gift-wrapped to the merchant's keys
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Signed statement event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NostrEvent"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/transparency/{date}:
+    get:
+      tags: [settlements]
+      operationId: getTransparencyRoot
+      summary: A day's public settlement transparency root (kind 7715)
+      description: Public data, served without credentials so anyone can check a merchant's proof (docs/03 §6.5).
+      security: []
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The day's root
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [date, tree_size, root, event]
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  tree_size:
+                    type: integer
+                  root:
+                    $ref: "#/components/schemas/Hex32"
+                  prev_event_id:
+                    $ref: "#/components/schemas/Hex32"
+                  event:
+                    $ref: "#/components/schemas/NostrEvent"
+                  created_at:
+                    type: string
+                    format: date-time
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
   /v1/settlements/{id}:
     get:
       tags: [settlements]
@@ -2214,6 +2315,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Hex32"
+        root:
+          $ref: "#/components/schemas/Hex32"
 
     NostrEvent:
       type: object

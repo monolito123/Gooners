@@ -31,6 +31,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/monolito123/Gooners/payments/platform/internal/transparency"
 )
 
 var bin, pki string
@@ -116,7 +118,7 @@ func main() {
 	devKey := hexKey()
 	env := []string{
 		"PLATFORM_ENV=sandbox", "DATABASE_URL=" + dsn, "HTTP_ADDR=" + apiAddr, "ROUTES_FILE=" + routes, "CARD_PRESENT_TIMEOUT=2s",
-		"VAULT_KEK_HEX=" + hexKey(), "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "RECEIPTS_SECRET_HEX=" + hexKey(),
+		"VAULT_KEK_HEX=" + hexKey(), "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "RECEIPTS_SECRET_HEX=" + hexKey(), "TRANSPARENCY_SECRET_HEX=" + hexKey(),
 		"PIX_BASE_URL=https://" + pixAddr + "/api/v2", "PIX_TOKEN_URL=https://" + pixAddr + "/oauth/token", "PIX_CLIENT_ID=platform",
 		"PIX_CLIENT_SECRET=dev-secret", "PIX_KEY=12345678000195", "PIX_TLS_CA=" + p("ca.pem"), "PIX_TLS_CERT=" + p("platform-client.pem"),
 		"PIX_TLS_KEY=" + p("platform-client.key"), "PAYOUT_BASE_URL=https://" + pixAddr + "/api/v2",
@@ -267,6 +269,46 @@ func main() {
 		fail("pix reconciliation: %v", run)
 	}
 	ok("Pix day reconciled against GET /pix: %v", run["summary"])
+
+	// The day closed into a signed statement and a public transparency root (docs/03 §6).
+	today := time.Now().In(brt).Format("2006-01-02")
+	cli("close-day", "-date", today)
+	sts := call("GET", "/v1/settlements?merchant_id="+m["id"].(string), nil, 200)["data"].([]any)
+	if len(sts) != 1 {
+		fail("settlements after close-day: %v", sts)
+	}
+	set := sts[0].(map[string]any)
+	stmt := call("GET", "/v1/settlements/"+set["id"].(string)+"/statement", nil, 200)
+	var statement struct {
+		Lines []struct {
+			Receipt string `json:"receipt_event_id"`
+		} `json:"lines"`
+		Commitment   string `json:"statement_commitment"`
+		Transparency struct {
+			Salt string `json:"leaf_salt"`
+		} `json:"transparency"`
+	}
+	_ = json.Unmarshal([]byte(stmt["content"].(string)), &statement)
+	resp, err = http.Get("http://" + apiAddr + "/v1/transparency/" + today)
+	if err != nil || resp.StatusCode != 200 {
+		fail("public transparency root: %v %v", err, resp)
+	}
+	var root map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&root)
+	resp.Body.Close()
+	proof := call("GET", "/v1/settlements/"+set["id"].(string)+"/proofs/"+statement.Lines[0].Receipt, nil, 200)
+	ti := proof["transparency_inclusion"].(map[string]any)
+	var path []string
+	for _, x := range ti["audit_path"].([]any) {
+		path = append(path, x.(string))
+	}
+	leaf, _ := transparency.LeafData(statement.Transparency.Salt, statement.Commitment)
+	hops, _ := transparency.ParsePath(path)
+	logRoot, _ := hex.DecodeString(root["root"].(string))
+	if !transparency.VerifyInclusion(leaf, int(ti["leaf_index"].(float64)), int(ti["tree_size"].(float64)), hops, logRoot) {
+		fail("the statement's leaf is not proven in the public root: %v", proof)
+	}
+	ok("day closed: statement of %d receipts, net R$ %.2f, proven in a public root of %v leaves", len(statement.Lines), set["net"].(float64)/100, root["tree_size"])
 
 	resp, err = http.Get("http://" + metricsAddr + "/metrics")
 	if err != nil {

@@ -77,6 +77,8 @@ type Config struct {
 	PayoutBaseURL                                                 string
 
 	VaultKEK, VaultFingerprintKey, CardDataDevKey, ReceiptsSecret []byte
+	TransparencySecret                                            []byte // signs the daily public roots (kind 7715)
+	TransparencyPadTo                                             int    // log padding granularity; 0 = 4096
 	Relays                                                        []string
 	ClaimBase                                                     string
 
@@ -143,6 +145,14 @@ func Load() (*Config, error) {
 	}
 	if c.ReceiptsSecret, err = hexEnv("RECEIPTS_SECRET_HEX"); err != nil {
 		return nil, err
+	}
+	if c.TransparencySecret, err = hexEnv("TRANSPARENCY_SECRET_HEX"); err != nil {
+		return nil, err
+	}
+	if v := os.Getenv("TRANSPARENCY_PAD_TO"); v != "" {
+		if c.TransparencyPadTo, err = strconv.Atoi(v); err != nil || c.TransparencyPadTo < 1 {
+			return nil, fmt.Errorf("config: TRANSPARENCY_PAD_TO must be a positive number of leaves")
+		}
 	}
 	if r := os.Getenv("RELAYS"); r != "" {
 		c.Relays = strings.Split(r, ",")
@@ -220,6 +230,8 @@ func (c *Config) Validate() error {
 			return errors.New("config: production cannot use the development card decryptor; wire the payment HSM adapter")
 		case len(c.ReceiptsSecret) > 0:
 			return errors.New("config: production cannot hold the receipts key in process memory; wire the enclave signer")
+		case len(c.TransparencySecret) > 0:
+			return errors.New("config: production cannot hold the transparency key in process memory; wire the enclave signer")
 		}
 		return errors.New("config: production needs the HSM, payment-HSM and enclave adapters described in payments/integration/README.md, which this reference implementation leaves as interfaces")
 	}

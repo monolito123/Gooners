@@ -30,6 +30,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -37,6 +38,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,7 +69,7 @@ var log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
+		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,6 +88,8 @@ func main() {
 		err = releaseDue(ctx, os.Args[2:])
 	case "settle":
 		err = settle(ctx, os.Args[2:])
+	case "close-day":
+		err = closeDay(ctx, os.Args[2:])
 	default:
 		if cmd, ok := opsCommands[os.Args[1]]; ok {
 			err = cmd(ctx, os.Args[2:])
@@ -297,7 +301,16 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("receipts signer", "npub", npub)
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount}, deps)
+	if len(c.TransparencySecret) == 32 {
+		k, err := nostr.KeysFromSecret(c.TransparencySecret)
+		if err != nil {
+			return err
+		}
+		deps.Transparency = k
+		npub, _ := nostr.EncodeNpub(k.PubHex)
+		log.Info("transparency signer", "npub", npub)
+	}
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)
@@ -435,6 +448,42 @@ func settle(ctx context.Context, args []string) error {
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
+	})
+}
+
+// closeDay closes a Brasília business day into statements and a transparency root by hand
+// (the serve process does it every night after StatementHour). Closing a day twice is a no-op.
+func closeDay(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("close-day", flag.ExitOnError)
+	date := fs.String("date", time.Now().In(payments.BRT).AddDate(0, 0, -1).Format("2006-01-02"), "Brasília business day to close")
+	_ = fs.Parse(args)
+	day, err := time.ParseInLocation("2006-01-02", *date, payments.BRT)
+	if err != nil {
+		return err
+	}
+	keys := map[string]nostr.Keys{}
+	for _, name := range []string{"RECEIPTS_SECRET_HEX", "TRANSPARENCY_SECRET_HEX"} {
+		raw, err := hex.DecodeString(os.Getenv(name))
+		if err != nil || len(raw) != 32 {
+			return fmt.Errorf("%s (32 bytes, hex) is required", name)
+		}
+		if keys[name], err = nostr.KeysFromSecret(raw); err != nil {
+			return err
+		}
+	}
+	padTo, _ := strconv.Atoi(os.Getenv("TRANSPARENCY_PAD_TO"))
+	return withDB(ctx, func(pool *pgxpool.Pool) error {
+		deps := payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log, Transparency: keys["TRANSPARENCY_SECRET_HEX"],
+			Receipts: &receipts.Issuer{Author: keys["RECEIPTS_SECRET_HEX"]}}
+		if r := os.Getenv("RELAYS"); r != "" {
+			deps.Publisher = &receipts.Publisher{Relays: strings.Split(r, ",")}
+		}
+		root, err := payments.New(payments.Config{RelayURL: firstOr(strings.Split(os.Getenv("RELAYS"), ","), ""), TransparencyPadTo: padTo}, deps).CloseDay(ctx, day)
+		if err != nil {
+			return err
+		}
+		log.Info("day closed", "date", root.Date, "root", root.Root, "tree_size", root.TreeSize, "root_event", root.Event.ID)
+		return nil
 	})
 }
 

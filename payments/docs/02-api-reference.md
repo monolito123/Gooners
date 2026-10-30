@@ -168,7 +168,7 @@ The body goes on the wire in compact form, and the event's `payload` tag is the 
   "expires_in": 900,
   "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
   "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M",
-  "scopes": ["payments:write", "payments:read", "accounts:read", "payouts:write"]
+  "scopes": ["payments:write", "payments:read", "accounts:read", "settlements:read", "payouts:write"]
 }
 ```
 
@@ -817,6 +817,8 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
 }
 ```
 
+A merchant's day is closed after 01:00 in Brasília: the platform builds every merchant's statement, commits all of them to that day's padded transparency log, signs the day's root (chained to the previous day's) and gift-wraps each statement to the merchant's root key and devices. `GET /v1/settlements?merchant_id=` lists statements newest day first, and `GET /v1/settlements/{id}/statement` returns the signed kind 7713 event itself. A day's root is public: `GET /v1/transparency/{date}` serves it without credentials, so anyone holding a proof can check it.
+
 `GET /v1/settlements/{id}/proofs/{receipt_event_id}` returns the RFC 6962-style inclusion proof of one receipt in the statement, and of the statement in the public transparency root ([03 §6](03-nostr-layer.md#6-verifiable-settlement-transparency-log)):
 
 ```json
@@ -828,7 +830,8 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
     "audit_path": [
       "308c2b57d5ff75c8bf1849d919e89ba1a46f7132d3c243a0c12d1f7db3cbbd82",
       "01ed95bad1f07050998fd6ea8d45305e67c432ff94d9903de11f9db7679aa681"
-    ]
+    ],
+    "root": "463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f"
   },
   "transparency_inclusion": {
     "leaf_index": 6,
@@ -837,7 +840,8 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
       "05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc",
       "3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330",
       "b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022"
-    ]
+    ],
+    "root": "dd0bc1db86a3358f397bc33ab9506387e1c65ed8240063cc361b2fb6bd203dd8"
   }
 }
 ```
@@ -952,5 +956,6 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | GET · POST | `/v1/enrollment` | api | enrollment code | — | The phone enrolls itself |
 | POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
 | POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
-| GET | `/v1/settlements/{id}` · `/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | |
+| GET | `/v1/settlements` · `/{id}` · `/{id}/statement` · `/{id}/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | App sessions see their own merchant |
+| GET | `/v1/transparency/{date}` | api | none (public) | Yes | The day's kind 7715 root |
 | POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |

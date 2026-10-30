@@ -66,6 +66,8 @@ type stack struct {
 	pool     *pgxpool.Pool
 	vault    *vault.Vault
 	logs     *syncBuffer // everything every component logged, at debug level
+
+	receiptsKey, transparencyKey nostr.Keys
 }
 
 // syncBuffer collects logs from concurrent goroutines.
@@ -138,10 +140,12 @@ func newStack(t *testing.T) *stack {
 
 	dec, _ := carddata.NewDev(st.devKey)
 	signer, _ := nostr.GenerateKeys()
-	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example"}, payments.Deps{
+	st.transparencyKey, _ = nostr.GenerateKeys()
+	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}, payments.Deps{
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
-		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Logger: log,
+		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
 	})
+	st.receiptsKey = signer
 	st.ledger = ledger.New(pool, log)
 	st.svc, st.pool, st.vault = svc, pool, v
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {

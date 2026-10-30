@@ -496,3 +496,88 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, e)
 }
+
+// ---------------------------------------------------------------- settlements and transparency
+
+func (s *Server) listSettlements(w http.ResponseWriter, r *http.Request) {
+	p, q := from(r.Context()), r.URL.Query()
+	merchant := q.Get("merchant_id")
+	if p.merchantID != "" {
+		if merchant != "" && merchant != p.merchantID {
+			notYours(w, r)
+			return
+		}
+		merchant = p.merchantID // an app session sees only its own merchant
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	sts, more, err := s.svc.ListSettlements(r.Context(), p.tenantID, merchant, q.Get("starting_after"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if sts == nil {
+		sts = []*payments.Settlement{}
+	}
+	var next any
+	if more {
+		next = sts[len(sts)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": sts, "has_more": more, "next_cursor": next})
+}
+
+// ownSettlement loads a settlement the caller may read.
+func (s *Server) ownSettlement(w http.ResponseWriter, r *http.Request) (*payments.Settlement, bool) {
+	p := from(r.Context())
+	st, err := s.svc.GetSettlement(r.Context(), p.tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return nil, false
+	}
+	if !owns(p, st.MerchantID) {
+		notYours(w, r)
+		return nil, false
+	}
+	return st, true
+}
+
+func (s *Server) getSettlement(w http.ResponseWriter, r *http.Request) {
+	if st, ok := s.ownSettlement(w, r); ok {
+		writeJSON(w, http.StatusOK, st)
+	}
+}
+
+func (s *Server) settlementStatement(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.ownSettlement(w, r); !ok {
+		return
+	}
+	ev, err := s.svc.StatementEvent(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ev)
+}
+
+func (s *Server) settlementProof(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.ownSettlement(w, r); !ok {
+		return
+	}
+	proof, err := s.svc.SettlementProof(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), r.PathValue("receipt_event_id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, proof)
+}
+
+// transparencyRoot serves a day's public root without authentication: it is published to
+// public relays anyway, and anyone may verify a merchant's proof against it.
+func (s *Server) transparencyRoot(w http.ResponseWriter, r *http.Request) {
+	root, err := s.svc.GetTransparencyRoot(r.Context(), r.PathValue("date"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, root)
+}

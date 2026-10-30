@@ -50,6 +50,14 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	} else if n > 0 {
 		s.log.Info("disputes accepted at their deadline", "count", n)
 	}
+	if n, err := s.CloseDueDays(ctx, now); err != nil {
+		s.log.Error("close days", "err", err)
+	} else if n > 0 {
+		s.log.Info("days closed into statements", "count", n)
+	}
+	if !renew() {
+		return
+	}
 	if err := s.PurgeAuthState(ctx); err != nil {
 		s.log.Error("purge auth state", "err", err)
 	}

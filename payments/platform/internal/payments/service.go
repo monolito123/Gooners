@@ -42,6 +42,9 @@ type Config struct {
 	// MaxPaymentAmount caps one payment intent (centavos), limiting what a stolen credential
 	// can charge or move in one request. Default R$ 1.000.000,00; never above MaxAmount.
 	MaxPaymentAmount int64
+	// TransparencyPadTo pads each day's transparency log to a multiple of this many leaves
+	// (docs/03 §6.4). Default 4096.
+	TransparencyPadTo int
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -50,18 +53,19 @@ const MaxAmount int64 = 999_999_999_999
 
 // Service wires the components.
 type Service struct {
-	cfg       Config
-	pool      *pgxpool.Pool
-	ledger    *ledger.Ledger
-	sw        *authswitch.Switch
-	vault     *vault.Vault
-	dec       carddata.Decryptor
-	pix       *apipix.Client
-	payout    pixout.Sender
-	receipts  *receipts.Issuer
-	publisher *receipts.Publisher
-	attest    Attestor
-	log       *slog.Logger
+	cfg          Config
+	pool         *pgxpool.Pool
+	ledger       *ledger.Ledger
+	sw           *authswitch.Switch
+	vault        *vault.Vault
+	dec          carddata.Decryptor
+	pix          *apipix.Client
+	payout       pixout.Sender
+	receipts     *receipts.Issuer
+	publisher    *receipts.Publisher
+	attest       Attestor
+	transparency nostr.Author
+	log          *slog.Logger
 }
 
 // Deps are the service's collaborators. Pix, Payout, Receipts and Publisher are optional.
@@ -76,7 +80,10 @@ type Deps struct {
 	Receipts  *receipts.Issuer
 	Publisher *receipts.Publisher
 	Attestor  Attestor // device attestation; required in production
-	Logger    *slog.Logger
+	// Transparency signs the daily public roots (kind 7715). With Receipts, it turns on
+	// daily statements; in production it is the attested enclave signer.
+	Transparency nostr.Author
+	Logger       *slog.Logger
 }
 
 // New returns the service.
@@ -103,7 +110,7 @@ func New(cfg Config, d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
-		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, log: d.Logger}
+		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, log: d.Logger}
 }
 
 // Errors surfaced to the API as problem details.

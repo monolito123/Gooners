@@ -363,7 +363,7 @@ type Session struct {
 }
 
 // SessionScopes are what a merchant app may do.
-var SessionScopes = []string{"payments:write", "payments:read", "accounts:read", "payouts:write"}
+var SessionScopes = []string{"payments:write", "payments:read", "accounts:read", "settlements:read", "payouts:write"}
 
 // SessionTTL is a session's lifetime.
 const SessionTTL = 15 * time.Minute

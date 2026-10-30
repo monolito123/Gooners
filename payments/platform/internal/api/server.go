@@ -151,6 +151,11 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/disputes/{id}", "disputes:write", false, s.getDispute)
 	route("POST /v1/disputes/{id}/evidence", "disputes:write", true, s.disputeEvidence)
 	route("POST /v1/disputes/{id}/accept", "disputes:write", true, s.acceptDispute)
+	route("GET /v1/settlements", "settlements:read", false, s.listSettlements)
+	route("GET /v1/settlements/{id}", "settlements:read", false, s.getSettlement)
+	route("GET /v1/settlements/{id}/statement", "settlements:read", false, s.settlementStatement)
+	route("GET /v1/settlements/{id}/proofs/{receipt_event_id}", "settlements:read", false, s.settlementProof)
+	open("GET /v1/transparency/{date}", s.transparencyRoot)
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
 	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
 	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
@@ -159,18 +164,22 @@ func (s *Server) Handler() http.Handler {
 // sessionRoutes are the only routes a merchant app session may call. Each handler also
 // holds the session to its own merchant (ownership checks in handlers.go).
 var sessionRoutes = map[string]bool{
-	"GET /v1/merchants/{id}":                   true,
-	"POST /v1/merchants/{id}/devices":          true,
-	"POST /v1/merchants/{id}/enrollment-codes": true,
-	"POST /v1/payment-intents":                 true,
-	"GET /v1/payment-intents/{id}":             true,
-	"POST /v1/payment-intents/{id}/confirm":    true,
-	"POST /v1/payment-intents/{id}/cancel":     true,
-	"POST /v1/terminal/authorizations":         true,
-	"GET /v1/accounts/{id}/balance":            true,
-	"GET /v1/accounts/{id}/entries":            true,
-	"POST /v1/payouts/quotes":                  true,
-	"POST /v1/payouts":                         true,
+	"GET /v1/merchants/{id}":                             true,
+	"POST /v1/merchants/{id}/devices":                    true,
+	"POST /v1/merchants/{id}/enrollment-codes":           true,
+	"POST /v1/payment-intents":                           true,
+	"GET /v1/payment-intents/{id}":                       true,
+	"POST /v1/payment-intents/{id}/confirm":              true,
+	"POST /v1/payment-intents/{id}/cancel":               true,
+	"POST /v1/terminal/authorizations":                   true,
+	"GET /v1/accounts/{id}/balance":                      true,
+	"GET /v1/accounts/{id}/entries":                      true,
+	"POST /v1/payouts/quotes":                            true,
+	"POST /v1/payouts":                                   true,
+	"GET /v1/settlements":                                true,
+	"GET /v1/settlements/{id}":                           true,
+	"GET /v1/settlements/{id}/statement":                 true,
+	"GET /v1/settlements/{id}/proofs/{receipt_event_id}": true,
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a
