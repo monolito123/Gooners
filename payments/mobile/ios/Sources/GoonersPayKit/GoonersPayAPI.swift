@@ -227,6 +227,27 @@ public final class GoonersPayAPI: Sendable {
 
         public func journalState() async throws -> JournalStatus { try await call("GET", "/v1/terminal/journal") }
 
+        /// The merchant's daily statements, newest day first (docs/03 §6).
+        public func settlements(limit: Int = 30) async throws -> Settlements { try await call("GET", "/v1/settlements?limit=\(limit)") }
+
+        /// The signed kind 7713 statement of a settlement.
+        public func statement(_ settlementId: String) async throws -> NostrEvent { try await call("GET", "/v1/settlements/\(settlementId)/statement") }
+
+        /// A receipt's inclusion proof in its statement and the statement's in the public root.
+        public func proof(_ settlementId: String, receipt: String) async throws -> InclusionProof {
+            try await call("GET", "/v1/settlements/\(settlementId)/proofs/\(receipt)")
+        }
+
+        /// The day's public transparency root (kind 7715). Public: anyone can fetch it.
+        public func transparencyRoot(_ date: String) async throws -> TransparencyRoot { try await call("GET", "/v1/transparency/\(date)") }
+
+        /// Fetches a settlement's statement and its day's public root, and checks them on the phone.
+        public func verifiedStatement(_ settlement: Settlement, platformKeys: Set<String> = []) async throws -> Statement {
+            let event = try await statement(settlement.id)
+            let root = try await transparencyRoot(settlement.date)
+            return try Statement.verify(statement: event, root: root.event, merchantId: session.merchantId, platformKeys: platformKeys)
+        }
+
         /// Uploads the journal's signed entries; nil when there was nothing to send.
         @discardableResult
         public func syncJournal(_ journal: Journal) async throws -> JournalStatus? {

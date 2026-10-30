@@ -1,11 +1,12 @@
 package br.com.gooners.pay.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -46,9 +48,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +68,7 @@ import br.com.gooners.pay.core.checkout.CheckoutState
 import br.com.gooners.pay.core.nostr.Bech32
 import br.com.gooners.pay.core.sandbox.EmvApplication
 import br.com.gooners.pay.core.sandbox.SandboxCardReader
+import br.com.gooners.pay.core.statements.Statement
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
@@ -310,6 +313,7 @@ private fun MoneyTab(vm: MainViewModel) {
     var amount by rememberSaveable { mutableStateOf("") }
     var keyType by rememberSaveable { mutableStateOf("cpf") }
     var key by rememberSaveable { mutableStateOf("") }
+    m.statement?.let { StatementDialog(it, vm::closeStatement) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Spacer(Modifier.height(8.dp))
@@ -318,6 +322,7 @@ private fun MoneyTab(vm: MainViewModel) {
             Text(b?.let { Money(it.available).format() } ?: "—", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
             if (b != null) {
                 Hint("A receber: ${Money(b.pending).format()}   Reservado: ${Money(b.reserved).format()}")
+                if (b.held > 0) Hint("Retido para análise de segurança: ${Money(b.held).format()}")
                 b.pendingByDate.forEach { Hint("${it.date}: ${Money(it.amount).format()}") }
             }
             TextButton(vm::refreshMoney) { Text("Atualizar") }
@@ -353,6 +358,21 @@ private fun MoneyTab(vm: MainViewModel) {
             }
             m.lastPayout?.let { Text(it) }
             HorizontalDivider()
+            Text("Extratos diários", style = MaterialTheme.typography.titleMedium)
+            Hint("Assinados pela goonersPAY e conferidos neste aparelho contra a raiz pública do dia.")
+            if (m.settlements.isEmpty()) Hint("O extrato de um dia sai depois da 1h do dia seguinte.")
+        }
+        items(m.settlements) { s ->
+            Row(Modifier.fillMaxWidth().clickable { vm.openStatement(s) }.padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(s.date)
+                    Hint("${s.transactionCount} vendas")
+                }
+                Text(Money(s.net).format(), fontWeight = FontWeight.SemiBold)
+            }
+        }
+        item {
+            HorizontalDivider()
             Text("Movimentações", style = MaterialTheme.typography.titleMedium)
         }
         items(m.entries) { e ->
@@ -366,6 +386,46 @@ private fun MoneyTab(vm: MainViewModel) {
             }
         }
     }
+}
+
+/** A day's statement and what the phone checked about it (docs/03 §6.5). */
+@Composable
+private fun StatementDialog(s: Statement, onClose: () -> Unit) {
+    val c = s.check
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = { TextButton(onClose) { Text("Fechar") } },
+        title = { Text("Extrato de ${s.date}") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                item {
+                    Text(if (c.ok) "Conferido: este extrato está na raiz pública do dia." else "Não conferiu. Não use este extrato e fale com o suporte.",
+                        color = if (c.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+                    listOf(
+                        "Assinado pela goonersPAY" to c.statementSigned,
+                        "É desta loja" to c.forThisMerchant,
+                        "Totais batem com as vendas" to c.totalsAddUp,
+                        "Resumo (hash) confere" to c.commitmentMatches,
+                        "Raiz pública do dia assinada" to c.rootSigned,
+                        "Incluído na raiz pública" to c.inPublicRoot,
+                    ).forEach { (label, ok) -> Text((if (ok) "✓ " else "✗ ") + label, color = if (ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error) }
+                    HorizontalDivider()
+                    Text("Bruto: ${Money(s.gross).format()}")
+                    Text("Tarifas: ${Money(s.fees).format()}")
+                    if (s.refunds > 0) Text("Estornos: ${Money(s.refunds).format()}")
+                    if (s.chargebacks > 0) Text("Contestações: ${Money(s.chargebacks).format()}")
+                    Text("Líquido: ${Money(s.net).format()}", fontWeight = FontWeight.SemiBold)
+                    HorizontalDivider()
+                }
+                items(s.lines) { l ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(Money(l.amount).format())
+                        Hint("tarifa ${Money(l.fee).format()}")
+                    }
+                }
+            }
+        },
+    )
 }
 
 // ---- devices (owner) ----

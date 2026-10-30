@@ -120,6 +120,9 @@ final class SandboxIntegrationTests: XCTestCase {
         XCTAssertEqual(payout.status, "paid")
         let entries = try await authed.entries(limit: 5)
         XCTAssertFalse(entries.data.isEmpty)
+        // Statements: the session sees only its own merchant's (today's closes after 01:00 tomorrow).
+        let settlements = try await authed.settlements()
+        XCTAssertTrue(settlements.data.allSatisfy { $0.merchantId == merchantID })
 
         // The owner's phone adds a cashier phone, then removes it: its session ends at once.
         let cashier = NostrKeys.generate()

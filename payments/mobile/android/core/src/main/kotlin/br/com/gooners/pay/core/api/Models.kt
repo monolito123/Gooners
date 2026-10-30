@@ -157,6 +157,8 @@ data class Balance(
     val pending: Long,
     val reserved: Long = 0,
     @SerialName("instant_eligible") val instantEligible: Long = 0,
+    /** Receivables a fraud shield review holds; not in [pending] (docs/07 §3.6). */
+    val held: Long = 0,
     @SerialName("pending_by_date") val pendingByDate: List<PendingDay> = emptyList(),
 )
 
@@ -210,3 +212,39 @@ data class JournalUpload(val entries: List<Event>)
 
 @Serializable
 data class EnrollmentCode(val code: String, @SerialName("merchant_id") val merchantId: String, @SerialName("expires_at") val expiresAt: String)
+
+@Serializable
+data class Settlement(
+    val id: String,
+    @SerialName("merchant_id") val merchantId: String = "",
+    val date: String,
+    val currency: String = "BRL",
+    val gross: Long = 0,
+    val fees: Long = 0,
+    val refunds: Long = 0,
+    val chargebacks: Long = 0,
+    val net: Long = 0,
+    @SerialName("transaction_count") val transactionCount: Int = 0,
+)
+
+@Serializable
+data class Settlements(val data: List<Settlement>, @SerialName("has_more") val hasMore: Boolean = false)
+
+@Serializable
+data class MerklePath(
+    @SerialName("leaf_index") val leafIndex: Long,
+    @SerialName("tree_size") val treeSize: Long,
+    @SerialName("audit_path") val auditPath: List<String>,
+    val root: String = "",
+)
+
+@Serializable
+data class InclusionProof(
+    @SerialName("receipt_event_id") val receiptEventId: String,
+    @SerialName("statement_inclusion") val statementInclusion: MerklePath,
+    @SerialName("transparency_inclusion") val transparencyInclusion: MerklePath? = null,
+)
+
+@Serializable
+data class TransparencyRoot(val date: String, @SerialName("tree_size") val treeSize: Long, val root: String, val event: Event)
+

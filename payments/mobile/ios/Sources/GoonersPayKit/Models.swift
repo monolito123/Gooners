@@ -174,6 +174,8 @@ public struct Balance: Codable, Sendable, Equatable {
     public var pending: Int64
     public var reserved: Int64?
     public var instantEligible: Int64?
+    /// Receivables a fraud shield review holds; not in `pending` (docs/07 §3.6).
+    public var held: Int64?
     public var pendingByDate: [PendingDay]?
 }
 
@@ -234,3 +236,42 @@ public struct EnrollmentCode: Codable, Sendable, Equatable {
     public var merchantId: String
     public var expiresAt: String
 }
+
+public struct Settlement: Codable, Sendable, Equatable, Identifiable {
+    public var id: String
+    public var merchantId: String?
+    public var date: String
+    public var currency: String?
+    public var gross: Int64?
+    public var fees: Int64?
+    public var refunds: Int64?
+    public var chargebacks: Int64?
+    public var net: Int64?
+    public var transactionCount: Int?
+}
+
+public struct Settlements: Codable, Sendable, Equatable {
+    public var data: [Settlement]
+    public var hasMore: Bool?
+}
+
+public struct MerklePath: Codable, Sendable, Equatable {
+    public var leafIndex: Int64
+    public var treeSize: Int64
+    public var auditPath: [String]
+    public var root: String?
+}
+
+public struct InclusionProof: Codable, Sendable, Equatable {
+    public var receiptEventId: String
+    public var statementInclusion: MerklePath
+    public var transparencyInclusion: MerklePath?
+}
+
+public struct TransparencyRoot: Codable, Sendable, Equatable {
+    public var date: String
+    public var treeSize: Int64
+    public var root: String
+    public var event: NostrEvent
+}
+

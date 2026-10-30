@@ -32,6 +32,9 @@ targets:
         # current and backup keys. Release builds pass GOONERSPAY_PINS (payments/mobile/README.md).
         GoonersPayPinnedHost: $(GOONERSPAY_PINNED_HOST)
         GoonersPayPins: $(GOONERSPAY_PINS)
+        # The platform's published receipts and transparency keys (hex, comma-separated): when
+        # set, statements must be signed by them. Empty in the sandbox, whose keys are throwaway.
+        GoonersPayPlatformKeys: $(GOONERSPAY_PLATFORM_KEYS)
         # The sandbox on a Mac is plain HTTP; release builds refuse anything but https:// at pairing.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -49,6 +52,7 @@ targets:
         DEAD_CODE_STRIPPING: YES
         GOONERSPAY_PINNED_HOST: api.goonerspay.com.br
         GOONERSPAY_PINS: ""
+        GOONERSPAY_PLATFORM_KEYS: ""
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG

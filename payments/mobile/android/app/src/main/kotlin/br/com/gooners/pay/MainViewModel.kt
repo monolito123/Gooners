@@ -6,6 +6,8 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import br.com.gooners.pay.core.Money
+import br.com.gooners.pay.core.statements.Statement
+import br.com.gooners.pay.core.api.Settlement
 import br.com.gooners.pay.core.api.ApiException
 import br.com.gooners.pay.core.api.Balance
 import br.com.gooners.pay.core.api.DeviceCreate
@@ -51,6 +53,9 @@ data class MoneyState(
     val quote: Quote? = null,
     val destination: PixDestination? = null,
     val lastPayout: String? = null,
+    val settlements: List<Settlement> = emptyList(),
+    /** The statement open on screen, checked on the phone. */
+    val statement: Statement? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -261,8 +266,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val a = authed ?: return@run
         val balance = a.balance()
         val entries = a.entries(20).data
-        _money.update { it.copy(balance = balance, entries = entries) }
+        val settlements = a.settlements().data
+        _money.update { it.copy(balance = balance, entries = entries, settlements = settlements) }
     }
+
+    /** Opens a day's statement: fetched, then checked against the public root on the phone. */
+    fun openStatement(s: Settlement) = run {
+        val a = authed ?: return@run
+        val keys = BuildConfig.PLATFORM_KEYS.split(',').map { it.trim() }.filter { it.length == 64 }.toSet()
+        _money.update { it.copy(statement = a.verifiedStatement(s, keys)) }
+    }
+
+    fun closeStatement() = _money.update { it.copy(statement = null) }
 
     fun quotePayout(amount: Money, keyType: String, key: String) = run {
         val a = authed ?: return@run

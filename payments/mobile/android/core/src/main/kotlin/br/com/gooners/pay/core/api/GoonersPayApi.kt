@@ -153,6 +153,23 @@ class GoonersPayApi(
 
         suspend fun journalState(): JournalStatus = call("GET", "/v1/terminal/journal", null, JournalStatus.serializer())
 
+        /** The merchant's daily statements, newest day first (docs/03 §6). */
+        suspend fun settlements(limit: Int = 30): Settlements = call("GET", "/v1/settlements?limit=$limit", null, Settlements.serializer())
+
+        /** The signed kind 7713 statement of a settlement. */
+        suspend fun statement(settlementId: String): Event = call("GET", "/v1/settlements/$settlementId/statement", null, Event.serializer())
+
+        /** A receipt's inclusion proof in its statement and the statement's in the public root. */
+        suspend fun proof(settlementId: String, receiptEventId: String): InclusionProof =
+            call("GET", "/v1/settlements/$settlementId/proofs/$receiptEventId", null, InclusionProof.serializer())
+
+        /** The day's public transparency root (kind 7715). Public: anyone can fetch it. */
+        suspend fun transparencyRoot(date: String): TransparencyRoot = call("GET", "/v1/transparency/$date", null, TransparencyRoot.serializer())
+
+        /** Fetches a settlement's statement and its day's public root, and checks them on the phone. */
+        suspend fun verifiedStatement(settlement: Settlement, platformKeys: Set<String> = emptySet()): br.com.gooners.pay.core.statements.Statement =
+            br.com.gooners.pay.core.statements.Statement.verify(statement(settlement.id), transparencyRoot(settlement.date).event, session.merchantId, platformKeys)
+
         /** Uploads the journal's signed entries; null when there was nothing to send. */
         suspend fun syncJournal(journal: Journal): JournalStatus? {
             val entries = journal.toUpload()

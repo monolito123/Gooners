@@ -75,6 +75,9 @@ final class AppModel {
     var quote: Quote?
     var destination: PixDestination?
     var lastPayout: String?
+    var settlements: [Settlement] = []
+    /// The statement open on screen, checked on the phone.
+    var statement: Statement?
     var devices: [DeviceList.Entry]
 
     @ObservationIgnored let settings: AppSettings
@@ -303,6 +306,17 @@ final class AppModel {
             guard let a = box.authed else { return }
             balance = try await a.balance()
             entries = try await a.entries(limit: 20).data
+            settlements = try await a.settlements().data
+        }
+    }
+
+    /// Opens a day's statement: fetched, then checked against the public root on the phone.
+    func openStatement(_ s: Settlement) {
+        run { [self] in
+            guard let a = box.authed else { return }
+            let keys = Set(((Bundle.main.infoDictionary?["GoonersPayPlatformKeys"] as? String) ?? "").split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count == 64 })
+            statement = try await a.verifiedStatement(s, platformKeys: keys)
         }
     }
 

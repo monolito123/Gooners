@@ -19,7 +19,7 @@ The merchant app for Android and iOS: a phone becomes a payment terminal (card a
 5. **Devices (owner).** The owner's phone adds a cashier phone by scanning (or pasting) its `npub`: the root key signs a newer device list (kind 17710) naming both. Removing a phone signs a list without it, which ends its sessions and revokes its terminal at once.
 6. **Journal.** Each phone keeps a hash-chained journal (kind 7714, docs/03 §7): a session start at every login, and `tap_started` and `auth_result` for every sale (the receipt links to the tap). Entries chain as they are written, because an entry's ID depends only on the device's public key; they are signed in a batch whenever the device key is unwrapped for a login, and uploaded. The platform reports the entries it lacks and freezes the terminal of a forked journal.
 7. **Fraud shield.** Each tap carries the phone's own risk score (docs/07 §3): posture (debugger, root or jailbreak, hooking frameworks, emulator, overlays, screen recording, ADB and developer options) and the till's behaviour (amount-to-tap time, cancelled taps, repeated amounts, bursts, decline streaks), scored by the `gp-device-1` model compiled into both cores. Only the score and at most five signal codes leave the phone. A sale the platform holds says so on the approval screen.
-8. **Statements.** Each day becomes a signed statement, gift-wrapped to the merchant's keys, whose receipts prove their way to the day's public transparency root (`GET /v1/settlements`, docs/03 §6).
+8. **Statements.** Each day becomes a signed statement, gift-wrapped to the merchant's keys, whose receipts prove their way to the day's public transparency root (`GET /v1/settlements`, docs/03 §6). The Money screen lists them; opening one checks it on the phone, trusting nothing else the API says: the platform's signatures (and, in release builds given `goonerspay.platformKeys` / `GOONERSPAY_PLATFORM_KEYS`, that the signers are the platform's published keys), the totals against the lines, the commitment, and the statement's RFC 6962 inclusion in the signed public root of its day. Each check is shown on its own.
 
 ## Keys on the phone
 
@@ -61,7 +61,7 @@ The integration tests create a merchant and an enrollment code with the partner 
 
 ## Status and next steps
 
-Built and tested: pairing, the root key backup, NIP-98 login with DPoP sessions, attestation evidence (verified by the platform when it has the roots), card sales through the sandbox reader, Pix, receivables, payouts with biometric step-up, device management with QR scanning, the terminal journal, certificate pinning and the fraud shield's device score, on both platforms. CI (`.github/workflows/payments-mobile.yml`) runs the conformance and sandbox tests of both cores, builds the Android app (debug, minified release, lint) and the iOS app for the simulator and for devices.
+Built and tested: pairing, the root key backup, NIP-98 login with DPoP sessions, attestation evidence (verified by the platform when it has the roots), card sales through the sandbox reader, Pix, receivables, payouts with biometric step-up, device management with QR scanning, the terminal journal, certificate pinning, the fraud shield's device score and statements checked on the phone, on both platforms. CI (`.github/workflows/payments-mobile.yml`) runs the conformance and sandbox tests of both cores, builds the Android app (debug, minified release, lint) and the iOS app for the simulator and for devices.
 
 Not built yet, in the order they matter:
 
@@ -69,4 +69,4 @@ Not built yet, in the order they matter:
 2. **Continuous integrity**: Play Integrity at session start (it needs Google's decode API on the platform) and App Attest assertions over each authorization; attestation is checked once today.
 3. **The mTLS terminal certificate** of docs/05 §2.4, issued after attestation.
 4. **Offline sales**: static Pix QR and cash sales recorded offline (the journal already queues; the sale screens need the network).
-5. **Statement view in the apps** (the API serves statements and proofs), localization beyond pt-BR, and the sunlight theme.
+5. Localization beyond pt-BR, and the sunlight theme.

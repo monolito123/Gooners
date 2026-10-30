@@ -20,6 +20,9 @@ android {
         // -Pgoonerspay.pins=sha256/AAA…,sha256/BBB… (payments/mobile/README.md).
         buildConfigField("String", "PINNED_HOST", "\"${providers.gradleProperty("goonerspay.pinnedHost").getOrElse("api.goonerspay.com.br")}\"")
         buildConfigField("String", "API_PINS", "\"${providers.gradleProperty("goonerspay.pins").getOrElse("")}\"")
+        // The platform's published receipts and transparency keys (hex, comma-separated): when
+        // set, statements must be signed by them. Empty in the sandbox, whose keys are throwaway.
+        buildConfigField("String", "PLATFORM_KEYS", "\"${providers.gradleProperty("goonerspay.platformKeys").getOrElse("")}\"")
     }
 
     buildTypes {

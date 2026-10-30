@@ -116,6 +116,8 @@ class SandboxIntegrationTest {
         val quote = authed.quote(minOf(balance.available, 5_000), PixDestination(keyType = "cnpj", key = "12345678000195"))
         assertEquals("paid", authed.payout(quote.id).status)
         assertTrue(authed.entries(5).data.isNotEmpty())
+        // Statements: the session sees only its own merchant's (today's closes after 01:00 tomorrow).
+        assertTrue(authed.settlements().data.all { it.merchantId == authed.session.merchantId })
 
         // The owner's phone adds a cashier phone: the root key signs a newer list naming both.
         val cashier = NostrKeys.generate()

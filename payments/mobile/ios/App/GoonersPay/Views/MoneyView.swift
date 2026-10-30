@@ -19,6 +19,9 @@ struct MoneyView: View {
                 if let b = model.balance {
                     LabeledContent("A receber", value: Money(b.pending).format())
                     LabeledContent("Reservado", value: Money(b.reserved ?? 0).format())
+                    if let held = b.held, held > 0 {
+                        LabeledContent("Retido para análise", value: Money(held).format())
+                    }
                     ForEach(b.pendingByDate ?? [], id: \.self) { d in
                         LabeledContent(d.date, value: Money(d.amount).format())
                     }
@@ -48,6 +51,28 @@ struct MoneyView: View {
                 }
                 if let last = model.lastPayout { Text(last) }
             }
+            Section {
+                if model.settlements.isEmpty {
+                    Text("O extrato de um dia sai depois da 1h do dia seguinte.").font(.footnote).foregroundStyle(Theme.textSecondary)
+                }
+                ForEach(model.settlements) { s in
+                    Button { model.openStatement(s) } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(s.date)
+                                Text("\(s.transactionCount ?? 0) vendas").font(.footnote).foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Text(Money(s.net ?? 0).format()).monospacedDigit().bold()
+                        }
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                }
+            } header: {
+                Text("Extratos diários")
+            } footer: {
+                Text("Assinados pela goonersPAY e conferidos neste aparelho contra a raiz pública do dia.")
+            }
             Section("Movimentações") {
                 ForEach(model.entries, id: \.self) { e in
                     HStack {
@@ -65,5 +90,47 @@ struct MoneyView: View {
         }
         .refreshable { model.refreshMoney() }
         .onAppear { model.refreshMoney() }
+        .sheet(isPresented: Binding(get: { model.statement != nil }, set: { if !$0 { model.statement = nil } })) {
+            if let s = model.statement { StatementView(statement: s) }
+        }
+    }
+}
+
+/// A day's statement and what the phone checked about it (docs/03 §6.5).
+struct StatementView: View {
+    let statement: Statement
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let c = statement.check
+        NavigationStack {
+            List {
+                Section {
+                    Text(c.ok ? "Conferido: este extrato está na raiz pública do dia." : "Não conferiu. Não use este extrato e fale com o suporte.")
+                        .bold()
+                        .foregroundStyle(c.ok ? Theme.positive : Theme.critical)
+                    ForEach([("Assinado pela goonersPAY", c.statementSigned), ("É desta loja", c.forThisMerchant),
+                             ("Totais batem com as vendas", c.totalsAddUp), ("Resumo (hash) confere", c.commitmentMatches),
+                             ("Raiz pública do dia assinada", c.rootSigned), ("Incluído na raiz pública", c.inPublicRoot)], id: \.0) { label, ok in
+                        Label(label, systemImage: ok ? "checkmark.circle" : "xmark.octagon")
+                            .foregroundStyle(ok ? Theme.textPrimary : Theme.critical)
+                    }
+                }
+                Section("Totais") {
+                    LabeledContent("Bruto", value: Money(statement.gross).format())
+                    LabeledContent("Tarifas", value: Money(statement.fees).format())
+                    if statement.refunds > 0 { LabeledContent("Estornos", value: Money(statement.refunds).format()) }
+                    if statement.chargebacks > 0 { LabeledContent("Contestações", value: Money(statement.chargebacks).format()) }
+                    LabeledContent("Líquido", value: Money(statement.net).format()).bold()
+                }
+                Section("Vendas") {
+                    ForEach(statement.lines, id: \.receiptEventId) { l in
+                        LabeledContent(Money(l.amount).format(), value: "tarifa " + Money(l.fee).format())
+                    }
+                }
+            }
+            .navigationTitle("Extrato de \(statement.date)")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fechar") { dismiss() } } }
+        }
     }
 }
