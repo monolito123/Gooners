@@ -146,6 +146,8 @@ func (s *Service) RegisterMetrics(r *metrics.Registry) {
 	count("goonerspay_reversal_queue_depth", "Reversals waiting for store-and-forward delivery.", `SELECT count(*) FROM reversal_queue WHERE NOT done`)
 	count("goonerspay_webhook_backlog", "Webhook deliveries not yet delivered.", `SELECT count(*) FROM webhook_deliveries WHERE delivered_at IS NULL AND abandoned_at IS NULL`)
 	count("goonerspay_webhook_abandoned", "Webhook deliveries abandoned after 72 hours.", `SELECT count(*) FROM webhook_deliveries WHERE abandoned_at IS NOT NULL`)
+	count("goonerspay_risk_reviews_open", "Fraud shield reviews waiting for an analyst.", `SELECT count(*) FROM risk_assessments WHERE review_status = 'open'`)
+	count("goonerspay_terminals_frozen", "Terminals the fraud shield froze, pending review.", `SELECT count(*) FROM terminals WHERE status = 'frozen'`)
 	count("goonerspay_payouts_processing", "Payouts whose outcome is not known yet.", `SELECT count(*) FROM payouts WHERE status = 'processing'`)
 	grouped("goonerspay_disputes_open", "Open disputes by status.", "status",
 		`SELECT status, count(*) FROM disputes WHERE status IN ('evidence_required', 'represented', 'pre_arbitration') GROUP BY status`)

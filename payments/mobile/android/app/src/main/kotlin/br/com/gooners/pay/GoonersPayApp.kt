@@ -8,11 +8,12 @@ import br.com.gooners.pay.core.sandbox.CardReader
 import br.com.gooners.pay.core.sandbox.SandboxCardReader
 import br.com.gooners.pay.data.FileJournalStore
 import br.com.gooners.pay.data.Settings
-import java.io.File
+import br.com.gooners.pay.security.AndroidPosture
 import br.com.gooners.pay.security.IntegrityProvider
+import br.com.gooners.pay.security.KeyAttestationIntegrity
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.Unlocker
-import br.com.gooners.pay.security.KeyAttestationIntegrity
+import java.io.File
 
 class GoonersPayApp : Application() {
     val container by lazy { AppContainer(this) }
@@ -25,6 +26,7 @@ class AppContainer(context: Context) {
     val vault = KeyVault(context)
     val unlocker = Unlocker()
     val integrity: IntegrityProvider by lazy { KeyAttestationIntegrity(vault) }
+    val posture = AndroidPosture(context)
 
     fun api(url: String = settings.apiUrl): GoonersPayApi {
         val pins = BuildConfig.API_PINS.split(',').map { it.trim() }.filter { it.startsWith("sha256/") }

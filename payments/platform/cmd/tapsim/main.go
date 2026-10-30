@@ -33,6 +33,7 @@ func main() {
 	aid := flag.String("aid", "A0000000031010", "EMV AID (Visa credit A0000000031010, Mastercard A0000000041010, Elo A0000004942010)")
 	app := flag.String("app", "credit", "credit or debit")
 	devKey := flag.String("dev-key", os.Getenv("CARDDATA_DEV_KEY_HEX"), "development card-data key (hex)")
+	atc := flag.Int("atc", -1, "the card's transaction counter (EMV 9F36, 0-65535); omitted when negative, since a shared test card has none")
 	flag.Parse()
 	k, err := hex.DecodeString(*devKey)
 	if err != nil || len(k) != 32 || *merchant == "" || *terminal == "" || *key == "" {
@@ -65,8 +66,11 @@ func main() {
 	pi := post("/v1/payment-intents", map[string]any{"merchant_id": *merchant, "amount": *amount, "channel": "card_present"}, true)
 	stan := fmt.Sprintf("%06d", rand.IntN(999999)+1)
 	ksn := fmt.Sprintf("FFFF9876543210E%05d", rand.IntN(99999))
-	blob, err := carddata.DevEncrypt(k, ksn, carddata.Card{PAN: *pan, Expiry: "2911", AID: *aid,
-		EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100"})
+	emv := "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE11"
+	if *atc >= 0 {
+		emv += fmt.Sprintf("9F3602%04X", *atc&0xFFFF)
+	}
+	blob, err := carddata.DevEncrypt(k, ksn, carddata.Card{PAN: *pan, Expiry: "2911", AID: *aid, EMVHex: emv + "9A032610299C0100"})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tapsim:", err)
 		os.Exit(1)

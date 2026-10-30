@@ -15,6 +15,7 @@ import br.com.gooners.pay.core.sandbox.DevFormat
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -110,6 +111,19 @@ class ConformanceTest {
         val first = event(entries[0]["event"]!!.jsonObject)
         val journal = Journal(MemoryJournalStore(), device.publicKeyHex, first.tag("merchant")!![1], "0.1.0", { first.createdAt }, java.time.ZoneOffset.ofHours(-3))
         assertEquals(first.id, journal.append("session_start").id)
+    }
+
+    @Test fun deviceRiskModel() {
+        val x = v["device_risk"]!!.jsonObject
+        assertEquals(x.s("model"), br.com.gooners.pay.core.risk.DeviceModel.NAME)
+        assertEquals(x["max_signals"]!!.jsonPrimitive.int, br.com.gooners.pay.core.risk.DeviceModel.MAX_SIGNALS)
+        assertEquals(x["weights"]!!.jsonObject.mapValues { it.value.jsonPrimitive.int }, br.com.gooners.pay.core.risk.DeviceModel.WEIGHTS)
+        for (c in x["cases"]!!.jsonArray) {
+            val o = c.jsonObject
+            val got = br.com.gooners.pay.core.risk.DeviceModel.score(o["signals"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(o.toString(), o["score_milli"]!!.jsonPrimitive.int, got.milli)
+            assertEquals(o.toString(), o["sent"]!!.jsonArray.map { it.jsonPrimitive.content }, got.signals)
+        }
     }
 
     @Test fun keyAttestationChallenge() {

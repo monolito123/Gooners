@@ -41,6 +41,8 @@ tags:
     description: Onboarding, devices and terminals
   - name: settlements
     description: Daily statements and inclusion proofs
+  - name: risk
+    description: Fraud shield reviews (held sales, frozen terminals)
   - name: webhooks
     description: Webhook endpoints
 
@@ -635,6 +637,97 @@ paths:
         "4XX":
           $ref: "#/components/responses/Problem"
 
+  /v1/risk/reviews:
+    get:
+      tags: [risk]
+      operationId: listRiskReviews
+      summary: List fraud shield reviews
+      description: >
+        Sales the fraud shield approved but held, and terminals it froze (docs/07 §3.6), oldest
+        first. Needs the risk:read scope.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StartingAfter"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, released, fraud]
+            default: open
+      responses:
+        "200":
+          description: A page of reviews
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RiskReview"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/risk/reviews/{id}:
+    get:
+      tags: [risk]
+      operationId: getRiskReview
+      summary: Retrieve a review
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskReview"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/risk/reviews/{id}/resolve:
+    post:
+      tags: [risk]
+      operationId: resolveRiskReview
+      summary: Resolve a review
+      description: >
+        release: the sale was genuine; its money settles on schedule and a terminal frozen by
+        this review sells again. fraud: the money stays held for the chargeback and a terminal
+        frozen by this review is revoked. Recorded in the audit trail; sends
+        risk.review_resolved. Needs the risk:write scope.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution, note]
+              properties:
+                resolution:
+                  type: string
+                  enum: [release, fraud]
+                note:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: The resolved review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskReview"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
   /v1/accounts:
     post:
       tags: [accounts]
@@ -929,7 +1022,7 @@ paths:
                     type: string
                   status:
                     type: string
-                    enum: [active, revoked]
+                    enum: [active, frozen, revoked]
         "501":
           $ref: "#/components/responses/Problem"
         "4XX":
@@ -1810,8 +1903,76 @@ components:
             mode:
               type: string
               enum: [instant, standard]
+            merchant_discount:
+              type: integer
+            advance_fee:
+              type: integer
+            net_available:
+              type: integer
+            settles_on:
+              type: string
+              format: date
+            held:
+              type: boolean
+              description: The fraud shield holds the sale until a review releases it (docs/07 §3.6); no instant release.
             estimated_available_at:
               $ref: "#/components/schemas/Timestamp"
+
+    RiskReview:
+      type: object
+      required: [id, object, status, action, merchant_id, terminal_id, payment_intent_id, amount, device, server, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: risk_review
+        status:
+          type: string
+          enum: [open, released, fraud]
+        action:
+          type: string
+          enum: [allow_hold, step_up_hold, decline_freeze]
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        terminal_id:
+          type: string
+        payment_intent_id:
+          $ref: "#/components/schemas/Id"
+        amount:
+          $ref: "#/components/schemas/MinorUnits"
+        outcome:
+          type: [string, "null"]
+          description: approved, or risk_declined when the platform declined before the issuer.
+        device:
+          $ref: "#/components/schemas/RiskSide"
+        server:
+          $ref: "#/components/schemas/RiskSide"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        reviewed_at:
+          $ref: "#/components/schemas/Timestamp"
+        reviewed_by:
+          type: string
+        note:
+          type: string
+
+    RiskSide:
+      type: object
+      required: [level, score, signals]
+      properties:
+        level:
+          type: string
+          enum: [low, medium, high]
+        score:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        model:
+          type: string
+        signals:
+          type: array
+          items:
+            type: string
 
     Refund:
       type: object
@@ -2036,6 +2197,9 @@ components:
           type: integer
         instant_eligible:
           type: integer
+        held:
+          type: integer
+          description: Receivables a fraud shield review holds; not in pending until released.
         pending_by_date:
           type: array
           items:

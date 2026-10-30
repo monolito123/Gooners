@@ -48,6 +48,9 @@ type Config struct {
 	TransparencyPadTo int
 	// PlatformDocument is the platform's CNPJ: the beneficiary of the assignments it registers.
 	PlatformDocument string
+	// RiskMode is how the fraud shield acts on card-present sales: enforce (default),
+	// shadow (assess and record only) or off.
+	RiskMode string
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)

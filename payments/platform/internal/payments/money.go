@@ -28,6 +28,7 @@ type Balance struct {
 	Pending         int64            `json:"pending"`
 	Reserved        int64            `json:"reserved"`
 	InstantEligible int64            `json:"instant_eligible"`
+	Held            int64            `json:"held"` // receivables waiting for a risk review; not in pending
 	PendingByDate   []map[string]any `json:"pending_by_date"`
 	AsOf            string           `json:"as_of"`
 }
@@ -47,7 +48,11 @@ func (s *Service) GetBalance(ctx context.Context, tenantID, accountID string) (*
 		return nil, err
 	}
 	b := &Balance{AccountID: accountID, Currency: s.cfg.Currency, Available: avail, Reserved: reserved, PendingByDate: []map[string]any{}, AsOf: s.cfg.Now().UTC().Format(time.RFC3339)}
-	rows, err := s.pool.Query(ctx, `SELECT settles_on, SUM(amount) FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending'
+	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount), 0) FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending' AND held`,
+		tenantID, m.ID).Scan(&b.Held); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT settles_on, SUM(amount) FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending' AND NOT held
 		GROUP BY settles_on ORDER BY settles_on`, tenantID, m.ID)
 	if err != nil {
 		return nil, err
@@ -178,7 +183,7 @@ func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, a
 			amount      int64
 			arrangement string
 		}
-		rows, err := s.pool.Query(ctx, `SELECT id, settles_on, amount, COALESCE(arrangement, '') FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending'
+		rows, err := s.pool.Query(ctx, `SELECT id, settles_on, amount, COALESCE(arrangement, '') FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending' AND NOT held
 			ORDER BY settles_on, id LIMIT 1000`, tenantID, m.ID)
 		if err != nil {
 			return nil, err
@@ -332,7 +337,7 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 	}
 
 	for _, l := range lines {
-		tag, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $3 WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`, tenantID, l.ReceivableID, l.Fee)
+		tag, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $3 WHERE tenant_id = $1 AND id = $2 AND status = 'pending' AND NOT held`, tenantID, l.ReceivableID, l.Fee)
 		if err != nil {
 			return nil, err
 		}
@@ -426,7 +431,7 @@ func (s *Service) ReconcilePayouts(ctx context.Context) error {
 
 // ReleaseDue makes receivables available on their settlement date (standard settlement).
 func (s *Service) ReleaseDue(ctx context.Context, day time.Time) (int, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, tenant_id::text, merchant_id, amount FROM receivables WHERE status = 'pending' AND settles_on <= $1 ORDER BY id`, pricing.Date(day))
+	rows, err := s.pool.Query(ctx, `SELECT id, tenant_id::text, merchant_id, amount FROM receivables WHERE status = 'pending' AND NOT held AND settles_on <= $1 ORDER BY id`, pricing.Date(day))
 	if err != nil {
 		return 0, err
 	}
@@ -453,7 +458,7 @@ func (s *Service) ReleaseDue(ctx context.Context, day time.Time) (int, error) {
 		if err := s.post(ctx, x.tenant, fmt.Sprintf("release-scheduled:%d", x.id), "scheduled_release", fmt.Sprint(x.id), releaseScheduled(x.merch, x.amount)); err != nil {
 			return n, err
 		}
-		if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'released' WHERE id = $1 AND status = 'pending'`, x.id); err != nil {
+		if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'released' WHERE id = $1 AND status = 'pending' AND NOT held`, x.id); err != nil {
 			return n, err
 		}
 		n++

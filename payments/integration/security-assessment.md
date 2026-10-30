@@ -61,6 +61,7 @@ The other gosec results were reviewed and are false positives (conversions bound
 | App Attest client data is the device key, not a server challenge | A captured attestation could be replayed with a stolen device key on another iPhone (Android is not affected: its sessions are pinned to the attested DPoP key) | A one-time server challenge in the client data |
 | Attestation revocation | Google's attestation revocation list is not consulted | Fetch and check it at verification |
 | Pins in release builds | Pinning is on only when the build carries the API host's SPKI hashes | Set `goonerspay.pins` / `GOONERSPAY_PINS` in the release pipeline, with a backup key |
+| Fraud models | The fraud shield runs weighted rules, not trained models; its thresholds are first guesses | Calibrate on labelled data (scheme fraud reports, confirmed cases) in shadow mode before tightening, then replace the rules with the §3.4 models |
 | Transparency anchoring | Roots are signed and chained but not yet timestamped by a third party | RFC 3161 (ICP-Brasil TSA) and OpenTimestamps ([03 §6.6](../docs/03-nostr-layer.md#66-anchoring)) |
 
 ## 5. Merchant app protocol
@@ -77,6 +78,7 @@ Tested by `internal/e2e/mobile_test.go` against the real API and PostgreSQL, and
 - **Certificate pinning.** Both apps refuse a trusted chain that holds none of the pinned keys before any request leaves the phone (`PinningTest`, with a real TLS server); the iOS SPKI computation is held to Go's by conformance vectors.
 - **Statements and the transparency log** (`internal/e2e/statements_test.go`). Every receipt proves its way to the day's public root from the API's answers alone; roots chain in order and a day cannot be closed behind a later one.
 - **Receivables** (`internal/e2e/registrar_test.go`). Nothing is advanced, at capture or in a payout, without first registering the platform's assignment on the receivable unit, so the same receivable cannot be financed twice; another institution's lien, a lien between quote and payout, and a registrar outage all stop the advance, never the sale.
+- **Fraud shield** (`internal/e2e/risk_test.go`, `internal/risk`). Every card-present attempt is assessed and recorded before the issuer sees it. A cloned card (the transaction counter going back or repeating), card testing on a terminal, and a tampered app that reports trouble with a low score are each caught from the platform's own data: the phone's score is recomputed from its signal codes and only ever adds friction. Declines and step-ups send nothing to the issuer; held sales neither settle nor back an advance until a review; a frozen terminal answers `409`; reviews need a note and are audited. Unknown signal codes and out-of-range scores are refused or dropped before they are stored.
 - **On the phones**, the DPoP key never leaves the Keystore or the Secure Enclave, and the Nostr keys are unwrapped only for a signature, behind biometrics. §4 lists what remains.
 
 ## 6. How to repeat it

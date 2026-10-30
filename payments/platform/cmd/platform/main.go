@@ -321,7 +321,7 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("transparency signer", "npub", npub)
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument}, deps)
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)

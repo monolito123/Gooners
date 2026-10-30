@@ -98,7 +98,8 @@ final class AppModel {
                 return r
             },
             stan: settings.stan,
-            journal: { box.journal.journal }
+            journal: { box.journal.journal },
+            risk: RiskMonitor(posture: IOSPosture())
         )
     }
 

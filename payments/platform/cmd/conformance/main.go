@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"sort"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
+	"github.com/monolito123/Gooners/payments/platform/internal/risk"
 	"github.com/monolito123/Gooners/payments/platform/pkg/brcode"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
@@ -202,6 +204,24 @@ func main() {
 
 	v["journal"] = map[string]any{"device_role": "merchant-device-android", "root_role": "merchant-root", "entries": chain}
 
+	// The on-device fraud model (docs/07 §3): its weights and scores, which the platform
+	// recomputes from the signal codes.
+	all := make([]string, 0, len(risk.DeviceWeights))
+	for k := range risk.DeviceWeights {
+		all = append(all, k)
+	}
+	sort.Strings(all)
+	var riskCases []map[string]any
+	for _, sigs := range [][]string{
+		{}, {"not_a_signal"}, {"debugger", "debugger"}, {"debugger", "root_indicators"}, {"just_under_limit", "repeated_amount"},
+		{"developer_options", "adb_enabled", "repeated_amount", "just_under_limit"}, {"fast_amount_to_tap", "tap_burst", "decline_streak"},
+		{"accessibility_service", "overlay_active", "screen_captured", "unknown"}, all,
+	} {
+		m, top := risk.DeviceScore(sigs)
+		riskCases = append(riskCases, map[string]any{"signals": nonNil(sigs), "score_milli": m, "sent": nonNil(top)})
+	}
+	v["device_risk"] = map[string]any{"model": risk.DeviceModel, "max_signals": risk.MaxDeviceSignals, "weights": risk.DeviceWeights, "cases": riskCases}
+
 	// The sandbox card format (carddata.DevFormat) with a fixed nonce.
 	key, nonce := det("dev-card/key"), det("dev-card/nonce")[:12]
 	card := carddata.Card{PAN: "4111111111111111", Expiry: "2911", AID: "A0000000031010", EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE11"}
@@ -256,6 +276,13 @@ func formatBRL(c int64) string {
 	s := fmt.Sprintf("R$ %s,%02d", grouped, c%100)
 	if neg {
 		s = "-" + s
+	}
+	return s
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
 	}
 	return s
 }

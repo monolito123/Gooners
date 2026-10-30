@@ -2,6 +2,7 @@ package br.com.gooners.pay.core.checkout
 
 import br.com.gooners.pay.core.Money
 import br.com.gooners.pay.core.api.ApiException
+import br.com.gooners.pay.core.api.DeviceRisk
 import br.com.gooners.pay.core.api.GoonersPayApi
 import br.com.gooners.pay.core.api.IntentCreate
 import br.com.gooners.pay.core.api.Sred
@@ -9,6 +10,7 @@ import br.com.gooners.pay.core.api.TerminalAuthorization
 import br.com.gooners.pay.core.api.TerminalResult
 import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.pix.BrCode
+import br.com.gooners.pay.core.risk.RiskMonitor
 import br.com.gooners.pay.core.sandbox.CardReader
 import br.com.gooners.pay.core.sandbox.EmvApplication
 import br.com.gooners.pay.core.sandbox.base64Ciphertext
@@ -31,7 +33,7 @@ sealed interface CheckoutState {
     data class WaitingForCard(val amount: Money, val readerName: String) : CheckoutState
     data class Authorizing(val amount: Money) : CheckoutState
     data class PixQr(val amount: Money, val intentId: String, val brCode: String) : CheckoutState
-    data class Approved(val amount: Money, val method: String, val claimUrl: String?, val netAvailable: Long?, val instant: Boolean) : CheckoutState
+    data class Approved(val amount: Money, val method: String, val claimUrl: String?, val netAvailable: Long?, val instant: Boolean, val held: Boolean = false) : CheckoutState
     data class Declined(val amount: Money, val message: String) : CheckoutState
 }
 
@@ -52,6 +54,8 @@ class CheckoutController(
     private val pixPollMillis: Long = 2_000,
     /** The device's journal: each sale writes tap_started and auth_result (docs/03 §7.1). */
     private val journal: () -> Journal? = { null },
+    /** Scores each tap on the phone (docs/07 §3). */
+    private val risk: RiskMonitor = RiskMonitor(),
 ) {
     private val _state = MutableStateFlow<CheckoutState>(CheckoutState.Entering())
     val state: StateFlow<CheckoutState> = _state.asStateFlow()
@@ -62,7 +66,10 @@ class CheckoutController(
 
     private fun edit(f: (Money) -> Money) {
         val s = _state.value
-        if (s is CheckoutState.Entering) _state.value = s.copy(amount = f(s.amount))
+        if (s is CheckoutState.Entering) {
+            risk.typing()
+            _state.value = s.copy(amount = f(s.amount))
+        }
     }
 
     fun charge() {
@@ -108,13 +115,16 @@ class CheckoutController(
                 val r = reader()
                 _state.value = CheckoutState.WaitingForCard(amount, r.name)
                 val card = r.read(amount, application)
+                val report = risk.tapped(amount)
                 _state.value = CheckoutState.Authorizing(amount)
                 val stanValue = stan.next()
                 val tap = journal()?.let { runCatching { it.append("tap_started", JsonObject(mapOf("payment_intent_id" to JsonPrimitive(intent.id),
                     "amount" to Journal.amount(amount.centavos), "terminal_id" to JsonPrimitive(terminal), "stan" to JsonPrimitive(stanValue)))) }.getOrNull() }
                 sent = true
                 val result = authed.authorize(TerminalAuthorization(intent.id, terminal, stanValue, application.wire,
-                    OffsetDateTime.now(ZoneOffset.UTC).withNano(0).toString(), Sred(card.format, card.ksn, card.base64Ciphertext()), tap?.id))
+                    OffsetDateTime.now(ZoneOffset.UTC).withNano(0).toString(), Sred(card.format, card.ksn, card.base64Ciphertext()), tap?.id,
+                    DeviceRisk(report.milli / 1000.0, report.model, report.signals)))
+                risk.result(result.status)
                 log("auth_result", intent.id, amount, "result" to journalResult(result.status), "stan" to stanValue)
                 _state.value = outcome(amount, result)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -137,6 +147,7 @@ class CheckoutController(
      */
     private fun abandon(intentId: String?, sent: Boolean) {
         if (intentId == null || sent) return
+        risk.cancelled()
         scope.launch { runCatching { api().cancel(intentId) } }
     }
 
@@ -188,7 +199,7 @@ class CheckoutController(
 
         fun outcome(amount: Money, r: TerminalResult): CheckoutState = when (r.status) {
             "approved" -> CheckoutState.Approved(amount, listOfNotNull(r.card?.brand?.replaceFirstChar { it.uppercase() }, r.card?.last4?.let { "•••• $it" }).joinToString(" "),
-                r.receipt?.claimQr, r.settlement?.netAvailable, r.settlement?.mode == "instant")
+                r.receipt?.claimQr, r.settlement?.netAvailable, r.settlement?.mode == "instant", r.settlement?.held == true)
             "timeout" -> CheckoutState.Declined(amount, "Tempo esgotado. Aproxime o cartão de novo.")
             "pin_required" -> CheckoutState.Declined(amount, "Este cartão pede senha. Use o débito com senha ou Pix.")
             else -> CheckoutState.Declined(amount, r.customerMessage ?: "Pagamento recusado. Tente outro cartão.")

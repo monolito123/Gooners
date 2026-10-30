@@ -53,7 +53,7 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 	c.PublicURL = "https://api.goonerspay.example"
 	c.Routes[0].TLS = &TLSFiles{CA: "ca.pem"}
 	c.Routes[0].DialectFile = "/etc/platform/sponsor.json"
-	for _, want := range []string{"VAULT_KEK_HEX", "card decryptor", "receipts key", "registers receivables", "device attestation", "adapters"} {
+	for _, want := range []string{"VAULT_KEK_HEX", "card decryptor", "receipts key", "registers receivables", "device attestation", "fraud shield", "adapters"} {
 		err := c.Validate()
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("want an error about %q, got %v", want, err)
@@ -70,6 +70,9 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 		case "device attestation":
 			c.AppAttestRoots, c.AppAttestAppID = "/etc/platform/apple-app-attest-root.pem", "ABCDE12345.br.com.gooners.pay"
 			c.AndroidAttestationRoots = "/etc/platform/google-attestation-roots.pem"
+			c.RiskMode = "off"
+		case "fraud shield":
+			c.RiskMode = "shadow"
 		}
 		if want == "card decryptor" {
 			c.ReceiptsSecret = make([]byte, 32)

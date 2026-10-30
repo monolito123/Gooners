@@ -18,7 +18,8 @@ The merchant app for Android and iOS: a phone becomes a payment terminal (card a
 4. **Money.** Balance, pending receivables by date, recent entries, and a Pix payout: a quote first (fee and net shown), then a fresh biometric confirmation, then the payout.
 5. **Devices (owner).** The owner's phone adds a cashier phone by scanning (or pasting) its `npub`: the root key signs a newer device list (kind 17710) naming both. Removing a phone signs a list without it, which ends its sessions and revokes its terminal at once.
 6. **Journal.** Each phone keeps a hash-chained journal (kind 7714, docs/03 §7): a session start at every login, and `tap_started` and `auth_result` for every sale (the receipt links to the tap). Entries chain as they are written, because an entry's ID depends only on the device's public key; they are signed in a batch whenever the device key is unwrapped for a login, and uploaded. The platform reports the entries it lacks and freezes the terminal of a forked journal.
-7. **Statements.** Each day becomes a signed statement, gift-wrapped to the merchant's keys, whose receipts prove their way to the day's public transparency root (`GET /v1/settlements`, docs/03 §6).
+7. **Fraud shield.** Each tap carries the phone's own risk score (docs/07 §3): posture (debugger, root or jailbreak, hooking frameworks, emulator, overlays, screen recording, ADB and developer options) and the till's behaviour (amount-to-tap time, cancelled taps, repeated amounts, bursts, decline streaks), scored by the `gp-device-1` model compiled into both cores. Only the score and at most five signal codes leave the phone. A sale the platform holds says so on the approval screen.
+8. **Statements.** Each day becomes a signed statement, gift-wrapped to the merchant's keys, whose receipts prove their way to the day's public transparency root (`GET /v1/settlements`, docs/03 §6).
 
 ## Keys on the phone
 
@@ -35,7 +36,9 @@ The merchant app for Android and iOS: a phone becomes a payment terminal (card a
 
 Both apps refuse to pair a phone without a screen lock in release builds, keep secrets out of backups, block screenshots (Android) or hide the screen in the app switcher (iOS), and refuse redirects so a session token never follows a 3xx elsewhere. Release builds speak HTTPS only.
 
-Card reading is behind one interface (`CardReader`). Production plugs in the licensed MPoC SDK on Android and ProximityReader (Tap to Pay on iPhone) or a PCI PTS reader on iOS; they encrypt inside their secure boundary and the app only forwards the blob. Until those contracts exist, the only reader is the **sandbox reader**: it "taps" scheme test cards in the development format the sandbox decrypts, which the platform refuses in production.
+Android also hides other apps' overlays from its window (Android 12+) and notes touches that reach it through one.
+
+Card reading is behind one interface (`CardReader`). Production plugs in the licensed MPoC SDK on Android and ProximityReader (Tap to Pay on iPhone) or a PCI PTS reader on iOS; they encrypt inside their secure boundary and the app only forwards the blob. Until those contracts exist, the only reader is the **sandbox reader**: it "taps" scheme test cards in the development format the sandbox decrypts, which the platform refuses in production. Each reader holds its own copy of each test card (the test card's BIN and last four digits, random digits between) with its own transaction counter, so the fraud shield's card rules see one customer's card rather than a number every sandbox user shares.
 
 ## Run it against the sandbox
 
@@ -58,7 +61,7 @@ The integration tests create a merchant and an enrollment code with the partner 
 
 ## Status and next steps
 
-Built and tested: pairing, the root key backup, NIP-98 login with DPoP sessions, attestation evidence (verified by the platform when it has the roots), card sales through the sandbox reader, Pix, receivables, payouts with biometric step-up, device management with QR scanning, the terminal journal, and certificate pinning, on both platforms. CI (`.github/workflows/payments-mobile.yml`) runs the conformance and sandbox tests of both cores, builds the Android app (debug, minified release, lint) and the iOS app for the simulator and for devices.
+Built and tested: pairing, the root key backup, NIP-98 login with DPoP sessions, attestation evidence (verified by the platform when it has the roots), card sales through the sandbox reader, Pix, receivables, payouts with biometric step-up, device management with QR scanning, the terminal journal, certificate pinning and the fraud shield's device score, on both platforms. CI (`.github/workflows/payments-mobile.yml`) runs the conformance and sandbox tests of both cores, builds the Android app (debug, minified release, lint) and the iOS app for the simulator and for devices.
 
 Not built yet, in the order they matter:
 

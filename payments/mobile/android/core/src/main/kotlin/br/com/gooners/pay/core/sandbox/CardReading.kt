@@ -69,6 +69,24 @@ class SandboxCardReader(private val devKey: ByteArray, var card: TestCard = Test
     override val name = "Leitor de teste (sandbox)"
     private var ksnCounter = 0
 
+    /**
+     * Each reader holds its own copy of each test card: the test card's BIN and last four
+     * digits around random middle digits, and its own transaction counter (ATC, EMV tag
+     * 9F36). The platform's card-level fraud rules (velocity, counter continuity) then see one
+     * customer's card, not a number every sandbox user shares.
+     */
+    private val issued = mutableMapOf<TestCard, Pair<String, Int>>()
+
+    /** This reader's PAN for [c]. */
+    @Synchronized
+    fun panOf(c: TestCard): String = issued.getOrPut(c) { personalize(c.pan) to 0 }.first
+
+    @Synchronized
+    private fun nextTap(c: TestCard): Pair<String, Int> {
+        val (pan, atc) = issued.getOrPut(c) { personalize(c.pan) to 0 }
+        return (pan to atc + 1).also { issued[c] = it }
+    }
+
     enum class TestCard(val pan: String, val aid: String, val label: String) {
         VISA_CREDIT("4111111111111111", "A0000000031010", "Visa crédito"),
         MASTERCARD("5555555555554444", "A0000000041010", "Mastercard"),
@@ -76,11 +94,25 @@ class SandboxCardReader(private val devKey: ByteArray, var card: TestCard = Test
     }
 
     override suspend fun read(amount: Money, application: EmvApplication): EncryptedCard {
-        ksnCounter++
-        val ksn = "FFFF9876543210E" + ksnCounter.toString().padStart(5, '0')
-        val dev = DevCard(pan = card.pan, expiry = "2911", aid = card.aid,
-            emv = "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100")
+        val c = card
+        val (pan, atc) = nextTap(c)
+        val ksn = synchronized(this) { ksnCounter++; "FFFF9876543210E" + ksnCounter.toString().padStart(5, '0') }
+        val dev = DevCard(pan = pan, expiry = "2911", aid = c.aid,
+            emv = "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F3602" + "%04X".format(atc and 0xFFFF) + "9A032610299C0100")
         return EncryptedCard(DevFormat.NAME, ksn, DevFormat.encrypt(devKey, ksn, dev))
+    }
+
+    companion object {
+        /** Keeps [testPan]'s first six and last four digits, randomizes the rest and fixes the Luhn digit. */
+        fun personalize(testPan: String, random: java.util.Random = java.security.SecureRandom()): String {
+            val middle = (0 until testPan.length - 11).map { random.nextInt(10) }.joinToString("")
+            return (0..9).map { testPan.take(6) + middle + it + testPan.takeLast(4) }.first(::luhn)
+        }
+
+        fun luhn(pan: String): Boolean = pan.reversed().mapIndexed { i, c ->
+            val d = c - '0'
+            if (i % 2 == 1) (d * 2).let { if (it > 9) it - 9 else it } else d
+        }.sum() % 10 == 0
     }
 }
 

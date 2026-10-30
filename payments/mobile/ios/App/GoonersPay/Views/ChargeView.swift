@@ -47,11 +47,13 @@ struct ChargeView: View {
             ProgressView("Aguardando o pagamento…")
             Spacer()
             Button("Cancelar") { co.back() }.frame(minHeight: Theme.touchMin)
-        case let .approved(amount, method, claimURL, netAvailable, instant):
+        case let .approved(amount, method, claimURL, netAvailable, instant, held):
             Text("Aprovado").font(.largeTitle.bold()).foregroundStyle(Theme.positive)
             AmountText(amount: amount)
             Text(method).foregroundStyle(Theme.textSecondary)
-            if let net = netAvailable {
+            if held {
+                Text("Valor retido para análise de segurança. Você é avisado quando for liberado.").multilineTextAlignment(.center)
+            } else if let net = netAvailable {
                 Text((instant ? "Disponível agora: " : "Você recebe: ") + Money(net).format())
             }
             if let claimURL {
@@ -72,7 +74,7 @@ struct ChargeView: View {
 
     private func announce(_ s: CheckoutState) {
         switch s {
-        case let .approved(amount, _, _, _, _): AccessibilityNotification.Announcement("Aprovado, \(amount.format())").post()
+        case let .approved(amount, _, _, _, _, _): AccessibilityNotification.Announcement("Aprovado, \(amount.format())").post()
         case let .declined(_, message): AccessibilityNotification.Announcement("Não aprovado. \(message)").post()
         default: break
         }

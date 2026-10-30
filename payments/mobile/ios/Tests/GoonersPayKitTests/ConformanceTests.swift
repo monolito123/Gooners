@@ -122,6 +122,22 @@ final class ConformanceTests: XCTestCase {
         XCTAssertNil(CertificatePins.pin(keyType: .ec, bits: 256, external: Data(count: 10)))
     }
 
+    func testDeviceRiskModel() throws {
+        struct Case: Decodable { var signals: [String]; var score_milli: Int; var sent: [String] }
+        struct Risk: Decodable { var model: String; var max_signals: Int; var weights: [String: Int]; var cases: [Case] }
+        struct File: Decodable { var device_risk: Risk }
+        let data = try Data(contentsOf: Self.mobile.appendingPathComponent("conformance/vectors.json"))
+        let r = try JSONDecoder().decode(File.self, from: data).device_risk
+        XCTAssertEqual(r.model, DeviceModel.name)
+        XCTAssertEqual(r.max_signals, DeviceModel.maxSignals)
+        XCTAssertEqual(r.weights, DeviceModel.weights)
+        for c in r.cases {
+            let got = DeviceModel.score(c.signals)
+            XCTAssertEqual(got.milli, c.score_milli, "\(c.signals)")
+            XCTAssertEqual(got.signals, c.sent, "\(c.signals)")
+        }
+    }
+
     func testCanonicalJSON() throws {
         for c in Self.raw.canonical_json {
             XCTAssertEqual(c.canonical, try JSONDecoder().decode(JSONValue.self, from: Data(c.json.utf8)).canonical)

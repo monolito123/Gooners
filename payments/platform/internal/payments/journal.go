@@ -195,7 +195,7 @@ func (s *Service) IngestJournal(ctx context.Context, tenantID, merchantID, devic
 		}
 		if forked && terminal != nil {
 			// docs/03 §9: freeze the terminal; a risk analyst reviews the fork.
-			if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'journal fork detected' WHERE id = $1 AND status = 'active'`, *terminal); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'journal fork detected' WHERE id = $1 AND status IN ('active', 'frozen')`, *terminal); err != nil {
 				return err
 			}
 		}

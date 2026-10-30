@@ -115,6 +115,14 @@ public struct TerminalAuthorization: Codable, Sendable, Equatable {
     public var sred: Sred
     /// The device's tap_started journal entry; the receipt links to it (docs/03 §3.3).
     public var journalEventId: String?
+    /// The phone's own risk score (docs/07 §3).
+    public var deviceRisk: DeviceRisk? = nil
+}
+
+public struct DeviceRisk: Codable, Sendable, Equatable {
+    public var score: Double
+    public var model: String
+    public var signals: [String]
 }
 
 struct JournalUpload: Codable, Sendable {
@@ -139,6 +147,8 @@ public struct SettlementView: Codable, Sendable, Equatable {
     public var advanceFee: Int64?
     public var netAvailable: Int64?
     public var settlesOn: String?
+    /// The sale waits for a risk review before it settles (docs/07 §3.6).
+    public var held: Bool?
 }
 
 public struct TerminalResult: Codable, Sendable, Equatable {

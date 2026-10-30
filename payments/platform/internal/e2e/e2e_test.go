@@ -92,8 +92,9 @@ type delivered struct {
 func rnd(n int) []byte { b := make([]byte, n); _, _ = rand.Read(b); return b }
 
 // newStack starts the platform, the simulators and PostgreSQL; opts adjust the service's
-// dependencies (a strict attestor, for instance).
-func newStack(t *testing.T, opts ...func(*payments.Deps)) *stack {
+// dependencies (func(*payments.Deps): a strict attestor, for instance) or its configuration
+// (func(*payments.Config)).
+func newStack(t *testing.T, opts ...any) *stack {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -147,10 +148,18 @@ func newStack(t *testing.T, opts ...func(*payments.Deps)) *stack {
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
 	}
+	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
 	for _, o := range opts {
-		o(&deps)
+		switch o := o.(type) {
+		case func(*payments.Deps):
+			o(&deps)
+		case func(*payments.Config):
+			o(&cfg)
+		default:
+			t.Fatalf("newStack: option %T", o)
+		}
 	}
-	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}, deps)
+	svc := payments.New(cfg, deps)
 	st.receiptsKey = signer
 	st.ledger = ledger.New(pool, log)
 	st.svc, st.pool, st.vault = svc, pool, v
@@ -233,7 +242,7 @@ func (st *stack) pspControl(path string) {
 	}
 }
 
-var stan int
+var stan, atc int
 
 func (st *stack) tap(pi, terminal string, pan, aid, app string) map[string]any {
 	st.t.Helper()
@@ -245,17 +254,40 @@ func (st *stack) tap(pi, terminal string, pan, aid, app string) map[string]any {
 // tapWithSTAN sends a terminal authorization with an explicit terminal STAN.
 func (st *stack) tapWithSTAN(pi, terminal, pan, aid, app, terminalSTAN string, want int) (int, map[string]any) {
 	st.t.Helper()
-	ksn := fmt.Sprintf("FFFF9876543210E%05d", len(terminalSTAN)+int(time.Now().UnixNano()%90000))
-	blob, err := carddata.DevEncrypt(st.devKey, ksn, carddata.Card{PAN: pan, Expiry: "2911", AID: aid,
-		EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100"})
+	atc++
+	return st.tapWith(tapOpts{pi: pi, terminal: terminal, pan: pan, aid: aid, app: app, stan: terminalSTAN, atc: atc, want: want})
+}
+
+// tapOpts is one tap in full: the card's transaction counter (ATC, EMV tag 9F36) and the
+// phone's own risk report included.
+type tapOpts struct {
+	pi, terminal, pan, aid, app, stan string
+	atc, want                         int // want 0: any HTTP status
+	deviceRisk                        map[string]any
+	pinBlock                          string // an online PIN block, as a terminal that asked for the PIN sends it
+}
+
+func (st *stack) tapWith(o tapOpts) (int, map[string]any) {
+	st.t.Helper()
+	if o.stan == "" {
+		stan++
+		o.stan = fmt.Sprintf("%06d", stan)
+	}
+	ksn := fmt.Sprintf("FFFF9876543210E%05d", len(o.stan)+int(time.Now().UnixNano()%90000))
+	blob, err := carddata.DevEncrypt(st.devKey, ksn, carddata.Card{PAN: o.pan, Expiry: "2911", AID: o.aid, PINBlockHex: o.pinBlock,
+		EMVHex: fmt.Sprintf("9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F3602%04X9A032610299C0100", o.atc&0xFFFF)})
 	if err != nil {
 		st.t.Fatal(err)
 	}
-	return st.call("POST", "/v1/terminal/authorizations", map[string]any{
-		"payment_intent_id": pi, "terminal_id": terminal, "stan": terminalSTAN, "emv_application": app,
+	body := map[string]any{
+		"payment_intent_id": o.pi, "terminal_id": o.terminal, "stan": o.stan, "emv_application": o.app,
 		"local_time": time.Now().Format(time.RFC3339),
 		"sred":       map[string]any{"format": carddata.DevFormat, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
-	}, want)
+	}
+	if o.deviceRisk != nil {
+		body["device_risk"] = o.deviceRisk
+	}
+	return st.call("POST", "/v1/terminal/authorizations", body, o.want)
 }
 
 func (st *stack) balance(acc string) map[string]any {

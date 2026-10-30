@@ -384,9 +384,9 @@ Sent by the MPoC SDK inside the merchant app to `terminal.goonerspay.example` ov
   },
   "pin": null,
   "device_risk": {
-    "score": 0.04,
-    "model": "fs-device-2026-10-a",
-    "signals": ["apdu_rtt_normal", "integrity_strong", "no_overlay", "location_consistent"]
+    "score": 0.1,
+    "model": "gp-device-1",
+    "signals": ["developer_options"]
   },
   "attestation": {
     "verdict_token": "eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig",
@@ -410,11 +410,13 @@ Sent by the MPoC SDK inside the merchant app to `terminal.goonerspay.example` ov
     "nostr_event_id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
     "claim_qr": "https://r.goonerspay.example/c#k=ada9e69e2445b65e0739afcfe36455f0f2157c9c6edf9fbd3250f48f5408d163"
   },
-  "settlement": { "mode": "instant", "estimated_available_at": "2026-10-29T17:42:20Z" }
+  "settlement": { "mode": "instant", "merchant_discount": 414, "advance_fee": 0, "net_available": 12576, "settles_on": "2026-11-28" }
 }
 ```
 
 `status` is `approved`, `declined` (with `decline_code`), `pin_required` (re-present with PIN on glass), or `timeout` (the platform has already queued a reversal; the app asks for another tap).
+
+**Fraud shield** ([07 §3](07-enhancements.md#3-autonomous-fraud-shield)). Before the issuer sees a tap, the platform scores it from its own history and weighs `device_risk`, the phone's score from model `gp-device-1` with at most five signal codes ([07 §3.9](07-enhancements.md#39-what-the-reference-implementation-builds)); unknown codes are dropped and the score is recomputed from the codes. The decision can be `declined` with `decline_code: "risk_declined"` (nothing reached the issuer), `pin_required` with `decline_code: "authentication_required"` (the card needs its PIN), or `approved` with `settlement.held: true`: the sale stands, but its money waits for a review (§5.1) instead of being released or advanced. A frozen terminal answers `409` until its review is resolved.
 
 ### 4.6 Capture, cancel, refund
 
@@ -527,6 +529,29 @@ The CVC is used for one verification and never stored (PCI DSS v4.0.1 requiremen
 `POST /v1/disputes/{id}/accept` accepts liability. The held amount is debited for good ([04 §3.4](04-serverless-backend.md#34-posting-catalogue)).
 
 The amount is taken from the merchant when the chargeback arrives, because the scheme debits the acquirer at once. If the available balance is short, the difference is booked as owed by the merchant (`ledger.owed_by_merchant`) and recovered from its next credits. While a dispute is open, refunds on the payment are refused with `409`: the cardholder already has the money back. `GET /v1/disputes` filters by `status` and `merchant_id`. A dispute still in `evidence_required` at `evidence_due_at` is accepted automatically, after a `dispute.evidence_due_soon` warning 48 hours before. Operations files representments with the sponsor and imports the outcomes ([operations runbook §4.6](../integration/operations-runbook.md#46-chargebacks)).
+
+### 5.1 Fraud shield reviews
+
+A sale the fraud shield approved but held, and a terminal it froze, open a review and send `risk.review_opened`. `GET /v1/risk/reviews?status=open` lists them oldest first (scope `risk:read`); each shows both halves of the decision, never the raw device observations:
+
+```json
+{
+  "id": "rsk_01M67JBQ41BTCSJYAW2DYFM1TB",
+  "object": "risk_review",
+  "status": "open",
+  "action": "allow_hold",
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "terminal_id": "TP000418",
+  "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0",
+  "amount": 150000,
+  "outcome": "approved",
+  "device": { "level": "low", "score": 0, "model": "gp-device-1", "signals": [] },
+  "server": { "level": "medium", "score": 0.3, "signals": ["new_merchant_large_amount"] },
+  "created_at": "2026-10-29T17:42:08Z"
+}
+```
+
+`POST /v1/risk/reviews/{id}/resolve` with `{"resolution": "release", "note": "…"}` (scope `risk:write`) lets the held money settle on its schedule and a terminal frozen by the review sell again; `"fraud"` keeps the money held for the chargeback and revokes a frozen terminal. A note is required, the call is audited and sends `risk.review_resolved`. `GET /v1/accounts/{id}/balance` shows held money apart from `pending`, as `held`.
 
 ---
 
@@ -904,7 +929,9 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `payment_method.updated` | Network token lifecycle update (new expiry, reissued card) |
 | `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding |
 | `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
-| `terminal.revoked` | A terminal was revoked (lost device, merchant closed) |
+| `terminal.revoked` | A terminal was revoked (lost device, merchant closed, fraud confirmed) |
+| `terminal.frozen` | The fraud shield froze a terminal pending a review (§5.1) |
+| `risk.review_opened` / `.review_resolved` | A sale was held or a terminal frozen; a review released it or confirmed fraud (§5.1) |
 | `payment_intent.med_returned` | A Pix was returned to the payer under the MED; the merchant was debited |
 | `device.revoked` | A device key was removed from the authorization list |
 | `account.reserve.changed` | Risk changed the merchant's reserve |
@@ -947,6 +974,8 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Deletes network tokens too |
 | GET | `/v1/disputes` · `/v1/disputes/{id}` | api | `disputes:write` | Yes | |
 | POST | `/v1/disputes/{id}/evidence` · `/accept` | api | `disputes:write` | Key | |
+| GET | `/v1/risk/reviews` · `/{id}` | api | `risk:read` | Yes | Held sales and frozen terminals |
+| POST | `/v1/risk/reviews/{id}/resolve` | api | `risk:write` | Key | Audited |
 | POST | `/v1/accounts` | api | `accounts:write` | Key | |
 | GET | `/v1/accounts/{id}/balance` · `/entries` | api | `accounts:read` | Yes | |
 | POST | `/v1/transfers` | api | `accounts:write` | Key | |

@@ -99,6 +99,144 @@
       "sig": "f5881dbfefbbbea0a1282c4cae7bb0f2af2d6749ffe4144cc8793d06714eef677ec175365905afc5ea6eed1f2b3978bf98815b8be8c7fed899bd5acc600bea26"
     }
   },
+  "device_risk": {
+    "cases": [
+      {
+        "score_milli": 0,
+        "sent": [],
+        "signals": []
+      },
+      {
+        "score_milli": 0,
+        "sent": [],
+        "signals": [
+          "not_a_signal"
+        ]
+      },
+      {
+        "score_milli": 600,
+        "sent": [
+          "debugger"
+        ],
+        "signals": [
+          "debugger",
+          "debugger"
+        ]
+      },
+      {
+        "score_milli": 840,
+        "sent": [
+          "debugger",
+          "root_indicators"
+        ],
+        "signals": [
+          "debugger",
+          "root_indicators"
+        ]
+      },
+      {
+        "score_milli": 278,
+        "sent": [
+          "just_under_limit",
+          "repeated_amount"
+        ],
+        "signals": [
+          "just_under_limit",
+          "repeated_amount"
+        ]
+      },
+      {
+        "score_milli": 480,
+        "sent": [
+          "adb_enabled",
+          "just_under_limit",
+          "repeated_amount",
+          "developer_options"
+        ],
+        "signals": [
+          "developer_options",
+          "adb_enabled",
+          "repeated_amount",
+          "just_under_limit"
+        ]
+      },
+      {
+        "score_milli": 659,
+        "sent": [
+          "decline_streak",
+          "tap_burst",
+          "fast_amount_to_tap"
+        ],
+        "signals": [
+          "fast_amount_to_tap",
+          "tap_burst",
+          "decline_streak"
+        ]
+      },
+      {
+        "score_milli": 727,
+        "sent": [
+          "overlay_active",
+          "accessibility_service",
+          "screen_captured"
+        ],
+        "signals": [
+          "accessibility_service",
+          "overlay_active",
+          "screen_captured",
+          "unknown"
+        ]
+      },
+      {
+        "score_milli": 1000,
+        "sent": [
+          "hooking",
+          "debugger",
+          "root_indicators",
+          "apdu_rtt_p99_exceeded",
+          "emulator"
+        ],
+        "signals": [
+          "accessibility_service",
+          "adb_enabled",
+          "apdu_rtt_p99_exceeded",
+          "cancelled_taps",
+          "debugger",
+          "decline_streak",
+          "developer_options",
+          "emulator",
+          "fast_amount_to_tap",
+          "hooking",
+          "just_under_limit",
+          "overlay_active",
+          "repeated_amount",
+          "root_indicators",
+          "screen_captured",
+          "tap_burst"
+        ]
+      }
+    ],
+    "max_signals": 5,
+    "model": "gp-device-1",
+    "weights": {
+      "accessibility_service": 350,
+      "adb_enabled": 200,
+      "apdu_rtt_p99_exceeded": 500,
+      "cancelled_taps": 200,
+      "debugger": 600,
+      "decline_streak": 350,
+      "developer_options": 100,
+      "emulator": 500,
+      "fast_amount_to_tap": 250,
+      "hooking": 700,
+      "just_under_limit": 150,
+      "overlay_active": 400,
+      "repeated_amount": 150,
+      "root_indicators": 600,
+      "screen_captured": 300,
+      "tap_burst": 300
+    }
+  },
   "events": [
     {
       "aux": "7b352322bbc0c41d23fa74b9da89095b39362cdbcc72ee9564dc3a6e87d6eb03",

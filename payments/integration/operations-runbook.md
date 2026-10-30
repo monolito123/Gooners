@@ -76,6 +76,8 @@ The platform serves Prometheus metrics on `METRICS_ADDR` (internal network only)
 | `goonerspay_merchant_shortfall_centavos` | Growing day over day | Risk review of the merchants that owe money (§4.6, §4.7) |
 | `goonerspay_disputes_open{status="represented"}` | Any representment older than one business day | File it with the sponsor (§4.6) |
 | `goonerspay_pix_med_returns_total` | Any | Risk review of the merchant (§4.7) |
+| `goonerspay_risk_reviews_open`, `goonerspay_terminals_frozen` | A review older than one business day; any frozen terminal | Work the review (§4.9): the merchant's money or till waits on it |
+| `goonerspay_risk_assessments_total` by `action` | Declines or holds above their weekly baseline | A new attack, or a rule misfiring on honest sales: read `goonerspay_risk_signals_total` by `signal`, and move a misfiring rule to shadow (`RISK_MODE=shadow`) while it is fixed |
 
 ## 4. Procedures
 
@@ -147,6 +149,15 @@ Payments keep working at the PSP and show as `requires_action` on the platform. 
 ```bash
 platform recon-pix -tenant T -date $(TZ=America/Sao_Paulo date +%F)
 ```
+
+### 4.9 Fraud shield reviews
+
+The fraud shield ([07 §3](../docs/07-enhancements.md#3-autonomous-fraud-shield)) holds the money of a sale it doubts, or freezes a terminal it believes compromised, and opens a review. List them with `GET /v1/risk/reviews` (key with `risk:read`). Each shows the action, both scores and the signal codes; the payment, its journal entries (`GET /v1/payment-intents/{id}/journal`) and the merchant's history give the rest. Call the merchant when in doubt: a till that sold to the same card five times may be a regular customer.
+
+- Genuine: `POST /v1/risk/reviews/{id}/resolve` with `{"resolution": "release", "note": "…"}`. The held money settles on its schedule; a terminal frozen by the review sells again.
+- Fraud: `{"resolution": "fraud", "note": "…"}`. The money stays held to cover the chargeback; a terminal frozen by the review is revoked (the merchant re-enrolls the phone after a check, §4.4). Refund the cardholder when the issuer asks, and consider restricting the merchant (§4.2).
+
+Both are audited. A step-up (the card asked for its PIN) and a plain decline need no review: no money moved.
 
 ## 5. Reconciliation exceptions
 

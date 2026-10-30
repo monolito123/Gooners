@@ -20,6 +20,7 @@ import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.nostr.Bech32
 import br.com.gooners.pay.core.nostr.Event
 import br.com.gooners.pay.core.nostr.NostrKeys
+import br.com.gooners.pay.core.risk.RiskMonitor
 import br.com.gooners.pay.core.toHex
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.UnlockCancelled
@@ -79,6 +80,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         stan = settings.stan,
         scope = viewModelScope,
         journal = { journal },
+        risk = RiskMonitor(c.posture),
     )
 
     /** The journal, once the merchant's root key is known (it names it in every entry). */

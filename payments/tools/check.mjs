@@ -254,7 +254,7 @@ oas.addSchema({ $id: 'oas', components: openapi.components });
 const schemaFor = (v) => {
   const byObject = {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
-    transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement',
+    transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';
@@ -419,6 +419,19 @@ if (existsSync(vecFile)) {
   dc.setAuthTag(blob.subarray(blob.length - 16));
   check(Buffer.concat([dc.update(blob.subarray(12, blob.length - 16)), dc.final()]).toString() === vec.dev_card.plaintext, 'sandbox card blob decrypts');
   check(vec.brcode.every((b) => crc16(b.code.slice(0, -4)) === b.code.slice(-4)), 'BR Code CRCs');
+  // The on-device fraud model (07 §3.3), a third time: heaviest signals first, a noisy OR in
+  // integer thousandths truncated at every step.
+  const dr = vec.device_risk;
+  const deviceScore = (signals) => {
+    const known = [...new Set(signals.filter((s) => s in dr.weights))].sort((a, b) => dr.weights[b] - dr.weights[a] || (a < b ? -1 : a > b ? 1 : 0));
+    let clean = 1000;
+    for (const s of known) clean = Math.trunc((clean * (1000 - dr.weights[s])) / 1000);
+    return [1000 - clean, known.slice(0, dr.max_signals)];
+  };
+  check(dr.cases.every((c) => { const [m, sent] = deviceScore(c.signals); return m === c.score_milli && JSON.stringify(sent) === JSON.stringify(c.sent); }),
+    `${dr.cases.length} device risk vectors (model ${dr.model}) match JavaScript's scoring`);
+  const signalDocs = d07;
+  check(Object.keys(dr.weights).every((s) => signalDocs.includes('`' + s + '`')), 'every device signal code is documented in 07 §3.3');
 }
 
 // ---------------------------------------------------------------- 7. External tools

@@ -222,7 +222,11 @@ private fun ChargeTab(vm: MainViewModel) {
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
                 Amount(s.amount)
                 Hint(s.method)
-                s.netAvailable?.let { Text((if (s.instant) "Disponível agora: " else "Você recebe: ") + Money(it).format()) }
+                if (s.held) {
+                    Text("Valor retido para análise de segurança. Você é avisado quando for liberado.", textAlign = TextAlign.Center)
+                } else {
+                    s.netAvailable?.let { Text((if (s.instant) "Disponível agora: " else "Você recebe: ") + Money(it).format()) }
+                }
                 s.claimUrl?.let {
                     Hint("Recibo para o cliente:")
                     QrCode(it, "QR Code do recibo", 180.dp)

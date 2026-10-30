@@ -86,7 +86,7 @@ func (s *Service) SetMerchantStatus(ctx context.Context, tenantID, merchantID, t
 			return fmt.Errorf("%w: merchant status changed concurrently", ErrConflict)
 		}
 		if to == MerchantClosed {
-			if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'merchant closed' WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'active'`, tenantID, m.ID); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'merchant closed' WHERE tenant_id = $1 AND merchant_id = $2 AND status IN ('active', 'frozen')`, tenantID, m.ID); err != nil {
 				return err
 			}
 		}
@@ -116,7 +116,7 @@ func (s *Service) RevokeTerminal(ctx context.Context, tenantID, terminalID, reas
 	}
 	t := &Terminal{Object: "terminal"}
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = $3 WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		err := tx.QueryRow(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = $3 WHERE tenant_id = $1 AND id = $2 AND status IN ('active', 'frozen')
 			RETURNING id, merchant_id, type, status`, tenantID, terminalID, reason).Scan(&t.ID, &t.MerchantID, &t.Type, &t.Status)
 		if errors.Is(err, pgx.ErrNoRows) {
 			var status string

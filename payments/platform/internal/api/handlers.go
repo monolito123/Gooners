@@ -138,6 +138,47 @@ func (s *Server) revokeTerminal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+func (s *Server) listRiskReviews(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	rs, more, err := s.svc.ListRiskReviews(r.Context(), from(r.Context()).tenantID, q.Get("status"), q.Get("starting_after"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var next any
+	if more {
+		next = rs[len(rs)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": rs, "has_more": more, "next_cursor": next})
+}
+
+func (s *Server) getRiskReview(w http.ResponseWriter, r *http.Request) {
+	rv, err := s.svc.GetRiskReview(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rv)
+}
+
+func (s *Server) resolveRiskReview(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Resolution string `json:"resolution"`
+		Note       string `json:"note"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p := from(r.Context())
+	rv, err := s.svc.ResolveRiskReview(r.Context(), p.tenantID, r.PathValue("id"), in.Resolution, in.Note, p.actor())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rv)
+}
+
 func (s *Server) listDisputes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -355,10 +396,17 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := s.svc.AuthorizeTerminal(r.Context(), p.tenantID, payments.TerminalAuth{
+	ta := payments.TerminalAuth{
 		PaymentIntentID: in.PaymentIntentID, TerminalID: in.TerminalID, TerminalSTAN: in.STAN, LocalTime: local, Application: in.EMVApplication,
 		Format: in.SRED.Format, KSN: in.SRED.KSN, Ciphertext: ct, JournalEventID: in.JournalEventID,
-	})
+	}
+	if in.DeviceRisk != nil {
+		if ta.Device, err = payments.DeviceRisk(in.DeviceRisk.Score, in.DeviceRisk.Model, in.DeviceRisk.Signals); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	res, err := s.svc.AuthorizeTerminal(r.Context(), p.tenantID, ta)
 	if err != nil {
 		s.fail(w, r, err)
 		return

@@ -105,7 +105,12 @@ data class TerminalAuthorization(
     val sred: Sred,
     /** The device's tap_started journal entry; the receipt links to it (docs/03 §3.3). */
     @SerialName("journal_event_id") val journalEventId: String? = null,
+    /** The phone's own risk score (docs/07 §3). */
+    @SerialName("device_risk") val deviceRisk: DeviceRisk? = null,
 )
+
+@Serializable
+data class DeviceRisk(val score: Double, val model: String, val signals: List<String>)
 
 @Serializable
 data class CardView(val brand: String = "", val last4: String = "", val funding: String = "")
@@ -124,6 +129,8 @@ data class SettlementView(
     @SerialName("advance_fee") val advanceFee: Long = 0,
     @SerialName("net_available") val netAvailable: Long = 0,
     @SerialName("settles_on") val settlesOn: String = "",
+    /** The sale waits for a risk review before it settles (docs/07 §3.6). */
+    val held: Boolean = false,
 )
 
 @Serializable

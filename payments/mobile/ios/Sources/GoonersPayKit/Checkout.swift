@@ -8,13 +8,13 @@ public enum CheckoutState: Sendable, Equatable {
     case waitingForCard(Money, readerName: String)
     case authorizing(Money)
     case pixQR(Money, intentID: String, brCode: String)
-    case approved(Money, method: String, claimURL: String?, netAvailable: Int64?, instant: Bool)
+    case approved(Money, method: String, claimURL: String?, netAvailable: Int64?, instant: Bool, held: Bool = false)
     case declined(Money, message: String)
 
     public var amount: Money {
         switch self {
         case let .entering(m), let .choosingMethod(m), let .waitingForCard(m, _), let .authorizing(m), let .pixQR(m, _, _),
-             let .approved(m, _, _, _, _), let .declined(m, _): m
+             let .approved(m, _, _, _, _, _), let .declined(m, _): m
         }
     }
 
@@ -43,15 +43,19 @@ public final class CheckoutController {
     private let pixPoll: Duration
     /// The device's journal: each sale writes tap_started and auth_result (docs/03 §7.1).
     private let journal: @MainActor () -> Journal?
+    /// Scores each tap on the phone (docs/07 §3).
+    private let risk: RiskMonitor
     @ObservationIgnored private var task: Task<Void, Never>?
 
     public init(api: @escaping @MainActor () throws -> GoonersPayAPI.Authed, reader: @escaping @MainActor () throws -> CardReader,
-                stan: StanSource, pixPoll: Duration = .seconds(2), journal: @escaping @MainActor () -> Journal? = { nil }) {
+                stan: StanSource, pixPoll: Duration = .seconds(2), journal: @escaping @MainActor () -> Journal? = { nil },
+                risk: RiskMonitor = RiskMonitor()) {
         self.api = api
         self.reader = reader
         self.stan = stan
         self.pixPoll = pixPoll
         self.journal = journal
+        self.risk = risk
     }
 
     private func log(_ type: String, _ intentID: String, _ amount: Money, _ extra: [String: String] = [:]) {
@@ -64,7 +68,9 @@ public final class CheckoutController {
     /// Once an authorization was sent its outcome may be unknown, and the platform's reversal
     /// handles it; the app never cancels then.
     private func abandon(_ intentID: String?, sent: Bool) {
-        guard let intentID, !sent, let authed = try? api() else { return }
+        guard let intentID, !sent else { return }
+        risk.cancelled()
+        guard let authed = try? api() else { return }
         Task { _ = try? await authed.cancel(intentID) }
     }
 
@@ -72,7 +78,10 @@ public final class CheckoutController {
     public func backspace() { edit { $0.backspace() } }
 
     private func edit(_ f: (Money) -> Money) {
-        if case let .entering(m) = state { state = .entering(f(m)) }
+        if case let .entering(m) = state {
+            risk.typing()
+            state = .entering(f(m))
+        }
     }
 
     public func charge() {
@@ -108,6 +117,7 @@ public final class CheckoutController {
                 state = .waitingForCard(amount, readerName: r.name)
                 let card = try await r.read(amount: amount, application: application)
                 try Task.checkCancellation()
+                let report = risk.tapped(amount)
                 state = .authorizing(amount)
                 let stanValue = stan.next()
                 let tap = journal()?.append("tap_started", fields: ["payment_intent_id": .string(intent.id), "amount": Journal.amount(amount),
@@ -116,7 +126,8 @@ public final class CheckoutController {
                 let result = try await authed.authorize(TerminalAuthorization(
                     paymentIntentId: intent.id, terminalId: terminal, stan: stanValue, emvApplication: application.rawValue,
                     localTime: Self.utcNow(), sred: Sred(format: card.format, ksn: card.ksn, ciphertext: card.ciphertext.base64EncodedString()),
-                    journalEventId: tap?.id))
+                    journalEventId: tap?.id, deviceRisk: DeviceRisk(score: Double(report.milli) / 1000, model: report.model, signals: report.signals)))
+                risk.result(result.status)
                 log("auth_result", intent.id, amount, ["result": Self.journalResult(result.status), "stan": stanValue])
                 if !Task.isCancelled { state = Self.outcome(amount, result) }
             } catch is CancellationError {
@@ -190,7 +201,7 @@ public final class CheckoutController {
             let method = [r.card?.brand.map { $0.prefix(1).uppercased() + $0.dropFirst() }, r.card?.last4.map { "•••• " + $0 }]
                 .compactMap { $0 }.joined(separator: " ")
             return .approved(amount, method: method, claimURL: r.receipt?.claimQr, netAvailable: r.settlement?.netAvailable,
-                             instant: r.settlement?.mode == "instant")
+                             instant: r.settlement?.mode == "instant", held: r.settlement?.held == true)
         case "timeout": return .declined(amount, message: "Tempo esgotado. Aproxime o cartão de novo.")
         case "pin_required": return .declined(amount, message: "Este cartão pede senha. Use o débito com senha ou Pix.")
         default: return .declined(amount, message: r.customerMessage ?? "Pagamento recusado. Tente outro cartão.")

@@ -78,7 +78,7 @@ final class SandboxIntegrationTests: XCTestCase {
         checkout.charge()
         checkout.card(.credit)
         let sale = try await settled()
-        guard case let .approved(amount, method, claim, _, _) = sale else { return XCTFail("\(sale)") }
+        guard case let .approved(amount, method, claim, _, _, _) = sale else { return XCTFail("\(sale)") }
         XCTAssertEqual(amount, Money(12990))
         XCTAssertTrue(method.contains("5555") || method.contains("4444"), method)
         XCTAssertTrue(claim?.contains("#k=") ?? false)
