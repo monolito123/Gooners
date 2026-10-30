@@ -165,6 +165,9 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 			jobs = append(jobs, j)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
 		for _, j := range jobs { // lease for a minute while we deliver outside the transaction
 			if _, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET next_at = now() + interval '1 minute' WHERE id = $1`, j.id); err != nil {
 				return err

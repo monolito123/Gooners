@@ -162,6 +162,9 @@ func (s *Service) RegisterDevice(ctx context.Context, tenantID, merchantID strin
 			revoked = append(revoked, g)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
 		for _, g := range revoked {
 			if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL`, g.id); err != nil {
 				return err

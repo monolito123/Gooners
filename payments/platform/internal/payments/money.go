@@ -187,6 +187,9 @@ func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, a
 			fees += l.Fee
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 		// Whole receivables are advanced; anything above the request stays in the wallet.
 		if advanced < need {
 			return nil, fmt.Errorf("%w: available %d plus receivables %d is less than %d", ErrFunds, avail, advanced, amount)
@@ -344,6 +347,9 @@ func (s *Service) ReconcilePayouts(ctx context.Context) error {
 		ps = append(ps, x)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	for _, x := range ps {
 		res, err := s.payout.Get(ctx, x.id)
 		if err != nil {
@@ -377,6 +383,9 @@ func (s *Service) ReleaseDue(ctx context.Context, day time.Time) (int, error) {
 		rs = append(rs, x)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	n := 0
 	for _, x := range rs {
 		if err := s.post(ctx, x.tenant, fmt.Sprintf("release-scheduled:%d", x.id), "scheduled_release", fmt.Sprint(x.id), releaseScheduled(x.merch, x.amount)); err != nil {

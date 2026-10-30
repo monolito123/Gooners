@@ -179,6 +179,47 @@ func TestConcurrentDebitsNeverOverdraw(t *testing.T) {
 	assertInvariants(t, l)
 }
 
+// Heavier contention than above: lock reads that fail to serialize must be retried, never
+// read as a zero balance (they once surfaced only through rows.Err and were refused as
+// insufficient funds).
+func TestContendedDebitsAreRetriedNotRefused(t *testing.T) {
+	l := setup(t)
+	post(t, l, "opening_capital", []ledger.Posting{{ledger.AccSettlementBank, ledger.Debit, 1_000_000}, {ledger.AccEquityCapital, ledger.Credit, 1_000_000}})
+	post(t, l, "safeguard_topup", ledger.SafeguardTopup(100_000))
+	post(t, l, "card_capture", ledger.CardCapture("visa", merchant, ledger.CardCaptureAmounts{Gross: 10_000}))
+	post(t, l, "release", ledger.ScheduledRelease(merchant, 10_000))
+	var ok, insufficient atomic.Int64
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			id := fmt.Sprintf("jr_small_%d", i)
+			_, err := l.Post(context.Background(), ledger.NewJournal(tenant, id, id, "payout_send", "", ledger.PayoutSend(merchant, 100, 0)))
+			var ife *ledger.InsufficientFundsError
+			switch {
+			case err == nil:
+				ok.Add(1)
+			case errors.As(err, &ife):
+				insufficient.Add(1)
+			default:
+				t.Errorf("debit %d: %v", i, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	if ok.Load() != 100 || insufficient.Load() != 100 {
+		t.Fatalf("approved %d, refused %d; want exactly 100 and 100", ok.Load(), insufficient.Load())
+	}
+	if b := balance(t, l, ledger.MerchantWallet(merchant)); b != 0 {
+		t.Fatalf("wallet %d", b)
+	}
+	assertInvariants(t, l)
+}
+
 func TestHotAccountShardsSumCorrectly(t *testing.T) {
 	l := setup(t)
 	for i := 0; i < 50; i++ {

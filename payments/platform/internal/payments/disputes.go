@@ -424,6 +424,9 @@ func (s *Service) SweepDisputes(ctx context.Context, now time.Time) (expired int
 		ss = append(ss, x)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	for _, x := range ss {
 		s.notify(ctx, x.tenant, "dispute.evidence_due_soon", map[string]any{"id": x.id, "object": "dispute", "status": DisputeEvidenceRequired})
 	}
@@ -441,6 +444,9 @@ func (s *Service) SweepDisputes(ctx context.Context, now time.Time) (expired int
 		due = append(due, d)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	for _, d := range due {
 		if err := s.moveDispute(ctx, d, DisputeAccepted, "expired", "deadline", DisputeEvidenceRequired); err != nil && !errors.Is(err, ErrConflict) {
 			return expired, err
@@ -475,6 +481,9 @@ func (s *Service) RecoverShortfalls(ctx context.Context) (int, error) {
 		debts = append(debts, x)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 	n := 0
 	for _, x := range debts {
 		amt := min(x.owed, x.wallet)

@@ -453,6 +453,9 @@ func (s *Service) ReconcilePix(ctx context.Context, tenantID string, day time.Ti
 		}
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	run.Exceptions = append(run.Exceptions, notAtPSP...)
 	run.Summary = map[string]any{"psp_pix": len(list), "psp_total": pspTotal, "healed": healed, "healed_total": healedTotal, "unidentified": unidentified}
 	return run, s.saveRun(ctx, tenantID, run, start)

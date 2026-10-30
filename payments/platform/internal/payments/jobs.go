@@ -74,6 +74,10 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 			}
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			s.log.Error("pix reconciliation", "err", err)
+			return
+		}
 		for _, t := range tenants {
 			if !renew() {
 				return

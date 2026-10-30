@@ -192,15 +192,24 @@ func (l *Ledger) Post(ctx context.Context, j Journal) (Result, error) {
 	hash := contentHash(j)
 	var res Result
 	var err error
-	for attempt := 0; attempt < 8; attempt++ {
+	// Serialization failures are retried with capped, jittered backoff for up to retryBudget:
+	// under contention on one account every journal eventually gets its turn.
+	deadline := time.Now().Add(retryBudget)
+	for attempt := 0; ; attempt++ {
 		res, err = l.post(ctx, j, hash)
 		if err == nil || !db.IsRetryable(err) {
 			return res, err
 		}
-		time.Sleep(time.Duration(1<<attempt)*time.Millisecond + time.Duration(rand.IntN(5))*time.Millisecond) // #nosec G404 -- retry jitter, not a secret
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return res, fmt.Errorf("ledger: gave up after %d serialization conflicts: %w", attempt+1, err)
+		}
+		backoff := time.Duration(min(1<<min(attempt, 6), 50)) * time.Millisecond
+		time.Sleep(backoff/2 + time.Duration(rand.Int64N(int64(backoff)))) // #nosec G404 -- retry jitter, not a secret
 	}
-	return res, fmt.Errorf("ledger: gave up after serialization conflicts: %w", err)
 }
+
+// retryBudget bounds how long Post retries serialization failures.
+const retryBudget = 5 * time.Second
 
 type acct struct {
 	side     Side
@@ -317,6 +326,12 @@ func (l *Ledger) post(ctx context.Context, j Journal, hash string) (Result, erro
 					total += b
 				}
 				r.Close()
+				// A lock read that failed (a serialization failure under contention) reports
+				// only here. Without this check it looked like a zero balance and a valid
+				// debit was refused as insufficient funds.
+				if err := r.Err(); err != nil {
+					return err
+				}
 				if total+d < 0 {
 					return &InsufficientFundsError{Account: id, Balance: total, Needed: -d}
 				}
@@ -422,6 +437,9 @@ func (l *Ledger) DrainOutbox(ctx context.Context, limit int, handle func(ctx con
 			evs = append(evs, e)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
 		for _, e := range evs {
 			if err := handle(ctx, tx, e.topic, e.key, e.payload); err != nil {
 				return fmt.Errorf("outbox %s/%s: %w", e.topic, e.id, err)

@@ -692,6 +692,9 @@ func (s *Service) reverseCaptureJournals(ctx context.Context, tenantID string, p
 		rs = append(rs, r)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	var ps []ledger.Posting
 	for _, r := range rs {
 		switch r.status {
