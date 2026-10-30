@@ -86,6 +86,7 @@ type Config struct {
 	RatePerSecond, RateBurst, AuthFailuresPerMinute float64 // per replica; 0 = defaults
 	TrustProxy                                      bool    // behind the edge: client IP from X-Forwarded-For
 	MaxPaymentAmount                                int64   // centavos per payment intent; 0 = default
+	PublicURL                                       string  // the API's external base URL; NIP-98 and DPoP sign it
 }
 
 func env(k, def string) string {
@@ -154,6 +155,7 @@ func Load() (*Config, error) {
 		}
 	}
 	c.TrustProxy = os.Getenv("TRUST_PROXY") == "true"
+	c.PublicURL = os.Getenv("PUBLIC_API_URL")
 	if v := os.Getenv("MAX_PAYMENT_AMOUNT"); v != "" {
 		if c.MaxPaymentAmount, err = strconv.ParseInt(v, 10, 64); err != nil || c.MaxPaymentAmount <= 0 {
 			return nil, fmt.Errorf("config: MAX_PAYMENT_AMOUNT must be a positive number of centavos")
@@ -203,6 +205,9 @@ func (c *Config) Validate() error {
 		if strict && r.DialectFile == "" && r.Dialect != "generic-1987-ascii" {
 			return fmt.Errorf("config: route %s: outside the sandbox use a verified dialect file", r.Name)
 		}
+	}
+	if strict && !strings.HasPrefix(c.PublicURL, "https://") {
+		return errors.New("config: PUBLIC_API_URL (https) is required outside the sandbox: app logins and DPoP proofs sign the exact URL")
 	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")

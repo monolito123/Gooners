@@ -186,7 +186,7 @@ The merchant root key publishes a replaceable kind 17710 event listing the devic
 Rules:
 
 1. **The newest `created_at` wins** (NIP-01 replaceable semantics). The platform rejects a 17710 whose `created_at` is older than the one it holds, and rejects one more than 10 minutes in the future.
-2. **The server-side binding is authoritative for API access.** `POST /v1/merchants/{id}/devices` ([02 §8.2](02-api-reference.md#82-post-v1merchantsiddevices)) stores the device record with its attestation. Revoking a device takes effect in the platform immediately. The new 17710 then tells everyone else.
+2. **The server-side binding is authoritative for API access.** `POST /v1/merchants/{id}/devices` ([02 §8.3](02-api-reference.md#83-post-v1merchantsiddevices)) stores the device record with its attestation. Revoking a device takes effect in the platform immediately. The new 17710 then tells everyone else.
 3. Adding a device needs the root key, so a stolen phone cannot enrol a second attacker device. Revoking a device can also be done from another authorized device with a step-up (biometrics plus OTP to the representative's phone). The platform then marks it revoked server-side and asks the root key to republish at the next opportunity.
 4. At most 20 devices per merchant. Larger merchants use sub-merchants.
 

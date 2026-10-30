@@ -60,6 +60,7 @@ type Service struct {
 	payout    pixout.Sender
 	receipts  *receipts.Issuer
 	publisher *receipts.Publisher
+	attest    Attestor
 	log       *slog.Logger
 }
 
@@ -74,6 +75,7 @@ type Deps struct {
 	Payout    pixout.Sender
 	Receipts  *receipts.Issuer
 	Publisher *receipts.Publisher
+	Attestor  Attestor // device attestation; required in production
 	Logger    *slog.Logger
 }
 
@@ -101,7 +103,7 @@ func New(cfg Config, d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
-		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, log: d.Logger}
+		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, log: d.Logger}
 }
 
 // Errors surfaced to the API as problem details.

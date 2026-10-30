@@ -172,6 +172,8 @@ The body goes on the wire in compact form, and the event's `payload` tag is the 
 }
 ```
 
+Every later request carries `Authorization: DPoP <session_token>` and a `DPoP` header: a proof JWT (RFC 9449) signed by the key of `dpop_jwk`, for the request's method and URL, with `ath` = SHA-256 of the token and a `jti` used once. The DPoP key is generated in the phone's secure hardware (Android Keystore, Secure Enclave) and never leaves it, so a stolen token is useless on its own. A session can call only the app routes (payment intents, terminal authorizations from its own terminal, its balance and entries, payouts, its devices and enrollment codes), and only for its own merchant. Removing the device from the device list ends its sessions at once.
+
 The server checks, in order: the event signature; `kind == 27235`; `created_at` within ±60 s; the `u` and `method` tags against the request; the `payload` hash against the body; that the event ID has not been seen before (a 120 s replay cache); and that the signing key is in the merchant's current device authorization list ([03 §4.2](03-nostr-layer.md#42-device-authorization)).
 
 ---
@@ -712,7 +714,17 @@ Requires an HTTP Message Signature (§1.2).
 }
 ```
 
-### 8.2 `POST /v1/merchants/{id}/devices`
+### 8.2 Enrolling a phone
+
+A phone never holds an API key. The partner (or the owner's app, through its session) creates a single-use code with `POST /v1/merchants/{id}/enrollment-codes`, valid for 15 minutes:
+
+```json
+{ "code": "K7QM-4XDA-P2ZR", "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "expires_at": "2026-10-29T12:35:00Z" }
+```
+
+The owner types it into the app. `GET /v1/enrollment` with `Authorization: Enrollment K7QM-4XDA-P2ZR` says which merchant it is for and whether the merchant has a root key yet. On the first phone, the app creates the root key (the owner backs it up), signs a kind 17710 listing the phone, and sends the body below to `POST /v1/enrollment` with the same header. The code is spent, the signer becomes the merchant's root key, and the phone gets a terminal ID. Later phones are added by the root key: the owner's app signs a new list and posts it to `POST /v1/merchants/{id}/devices`, and the new phone logs in with its own key.
+
+### 8.3 `POST /v1/merchants/{id}/devices`
 
 Binds a device key. The request carries a device-authorization event (kind 17710) signed by the merchant's **root** key and listing the new device's npub ([03 §4.2](03-nostr-layer.md#42-device-authorization)), plus the platform's attestation evidence.
 
@@ -752,11 +764,12 @@ Binds a device key. The request carries a device-authorization event (kind 17710
   "status": "active",
   "integrity": { "verdict": "strong", "security_level": "strongbox", "os_patch": "2026-10-05" },
   "capabilities": ["tap_to_phone", "pin_on_glass"],
+  "terminal_id": "TP000418",
   "created_at": "2026-10-29T12:20:00Z"
 }
 ```
 
-### 8.3 `POST /v1/terminals`
+### 8.4 `POST /v1/terminals`
 
 Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate. The terminal PKI issues that certificate after attestation, and its key must be the attested hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). The request carries the certificate's SHA-256, and requests on `terminal.goonerspay.example` are then authenticated by that certificate.
 
@@ -932,7 +945,9 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | POST | `/v1/payouts/quotes` | api | `payouts:write` | Key | |
 | POST | `/v1/payouts` | api | `payouts:write` | Key | RFC 9421 signature |
 | POST | `/v1/merchants` | api | `merchants:write` | Key | |
-| POST | `/v1/merchants/{id}/devices` | api | `merchants:write` | Key | Root-signed kind 17710 |
+| POST | `/v1/merchants/{id}/devices` | api | `merchants:write` or the owner's session | Key | Root-signed kind 17710 |
+| POST | `/v1/merchants/{id}/enrollment-codes` | api | `merchants:write` or the owner's session | Key | Single use, 15 minutes |
+| GET · POST | `/v1/enrollment` | api | enrollment code | — | The phone enrolls itself |
 | POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
 | POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
 | GET | `/v1/settlements/{id}` · `/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | |

@@ -93,10 +93,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [dpop_jwk, device_id]
+              required: [dpop_jwk]
               properties:
                 dpop_jwk:
                   type: object
+                  description: The P-256 public key (JWK) the session is bound to. Every request then carries a DPoP proof signed by it (RFC 9449).
                   additionalProperties: true
                 device_id:
                   $ref: "#/components/schemas/Id"
@@ -108,6 +109,89 @@ paths:
               schema:
                 $ref: "#/components/schemas/Session"
         "401":
+          $ref: "#/components/responses/Problem"
+
+  /v1/enrollment:
+    get:
+      tags: [auth]
+      operationId: lookupEnrollment
+      summary: Resolve an enrollment code before building the device list
+      description: |
+        A phone presents a single-use enrollment code (Authorization: Enrollment <code>) and learns
+        which merchant it is enrolling for, and whether the merchant already has a root key.
+        Without one, this phone creates it.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      responses:
+        "200":
+          description: The merchant behind the code
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [merchant_id, trade_name, expires_at]
+                properties:
+                  merchant_id:
+                    $ref: "#/components/schemas/Id"
+                  trade_name:
+                    type: string
+                  root_npub:
+                    $ref: "#/components/schemas/Npub"
+                  expires_at:
+                    $ref: "#/components/schemas/Timestamp"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [auth]
+      operationId: enrollDevice
+      summary: Enroll this phone with a single-use code
+      description: |
+        Same body as POST /v1/merchants/{id}/devices. The code is spent. On the merchant's first
+        enrollment the device list's signer becomes the merchant's root key.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceCreate"
+      responses:
+        "201":
+          description: Device enrolled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/merchants/{id}/enrollment-codes:
+    post:
+      tags: [merchants]
+      operationId: createEnrollmentCode
+      summary: Create a single-use enrollment code for a phone (valid 15 minutes)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "201":
+          description: Code created; only its hash is stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, merchant_id, expires_at]
+                properties:
+                  code:
+                    type: string
+                    pattern: "^[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}$"
+                  merchant_id:
+                    $ref: "#/components/schemas/Id"
+                  expires_at:
+                    $ref: "#/components/schemas/Timestamp"
+        "4XX":
           $ref: "#/components/responses/Problem"
 
   /v1/payment-intents:
@@ -700,21 +784,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [device_npub, platform, attestation, authorization_event]
-              properties:
-                device_npub:
-                  $ref: "#/components/schemas/Npub"
-                platform:
-                  type: string
-                  enum: [android, ios, web]
-                model:
-                  type: string
-                attestation:
-                  type: object
-                  additionalProperties: true
-                authorization_event:
-                  $ref: "#/components/schemas/NostrEvent"
+              $ref: "#/components/schemas/DeviceCreate"
       responses:
         "201":
           description: Device bound
@@ -1160,6 +1230,10 @@ components:
         merchant_id:
           $ref: "#/components/schemas/Id"
         device_id:
+          $ref: "#/components/schemas/Id"
+        terminal_id:
+          type: string
+        account_id:
           $ref: "#/components/schemas/Id"
         scopes:
           type: array
@@ -2012,6 +2086,24 @@ components:
         created_at:
           $ref: "#/components/schemas/Timestamp"
 
+    DeviceCreate:
+      type: object
+      required: [device_npub, platform, authorization_event]
+      properties:
+        device_npub:
+          $ref: "#/components/schemas/Npub"
+        platform:
+          type: string
+          enum: [android, ios, web]
+        model:
+          type: string
+        attestation:
+          type: object
+          description: Android key attestation and Play Integrity, or Apple App Attest. Required in production.
+          additionalProperties: true
+        authorization_event:
+          $ref: "#/components/schemas/NostrEvent"
+
     Device:
       type: object
       required: [id, object, merchant_id, device_npub, status]
@@ -2034,6 +2126,16 @@ components:
           type: array
           items:
             type: string
+        platform:
+          type: string
+          enum: [android, ios, web]
+        label:
+          type: string
+        model:
+          type: string
+        terminal_id:
+          type: string
+          description: The DE 41 terminal ID of this phone, created when it is first bound.
         created_at:
           $ref: "#/components/schemas/Timestamp"
 

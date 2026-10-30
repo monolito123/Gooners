@@ -23,6 +23,7 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/pricing` | MDR, cost estimates, ANBIMA national holidays, DU/252 advance fees | [07 §1.3](../docs/07-enhancements.md#13-pricing-an-advance) |
 | `internal/payments`, `internal/api` | Business flows and the HTTP API: API keys with scopes, terminal certificates, idempotency keys, Problem Details | [02](../docs/02-api-reference.md) |
 | `internal/payments` (operations) | Merchant lifecycle, terminal and API key revocation with an audit trail; chargebacks (intake, evidence, outcomes, deadlines, shortfall recovery); settlement-report and daily Pix reconciliation with true-ups, suspense and an exception queue; MED returns; periodic jobs under a lease | [runbook](../integration/operations-runbook.md) |
+| `internal/mobileauth` | NIP-98 login verification, DPoP proofs (RFC 9449) and JWK thumbprints, kind 17710 device lists; checked against the spec's signed examples | [02 §3.2](../docs/02-api-reference.md#32-post-v1authnostr-merchant-apps) |
 | `internal/metrics` | Prometheus text exposition: request, authorization and dispute counters; backlog, exception, safeguarding-headroom and shortfall gauges | [runbook §3](../integration/operations-runbook.md#3-alerts) |
 | `internal/webhooks` | Standard Webhooks delivery with retries; matches the spec's test vector | [02 §10](../docs/02-api-reference.md#10-webhooks) |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
@@ -90,6 +91,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `METRICS_ADDR` | Internal listener for `GET /metrics` (Prometheus). Keep it off the public network |
 | `RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`, `AUTH_FAILURES_PER_MINUTE` | Per-replica limits (defaults 50/s, 100, 30/min); the edge enforces the global ones |
 | `TRUST_PROXY` | `true` behind the edge: the client address is the last `X-Forwarded-For` entry |
+| `PUBLIC_API_URL` | The API's external base URL. App logins and DPoP proofs sign the exact URL; required (https) outside the sandbox |
 | `MAX_PAYMENT_AMOUNT` | Ceiling per payment intent in centavos (default 100000000, R$ 1.000.000,00) |
 
 | Guard | sandbox | certification | production |
@@ -101,7 +103,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 
 ## Implemented API surface
 
-Implemented and covered by the end-to-end tests: `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
+Implemented and covered by the end-to-end tests: the merchant app protocol (`POST /v1/merchants/{id}/enrollment-codes`, `GET/POST /v1/enrollment`, `POST /v1/merchants/{id}/devices` with the root-signed kind 17710, `POST /v1/auth/nostr` with NIP-98, and DPoP-bound sessions held to their merchant and terminal), `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, and the PSP webhook `POST {webhook}/pix`. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
 
 Specified but not built yet. The API answers these explicitly rather than half-working:
 
@@ -109,7 +111,8 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 |--------------|-------|-------|
 | Card-not-present (`confirm` with a card) | `501` | EMVCo-certified 3DS server, network tokens ([01 §4–§5](../docs/01-acquiring-engine.md#4-emv-3-d-secure-card-not-present)) |
 | Split payments | `422 splits_not_supported` | Multi-recipient capture journals |
-| `/oauth2/token` (mTLS-bound tokens), `/v1/auth/nostr` (NIP-98) | API keys with scopes | Token service at the edge |
+| `/oauth2/token` (mTLS-bound partner tokens) | API keys with scopes | Token service at the edge |
+| Device attestation verification (Android key attestation, Play Integrity, App Attest) | Recorded, marked `unverified` in the sandbox; production refuses to bind devices without a verifier | An `Attestor` adapter |
 | Pre-dispute alerts (Visa RDR, Ethoca), arbitration | Handled by operations at the sponsor | Alert feeds through the sponsor |
 | `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers`, settlement proofs | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
 | CSR signing on `/v1/terminals` | `501` | Terminal PKI after attestation |

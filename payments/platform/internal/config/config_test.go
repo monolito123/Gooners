@@ -34,6 +34,14 @@ func TestCertificationNeedsTLSAndVerifiedDialects(t *testing.T) {
 		t.Fatal("sandbox capital accepted in certification")
 	}
 	c.BootstrapCapital = 0
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "PUBLIC_API_URL") {
+		t.Fatalf("no public URL accepted outside the sandbox: %v", err)
+	}
+	c.PublicURL = "http://api.goonerspay.example"
+	if err := c.Validate(); err == nil {
+		t.Fatal("a plain-http public URL accepted outside the sandbox")
+	}
+	c.PublicURL = "https://api.goonerspay.example"
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +50,7 @@ func TestCertificationNeedsTLSAndVerifiedDialects(t *testing.T) {
 func TestProductionRefusesSoftwareKeys(t *testing.T) {
 	c := base()
 	c.Env = Production
+	c.PublicURL = "https://api.goonerspay.example"
 	c.Routes[0].TLS = &TLSFiles{CA: "ca.pem"}
 	c.Routes[0].DialectFile = "/etc/platform/sponsor.json"
 	for _, want := range []string{"VAULT_KEK_HEX", "card decryptor", "receipts key", "adapters"} {

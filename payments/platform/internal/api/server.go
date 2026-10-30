@@ -26,6 +26,7 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
+	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 )
@@ -40,6 +41,10 @@ type Config struct {
 	AuthFailuresPerMinute float64
 	// TrustProxy takes the client IP from the last X-Forwarded-For entry (behind the edge).
 	TrustProxy bool
+	// PublicURL is the API's external base URL (https://api.goonerspay.example). NIP-98 events
+	// and DPoP proofs sign the exact URL, so it must be what clients call. Empty in the
+	// sandbox: derived from the request.
+	PublicURL string
 }
 
 // MaxBody is the largest request body accepted.
@@ -78,20 +83,28 @@ type principal struct {
 	scopes   map[string]bool
 	terminal string // set when authenticated by a terminal certificate
 	keyID    string // set when authenticated by an API key
+	// A merchant app session: limited to this merchant, this device and its terminal.
+	sessionID, merchantID, deviceID, deviceTerminal string
 }
 
 // limitKey identifies the credential for rate limiting.
 func (p principal) limitKey() string {
-	if p.terminal != "" {
+	switch {
+	case p.terminal != "":
 		return "terminal:" + p.tenantID + ":" + p.terminal
+	case p.sessionID != "":
+		return "device:" + p.deviceID
 	}
 	return "key:" + p.keyID
 }
 
 // actor names the caller in the audit trail.
 func (p principal) actor() string {
-	if p.terminal != "" {
+	switch {
+	case p.terminal != "":
 		return "terminal:" + p.terminal
+	case p.sessionID != "":
+		return "device:" + p.deviceID
 	}
 	return "api:" + p.keyID
 }
@@ -110,8 +123,14 @@ func (s *Server) Handler() http.Handler {
 		if idem {
 			h = s.idempotent(h)
 		}
-		mux.Handle(pattern, instrument(pattern, s.authenticate(scope, h)))
+		mux.Handle(pattern, instrument(pattern, s.authenticate(scope, sessionRoutes[pattern], h)))
 	}
+	open := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, instrument(pattern, h)) }
+	open("POST /v1/auth/nostr", s.loginNostr)
+	open("GET /v1/enrollment", s.getEnrollment)
+	open("POST /v1/enrollment", s.enroll)
+	route("POST /v1/merchants/{id}/devices", "merchants:write", true, s.registerDevice)
+	route("POST /v1/merchants/{id}/enrollment-codes", "merchants:write", true, s.createEnrollmentCode)
 	route("POST /v1/merchants", "merchants:write", true, s.createMerchant)
 	route("GET /v1/merchants/{id}", "merchants:write", false, s.getMerchant)
 	route("POST /v1/terminals", "merchants:write", true, s.registerTerminal)
@@ -135,6 +154,23 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
 	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
 	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
+}
+
+// sessionRoutes are the only routes a merchant app session may call. Each handler also
+// holds the session to its own merchant (ownership checks in handlers.go).
+var sessionRoutes = map[string]bool{
+	"GET /v1/merchants/{id}":                   true,
+	"POST /v1/merchants/{id}/devices":          true,
+	"POST /v1/merchants/{id}/enrollment-codes": true,
+	"POST /v1/payment-intents":                 true,
+	"GET /v1/payment-intents/{id}":             true,
+	"POST /v1/payment-intents/{id}/confirm":    true,
+	"POST /v1/payment-intents/{id}/cancel":     true,
+	"POST /v1/terminal/authorizations":         true,
+	"GET /v1/accounts/{id}/balance":            true,
+	"GET /v1/accounts/{id}/entries":            true,
+	"POST /v1/payouts/quotes":                  true,
+	"POST /v1/payouts":                         true,
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a
@@ -279,7 +315,7 @@ func hashKey(k string) string { h := sha256.Sum256([]byte(k)); return hex.Encode
 // CertFingerprint is the SHA-256 of a DER certificate, hex.
 func CertFingerprint(der []byte) string { h := sha256.Sum256(der); return hex.EncodeToString(h[:]) }
 
-func (s *Server) authenticate(scope string, next http.HandlerFunc) http.Handler {
+func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFunc) http.Handler {
 	authenticated := func(w http.ResponseWriter, r *http.Request, p principal) {
 		if ok, wait := s.perKey.take(p.limitKey()); !ok {
 			w.Header().Set("Retry-After", retryAfter(wait))
@@ -307,6 +343,31 @@ func (s *Server) authenticate(scope string, next http.HandlerFunc) http.Handler 
 				return
 			}
 			authenticated(w, r, principal{tenantID: tenant, terminal: terminal})
+			return
+		}
+		// Merchant apps: a session token bound to a DPoP key (docs/02 §3.2).
+		if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "DPoP "); ok {
+			p, err := s.sessionPrincipal(r, token)
+			if err != nil {
+				unauthorized("unauthorized", "Invalid session", err.Error())
+				return
+			}
+			if !sessionOK {
+				problem(w, r, http.StatusForbidden, "forbidden", "Not available to app sessions", "")
+				return
+			}
+			if scope == "terminal" {
+				if s.cfg.Env == "production" {
+					problem(w, r, http.StatusUnauthorized, "terminal-certificate-required", "Terminal certificate required", "card-present authorizations need the terminal's mutual-TLS certificate")
+					return
+				}
+				scope = "payments:write"
+			}
+			if scope != "merchants:write" && !p.scopes[scope] { // merchants:write routes check ownership instead
+				problem(w, r, http.StatusForbidden, "forbidden", "Missing scope", scope)
+				return
+			}
+			authenticated(w, r, p)
 			return
 		}
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -339,6 +400,50 @@ func (s *Server) authenticate(scope string, next http.HandlerFunc) http.Handler 
 		}
 		authenticated(w, r, p)
 	})
+}
+
+// requestURL is the URL a NIP-98 event or DPoP proof must name: the public base URL and the
+// path, without query or fragment.
+func (s *Server) requestURL(r *http.Request) string {
+	if s.cfg.PublicURL != "" {
+		return strings.TrimSuffix(s.cfg.PublicURL, "/") + r.URL.Path
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if s.cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") != "" {
+		scheme = r.Header.Get("X-Forwarded-Proto")
+	}
+	return scheme + "://" + r.Host + r.URL.Path
+}
+
+// sessionPrincipal authenticates "Authorization: DPoP <token>" with its "DPoP" proof: the
+// proof must be signed by the key the session is bound to, for this method and URL, and its
+// jti must be new.
+func (s *Server) sessionPrincipal(r *http.Request, token string) (principal, error) {
+	si, err := s.svc.SessionByToken(r.Context(), token)
+	if err != nil {
+		return principal{}, err
+	}
+	proof, err := mobileauth.VerifyDPoP(r.Header.Get("DPoP"), r.Method, s.requestURL(r), token, time.Now())
+	if err != nil {
+		return principal{}, err
+	}
+	if proof.JKT != si.JKT {
+		return principal{}, fmt.Errorf("%w: the DPoP key is not the session's key", mobileauth.ErrUnauthorized)
+	}
+	if ok, err := s.svc.ConsumeNonce(r.Context(), "dpop:"+si.JKT+":"+proof.JTI, 2*mobileauth.MaxSkew); err != nil || !ok {
+		if err != nil {
+			return principal{}, err
+		}
+		return principal{}, fmt.Errorf("%w: the DPoP proof was already used", mobileauth.ErrUnauthorized)
+	}
+	p := principal{tenantID: si.TenantID, scopes: map[string]bool{}, sessionID: si.ID, merchantID: si.MerchantID, deviceID: si.DeviceID, deviceTerminal: si.TerminalID}
+	for _, sc := range si.Scopes {
+		p.scopes[sc] = true
+	}
+	return p, nil
 }
 
 type recorder struct {
@@ -442,6 +547,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusNotFound, "not-found", "Not found", err.Error())
 	case errors.Is(err, payments.ErrInvalid):
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", err.Error())
+	case errors.Is(err, mobileauth.ErrUnauthorized):
+		problem(w, r, http.StatusUnauthorized, "unauthorized", "Unauthorized", err.Error())
 	case errors.Is(err, payments.ErrMerchantInactive):
 		problem(w, r, http.StatusConflict, "merchant-not-active", "The merchant is not active", err.Error())
 	case errors.Is(err, payments.ErrConflict):

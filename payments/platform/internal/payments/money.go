@@ -66,6 +66,25 @@ func (s *Service) GetBalance(ctx context.Context, tenantID, accountID string) (*
 	return b, rows.Err()
 }
 
+// AccountMerchant returns the merchant that owns an account.
+func (s *Service) AccountMerchant(ctx context.Context, tenantID, accountID string) (string, error) {
+	m, err := s.merchantByAccount(ctx, tenantID, accountID)
+	if err != nil {
+		return "", err
+	}
+	return m.ID, nil
+}
+
+// QuoteMerchant returns the merchant a payout quote belongs to.
+func (s *Service) QuoteMerchant(ctx context.Context, tenantID, quoteID string) (string, error) {
+	var m string
+	err := s.pool.QueryRow(ctx, `SELECT merchant_id FROM payout_quotes WHERE tenant_id = $1 AND id = $2`, tenantID, quoteID).Scan(&m)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("%w: quote not found or already used", ErrConflict)
+	}
+	return m, err
+}
+
 // Entries lists the wallet's latest ledger postings and whether there are older ones.
 func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit int) ([]map[string]any, bool, error) {
 	m, err := s.merchantByAccount(ctx, tenantID, accountID)

@@ -50,6 +50,9 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	} else if n > 0 {
 		s.log.Info("disputes accepted at their deadline", "count", n)
 	}
+	if err := s.PurgeAuthState(ctx); err != nil {
+		s.log.Error("purge auth state", "err", err)
+	}
 	if n, err := s.RecoverShortfalls(ctx); err != nil {
 		s.log.Error("recover shortfalls", "err", err)
 	} else if n > 0 {

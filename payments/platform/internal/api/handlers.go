@@ -85,6 +85,10 @@ func (s *Server) createMerchant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMerchant(w http.ResponseWriter, r *http.Request) {
+	if !owns(from(r.Context()), r.PathValue("id")) {
+		notYours(w, r)
+		return
+	}
 	m, err := s.svc.GetMerchant(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
 	if err != nil {
 		s.fail(w, r, err)
@@ -221,6 +225,15 @@ func (s *Server) createIntent(w http.ResponseWriter, r *http.Request) {
 	if in.Channel == "" && len(in.PaymentMethodTypes) == 1 && in.PaymentMethodTypes[0] == "pix" {
 		in.Channel = "pix"
 	}
+	if p := from(r.Context()); p.merchantID != "" {
+		if in.MerchantID == "" {
+			in.MerchantID = p.merchantID
+		}
+		if in.MerchantID != p.merchantID {
+			notYours(w, r)
+			return
+		}
+	}
 	pi, err := s.svc.CreateIntent(r.Context(), from(r.Context()).tenantID, in.IntentInput)
 	if err != nil {
 		s.fail(w, r, err)
@@ -230,6 +243,9 @@ func (s *Server) createIntent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getIntent(w http.ResponseWriter, r *http.Request) {
+	if !s.ownIntent(w, r, r.PathValue("id")) {
+		return
+	}
 	pi, err := s.svc.GetIntent(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
 	if err != nil {
 		s.fail(w, r, err)
@@ -244,6 +260,9 @@ func (s *Server) confirmIntent(w http.ResponseWriter, r *http.Request) {
 		PaymentMethod     string `json:"payment_method"`
 	}
 	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	if !s.ownIntent(w, r, r.PathValue("id")) {
 		return
 	}
 	if in.PaymentMethodType != "" && in.PaymentMethodType != "pix" {
@@ -273,6 +292,9 @@ func (s *Server) captureIntent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cancelIntent(w http.ResponseWriter, r *http.Request) {
+	if !s.ownIntent(w, r, r.PathValue("id")) {
+		return
+	}
 	pi, err := s.svc.Cancel(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
 	if err != nil {
 		s.fail(w, r, err)
@@ -311,6 +333,13 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 	p := from(r.Context())
 	if p.terminal != "" && p.terminal != in.TerminalID {
 		problem(w, r, http.StatusForbidden, "terminal-mismatch", "Certificate belongs to another terminal", "")
+		return
+	}
+	if p.sessionID != "" && (p.deviceTerminal == "" || p.deviceTerminal != in.TerminalID) {
+		problem(w, r, http.StatusForbidden, "terminal-mismatch", "A device may only use its own terminal", "")
+		return
+	}
+	if !s.ownIntent(w, r, in.PaymentIntentID) {
 		return
 	}
 	ct, err := base64.StdEncoding.DecodeString(in.SRED.Ciphertext)
@@ -364,6 +393,9 @@ func (s *Server) getRefund(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
+	if !s.ownAccount(w, r, r.PathValue("id")) {
+		return
+	}
 	b, err := s.svc.GetBalance(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
 	if err != nil {
 		s.fail(w, r, err)
@@ -373,6 +405,9 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) entries(w http.ResponseWriter, r *http.Request) {
+	if !s.ownAccount(w, r, r.PathValue("id")) {
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	es, more, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit)
 	if err != nil {
@@ -392,6 +427,9 @@ func (s *Server) quote(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
+	if !s.ownAccount(w, r, in.AccountID) {
+		return
+	}
 	q, err := s.svc.QuotePayout(r.Context(), from(r.Context()).tenantID, in.AccountID, in.Amount, in.Destination)
 	if err != nil {
 		s.fail(w, r, err)
@@ -406,6 +444,17 @@ func (s *Server) payout(w http.ResponseWriter, r *http.Request) {
 	}
 	if !decode(w, r, &in) {
 		return
+	}
+	if p := from(r.Context()); p.merchantID != "" {
+		m, err := s.svc.QuoteMerchant(r.Context(), p.tenantID, in.QuoteID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if m != p.merchantID {
+			notYours(w, r)
+			return
+		}
 	}
 	po, err := s.svc.ExecutePayout(r.Context(), from(r.Context()).tenantID, in.QuoteID)
 	if err != nil {
