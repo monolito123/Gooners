@@ -104,7 +104,17 @@ func (p *phone) do(method, path string, body any) (int, map[string]any) {
 
 func (p *phone) login(t *testing.T) (int, map[string]any) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"dpop_jwk": mobileauth.PublicJWK(p.dpop)})
+	return p.loginWith(t, nil)
+}
+
+// loginWith logs in, sending attestation evidence with the login when given.
+func (p *phone) loginWith(t *testing.T, attestation map[string]any) (int, map[string]any) {
+	t.Helper()
+	req := map[string]any{"dpop_jwk": mobileauth.PublicJWK(p.dpop)}
+	if attestation != nil {
+		req["attestation"] = attestation
+	}
+	body, _ := json.Marshal(req)
 	auth, err := mobileauth.SignNIP98(p.device, "POST", p.st.api+"/v1/auth/nostr", body, time.Now())
 	if err != nil {
 		t.Fatal(err)

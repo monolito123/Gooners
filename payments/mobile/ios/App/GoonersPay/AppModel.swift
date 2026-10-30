@@ -189,8 +189,15 @@ final class AppModel {
         let deviceID = settings.deviceID.isEmpty ? nil : settings.deviceID
         journal()?.append("session_start")
         let ref = box.journal
+        let integrity = integrity
         let session = try await withKey(.device) { key in
-            let s = try await api.login(device: key, dpop: dpop, deviceID: deviceID)
+            let s: Session
+            do {
+                s = try await api.login(device: key, dpop: dpop, deviceID: deviceID)
+            } catch let e as APIError where e.attestationRequired {
+                // A phone the owner added proves itself at its first login, once, with App Attest.
+                s = try await api.login(device: key, dpop: dpop, deviceID: deviceID, attestation: await integrity.evidence(devicePubkeyHex: key.publicKeyHex))
+            }
             _ = try? ref.journal?.signPending(key)
             return s
         }

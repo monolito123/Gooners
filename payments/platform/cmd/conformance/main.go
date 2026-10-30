@@ -18,6 +18,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
 	"github.com/monolito123/Gooners/payments/platform/pkg/brcode"
@@ -154,6 +155,9 @@ func main() {
 		chain = append(chain, map[string]any{"fields": f, "aux": hex.EncodeToString(a[:]), "event": ev})
 		prev = ev.ID
 	}
+	// The challenge an Android app passes to setAttestationChallenge for its DPoP key.
+	v["key_attestation_challenge"] = map[string]any{"device_pubkey": device.PubHex, "challenge": hex.EncodeToString(attest.Challenge(device.PubHex))}
+
 	v["journal"] = map[string]any{"device_role": "merchant-device-android", "root_role": "merchant-root", "entries": chain}
 
 	// The sandbox card format (carddata.DevFormat) with a fixed nonce.

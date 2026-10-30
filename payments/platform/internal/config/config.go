@@ -79,8 +79,15 @@ type Config struct {
 	VaultKEK, VaultFingerprintKey, CardDataDevKey, ReceiptsSecret []byte
 	TransparencySecret                                            []byte // signs the daily public roots (kind 7715)
 	TransparencyPadTo                                             int    // log padding granularity; 0 = 4096
-	Relays                                                        []string
-	ClaimBase                                                     string
+
+	// Device attestation (docs/05 §2.4, §3.6). Configuring either set of roots turns on strict
+	// attestation: devices must prove they are the genuine app on genuine hardware.
+	AppAttestRoots, AppAttestAppID          string // PEM file of Apple's App Attestation Root CA; TEAMID.bundle
+	AppAttestProduction                     bool
+	AndroidAttestationRoots, AndroidPackage string   // PEM file of Google's hardware attestation roots; application ID
+	AndroidSigningDigests                   [][]byte // SHA-256 of the app signing certificates
+	Relays                                  []string
+	ClaimBase                               string
 
 	BootstrapTenant  string
 	BootstrapCapital int64
@@ -153,6 +160,25 @@ func Load() (*Config, error) {
 		if c.TransparencyPadTo, err = strconv.Atoi(v); err != nil || c.TransparencyPadTo < 1 {
 			return nil, fmt.Errorf("config: TRANSPARENCY_PAD_TO must be a positive number of leaves")
 		}
+	}
+	c.AppAttestRoots, c.AppAttestAppID = os.Getenv("APPATTEST_ROOT_CA"), os.Getenv("APPATTEST_APP_ID")
+	c.AppAttestProduction = os.Getenv("APPATTEST_ENVIRONMENT") == "production"
+	c.AndroidAttestationRoots, c.AndroidPackage = os.Getenv("ANDROID_ATTESTATION_ROOTS"), env("ANDROID_PACKAGE", "br.com.gooners.pay")
+	for _, d := range strings.Split(os.Getenv("ANDROID_SIGNING_DIGESTS"), ",") {
+		if d = strings.TrimSpace(d); d == "" {
+			continue
+		}
+		b, err := hex.DecodeString(strings.ReplaceAll(d, ":", "")) // keytool prints AA:BB:…
+		if err != nil || len(b) != 32 {
+			return nil, fmt.Errorf("config: ANDROID_SIGNING_DIGESTS are SHA-256 digests in hex, comma-separated")
+		}
+		c.AndroidSigningDigests = append(c.AndroidSigningDigests, b)
+	}
+	if (c.AppAttestRoots != "") != (c.AppAttestAppID != "") {
+		return nil, fmt.Errorf("config: APPATTEST_ROOT_CA and APPATTEST_APP_ID go together")
+	}
+	if c.AndroidAttestationRoots != "" && len(c.AndroidSigningDigests) == 0 {
+		return nil, fmt.Errorf("config: ANDROID_ATTESTATION_ROOTS needs ANDROID_SIGNING_DIGESTS")
 	}
 	if r := os.Getenv("RELAYS"); r != "" {
 		c.Relays = strings.Split(r, ",")
@@ -232,6 +258,8 @@ func (c *Config) Validate() error {
 			return errors.New("config: production cannot hold the receipts key in process memory; wire the enclave signer")
 		case len(c.TransparencySecret) > 0:
 			return errors.New("config: production cannot hold the transparency key in process memory; wire the enclave signer")
+		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":
+			return errors.New("config: production verifies device attestation: set APPATTEST_ROOT_CA/APPATTEST_APP_ID and ANDROID_ATTESTATION_ROOTS/ANDROID_SIGNING_DIGESTS")
 		}
 		return errors.New("config: production needs the HSM, payment-HSM and enclave adapters described in payments/integration/README.md, which this reference implementation leaves as interfaces")
 	}

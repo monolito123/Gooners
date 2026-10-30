@@ -270,6 +270,10 @@
     },
     "thumbprint": "oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U"
   },
+  "key_attestation_challenge": {
+    "challenge": "33513d97c18f606a4cb85ff137cbdf470da85b4b4743a46d6b6325d601be3dcc",
+    "device_pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2"
+  },
   "money": [
     {
       "centavos": 0,

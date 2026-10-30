@@ -14,6 +14,7 @@ import br.com.gooners.pay.core.api.GoonersPayApi
 import br.com.gooners.pay.core.api.PixDestination
 import br.com.gooners.pay.core.api.Quote
 import br.com.gooners.pay.core.auth.DeviceList
+import br.com.gooners.pay.core.auth.KeyAttestation
 import br.com.gooners.pay.core.checkout.CheckoutController
 import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.nostr.Bech32
@@ -155,7 +156,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val dpop = c.vault.dpopSigner()
         journal()?.append("session_start")
         val session = withKey(KeyVault.DEVICE) { key ->
-            api.login(key, dpop, settings.deviceId.ifEmpty { null }).also { journal()?.signPending(key) }
+            val deviceId = settings.deviceId.ifEmpty { null }
+            try {
+                api.login(key, dpop, deviceId)
+            } catch (e: ApiException) {
+                // A phone the owner added (or a platform that turned strict attestation on)
+                // proves itself at login: once, with its key attestation.
+                if (e.status != 401 || e.problem?.detail?.contains("attestation_required") != true) throw e
+                api.login(key, dpop, deviceId, c.integrity.evidence(key.publicKeyHex))
+            }.also { journal()?.signPending(key) }
         }
         val a = api.Authed({ unlocker.withKeys { c.vault.load(KeyVault.DEVICE) } }, dpop, session, onKey = { journal()?.signPending(it) })
         authed = a
@@ -196,6 +205,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val device = NostrKeys.generate()
         try {
             unlocker.withKeys { c.vault.store(KeyVault.DEVICE, device) }
+            // The DPoP key is born attested to this device key (forget() removed any older one).
+            c.vault.dpopSigner(KeyAttestation.challenge(device.publicKeyHex))
             if (enrollment.rootNpub != null) {
                 _screen.value = Screen.AwaitingApproval(device.npub, enrollment.tradeName)
                 return@run

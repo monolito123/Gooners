@@ -112,6 +112,11 @@ class ConformanceTest {
         assertEquals(first.id, journal.append("session_start").id)
     }
 
+    @Test fun keyAttestationChallenge() {
+        val x = v["key_attestation_challenge"]!!.jsonObject
+        assertEquals(x.s("challenge"), br.com.gooners.pay.core.auth.KeyAttestation.challenge(x.s("device_pubkey")).toHex())
+    }
+
     @Test fun sandboxCardFormat() {
         val x = v["dev_card"]!!.jsonObject
         val card = json.decodeFromString(DevCard.serializer(), x.s("plaintext"))

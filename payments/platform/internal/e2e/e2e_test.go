@@ -91,7 +91,9 @@ type delivered struct {
 
 func rnd(n int) []byte { b := make([]byte, n); _, _ = rand.Read(b); return b }
 
-func newStack(t *testing.T) *stack {
+// newStack starts the platform, the simulators and PostgreSQL; opts adjust the service's
+// dependencies (a strict attestor, for instance).
+func newStack(t *testing.T, opts ...func(*payments.Deps)) *stack {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -141,10 +143,14 @@ func newStack(t *testing.T) *stack {
 	dec, _ := carddata.NewDev(st.devKey)
 	signer, _ := nostr.GenerateKeys()
 	st.transparencyKey, _ = nostr.GenerateKeys()
-	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}, payments.Deps{
+	deps := payments.Deps{
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
-	})
+	}
+	for _, o := range opts {
+		o(&deps)
+	}
+	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}, deps)
 	st.receiptsKey = signer
 	st.ledger = ledger.New(pool, log)
 	st.svc, st.pool, st.vault = svc, pool, v

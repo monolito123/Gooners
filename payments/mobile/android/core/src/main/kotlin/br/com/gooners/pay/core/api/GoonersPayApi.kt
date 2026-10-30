@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -70,8 +71,8 @@ class GoonersPayApi(
         send("POST", "/v1/enrollment", json.encodeToString(DeviceCreate.serializer(), body), mapOf("Authorization" to "Enrollment $code"), Device.serializer())
 
     /** POST /v1/auth/nostr: the body is sent exactly as its hash was signed. */
-    suspend fun login(device: NostrKeys, dpop: P256Signer, deviceId: String? = null): Session {
-        val body = json.encodeToString(LoginBody.serializer(), LoginBody(dpop.publicJwk, deviceId))
+    suspend fun login(device: NostrKeys, dpop: P256Signer, deviceId: String? = null, attestation: JsonObject? = null): Session {
+        val body = json.encodeToString(LoginBody.serializer(), LoginBody(dpop.publicJwk, deviceId, attestation))
         val event = Nip98.event(device, "POST", "$baseUrl/v1/auth/nostr", body.toByteArray(Charsets.UTF_8), clock.now())
         return send("POST", "/v1/auth/nostr", body, mapOf("Authorization" to Nip98.header(event)), Session.serializer())
     }

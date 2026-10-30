@@ -47,6 +47,7 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/dialects"
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/config"
@@ -301,6 +302,9 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("receipts signer", "npub", npub)
 	}
+	if deps.Attestor, err = attestor(c); err != nil {
+		return err
+	}
 	if len(c.TransparencySecret) == 32 {
 		k, err := nostr.KeysFromSecret(c.TransparencySecret)
 		if err != nil {
@@ -449,6 +453,42 @@ func settle(ctx context.Context, args []string) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
 	})
+}
+
+// attestor builds the device attestation verifier from the configured roots; nil keeps the
+// sandbox behaviour (evidence recorded, not verified).
+func attestor(c *config.Config) (payments.Attestor, error) {
+	if c.AppAttestRoots == "" && c.AndroidAttestationRoots == "" {
+		return nil, nil
+	}
+	pool := func(file string) (*x509.CertPool, error) {
+		pem, err := os.ReadFile(file) // #nosec G304 -- a path the operator configures
+		if err != nil {
+			return nil, err
+		}
+		p := x509.NewCertPool()
+		if !p.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("%s holds no PEM certificates", file)
+		}
+		return p, nil
+	}
+	var a payments.VerifyingAttestor
+	if c.AppAttestRoots != "" {
+		roots, err := pool(c.AppAttestRoots)
+		if err != nil {
+			return nil, err
+		}
+		a.AppAttest = &attest.AppAttestConfig{Roots: roots, AppID: c.AppAttestAppID, Production: c.AppAttestProduction}
+	}
+	if c.AndroidAttestationRoots != "" {
+		roots, err := pool(c.AndroidAttestationRoots)
+		if err != nil {
+			return nil, err
+		}
+		a.KeyAttestation = &attest.KeyAttestationConfig{Roots: roots, PackageName: c.AndroidPackage, SigningDigests: c.AndroidSigningDigests}
+	}
+	log.Info("device attestation", "app_attest", a.AppAttest != nil, "android_key_attestation", a.KeyAttestation != nil)
+	return a, nil
 }
 
 // closeDay closes a Brasília business day into statements and a transparency root by hand

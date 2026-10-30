@@ -12,7 +12,7 @@ import java.io.File
 import br.com.gooners.pay.security.IntegrityProvider
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.Unlocker
-import br.com.gooners.pay.security.UnverifiedIntegrity
+import br.com.gooners.pay.security.KeyAttestationIntegrity
 
 class GoonersPayApp : Application() {
     val container by lazy { AppContainer(this) }
@@ -24,7 +24,7 @@ class AppContainer(context: Context) {
     val journalStore = FileJournalStore(File(context.filesDir, "journal.json"))
     val vault = KeyVault(context)
     val unlocker = Unlocker()
-    val integrity: IntegrityProvider = UnverifiedIntegrity
+    val integrity: IntegrityProvider by lazy { KeyAttestationIntegrity(vault) }
 
     fun api(url: String = settings.apiUrl) = GoonersPayApi(url)
 

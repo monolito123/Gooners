@@ -41,7 +41,12 @@ data class Device(
 )
 
 @Serializable
-data class LoginBody(@SerialName("dpop_jwk") val dpopJwk: Jwk, @SerialName("device_id") val deviceId: String? = null)
+data class LoginBody(
+    @SerialName("dpop_jwk") val dpopJwk: Jwk,
+    @SerialName("device_id") val deviceId: String? = null,
+    /** Sent with a first login when the platform asks for it (attestation_required). */
+    val attestation: JsonObject? = null,
+)
 
 @Serializable
 data class Session(

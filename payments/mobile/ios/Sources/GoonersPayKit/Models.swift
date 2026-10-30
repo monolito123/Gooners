@@ -48,6 +48,8 @@ public struct Device: Codable, Sendable, Equatable {
 struct LoginBody: Codable, Sendable {
     var dpopJwk: JWK
     var deviceId: String?
+    /// Sent with a first login when the platform asks for it (attestation_required).
+    var attestation: [String: String]?
 }
 
 public struct Session: Codable, Sendable, Equatable {

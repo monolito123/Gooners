@@ -12,6 +12,9 @@ public struct APIError: Error, Sendable, CustomStringConvertible {
 
     /// What to show a person.
     public var message: String { problem?.detail ?? problem?.title ?? "Erro \(status)" }
+
+    /// The platform wants this device's attestation with the login (an owner-added phone).
+    public var attestationRequired: Bool { status == 401 && (problem?.detail ?? "").contains("attestation_required") }
 }
 
 /// Refuses redirects: a session token must never follow a 3xx to another host.
@@ -83,8 +86,8 @@ public final class GoonersPayAPI: Sendable {
     }
 
     /// POST /v1/auth/nostr: the body is sent exactly as its hash was signed.
-    public func login(device: NostrKeys, dpop: P256Signer, deviceID: String? = nil) async throws -> Session {
-        let body = try Self.encoder.encode(LoginBody(dpopJwk: dpop.publicJWK, deviceId: deviceID))
+    public func login(device: NostrKeys, dpop: P256Signer, deviceID: String? = nil, attestation: [String: String]? = nil) async throws -> Session {
+        let body = try Self.encoder.encode(LoginBody(dpopJwk: dpop.publicJWK, deviceId: deviceID, attestation: attestation))
         let event = try NIP98.event(keys: device, method: "POST", url: baseURL + "/v1/auth/nostr", body: body, createdAt: clock())
         return try await send("POST", "/v1/auth/nostr", body: body, headers: ["Authorization": NIP98.header(event)])
     }
