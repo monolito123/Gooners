@@ -212,6 +212,30 @@ func (b *Binance) Withdraw(ctx context.Context, w Withdrawal) (string, error) {
 	return r.ID, nil
 }
 
+// Balances implements Exchange (GET /api/v3/account): free plus locked.
+func (b *Binance) Balances(ctx context.Context) (map[string]int64, error) {
+	var r struct {
+		Balances []struct {
+			Asset  string `json:"asset"`
+			Free   string `json:"free"`
+			Locked string `json:"locked"`
+		} `json:"balances"`
+	}
+	if err := b.do(ctx, http.MethodGet, "/api/v3/account", url.Values{"omitZeroBalances": {"true"}}, true, &r); err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	for _, x := range r.Balances {
+		if err := addBalance(out, x.Asset, x.Free); err != nil {
+			return nil, err
+		}
+		if err := addBalance(out, x.Asset, x.Locked); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // ---------------------------------------------------------------- shared HTTP
 
 func httpClient(c *http.Client) *http.Client {

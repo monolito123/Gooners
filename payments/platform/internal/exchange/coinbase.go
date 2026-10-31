@@ -214,3 +214,45 @@ func (c *Coinbase) Deposits(context.Context, string, time.Time) ([]Deposit, erro
 func (c *Coinbase) Withdraw(context.Context, Withdrawal) (string, error) {
 	return "", fmt.Errorf("%w: coinbase withdrawals go through the v2 wallet API", ErrUnsupported)
 }
+
+// Balances implements Exchange (GET /api/v3/brokerage/accounts, every page): available plus
+// on hold.
+func (c *Coinbase) Balances(ctx context.Context) (map[string]int64, error) {
+	out := map[string]int64{}
+	cursor := ""
+	for range 100 {
+		q := url.Values{"limit": {"250"}}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		var r struct {
+			Accounts []struct {
+				Currency  string `json:"currency"`
+				Available struct {
+					Value string `json:"value"`
+				} `json:"available_balance"`
+				Hold struct {
+					Value string `json:"value"`
+				} `json:"hold"`
+			} `json:"accounts"`
+			HasNext bool   `json:"has_next"`
+			Cursor  string `json:"cursor"`
+		}
+		if err := c.do(ctx, http.MethodGet, "/api/v3/brokerage/accounts", q, nil, &r); err != nil {
+			return nil, err
+		}
+		for _, a := range r.Accounts {
+			if err := addBalance(out, a.Currency, a.Available.Value); err != nil {
+				return nil, err
+			}
+			if err := addBalance(out, a.Currency, a.Hold.Value); err != nil {
+				return nil, err
+			}
+		}
+		if !r.HasNext || r.Cursor == "" {
+			return out, nil
+		}
+		cursor = r.Cursor
+	}
+	return nil, fmt.Errorf("coinbase: more than 100 pages of accounts")
+}

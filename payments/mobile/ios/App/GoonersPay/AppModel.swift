@@ -94,9 +94,11 @@ final class AppModel {
     @ObservationIgnored private let integrity: IntegrityProvider = AppAttestIntegrity()
     @ObservationIgnored private let box: SessionBox
     @ObservationIgnored let checkout: CheckoutController
+    @ObservationIgnored let sounds: Sounds
 
     init(settings: AppSettings = AppSettings()) {
         self.settings = settings
+        sounds = Sounds()
         devices = settings.deviceList
         let box = SessionBox()
         self.box = box

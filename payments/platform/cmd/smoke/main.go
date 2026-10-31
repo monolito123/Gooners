@@ -125,6 +125,7 @@ func main() {
 		"PIX_WEBHOOK_ADDR=" + hookAddr, "PIX_WEBHOOK_TLS_CA=" + p("ca.pem"), "PIX_WEBHOOK_TLS_CERT=" + p("platform-server.pem"),
 		"PIX_WEBHOOK_TLS_KEY=" + p("platform-server.key"), "PIX_WEBHOOK_PUBLIC_URL=https://" + hookAddr,
 		"BOOTSTRAP_TENANT=" + tenant, "BOOTSTRAP_CAPITAL=100000000", "METRICS_ADDR=" + metricsAddr,
+		"PLATFORM_DOCUMENT=22222222000191", "REPORTING_URL=https://goonerspay.example",
 	}
 	procs = append(procs, start(env, "platform", "serve"))
 	waitTCP(apiAddr)
@@ -324,6 +325,19 @@ func main() {
 	}
 	quote := call("GET", "/v1/investments/quotes/PETR4", nil, 200)
 	ok("international accounts in USD, EUR and GBP; B3 quote PETR4 R$ %v (lot %v)", quote["last"], quote["lot"])
+	// A withdrawal to the sandbox's sanctioned test address is refused before anything moves.
+	if r := call("POST", "/v1/crypto/withdrawals", map[string]any{"merchant_id": m["id"], "asset": "USDT", "network": "ethereum",
+		"address": "0x0000000000000000000000000000000000000bad", "amount": "1"}, 403); r["code"] != "address_refused" {
+		fail("sanctions screening: %v", r)
+	}
+	// This month's DeCripto, written by the operator command as it would be filed.
+	dc := filepath.Join(dir, "decripto.txt")
+	cli("decripto", "-month", time.Now().In(brt).Format("2006-01"), "-out", dc)
+	file, _ := os.ReadFile(dc)
+	if !strings.HasPrefix(string(file), "0000|22222222000191|") || !strings.Contains(string(file), "\r\n0350|") || !strings.Contains(string(file), "\r\n9999|1|50,00|") {
+		fail("decripto:\n%s", file)
+	}
+	ok("sanctioned address refused; DeCripto written (%d lines)", strings.Count(string(file), "\r\n"))
 
 	resp, err = http.Get("http://" + metricsAddr + "/metrics")
 	if err != nil {

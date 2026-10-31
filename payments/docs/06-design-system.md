@@ -168,7 +168,7 @@ Implemented in both cores (`CheckoutController` in Kotlin and Swift) and unit-te
 
 With "reduce motion" on, the motions become cross-fades. Sounds follow the device's ring mode, except the approval tone, which the merchant can force on in settings because a busy counter often needs it.
 
-As built: Android uses `HapticFeedbackConstants.CONFIRM`/`REJECT`/`CLOCK_TICK`, `ToneGenerator` (two beeps for approval, one low note for a decline) and the system animator scale for "reduce motion"; the tone switch lives in Ajustes. iOS uses `sensoryFeedback` (.success, .error, a light impact on card read) and `accessibilityReduceMotion`, and plays no tones yet, because a tone that ignores the silent switch needs a bundled sound and an audio session.
+As built: Android uses `HapticFeedbackConstants.CONFIRM`/`REJECT`/`CLOCK_TICK`, `ToneGenerator` (two beeps for approval, one low note for a decline) and the system animator scale for "reduce motion"; the tone switch lives in Ajustes. iOS uses `sensoryFeedback` (.success, .error, a light impact on card read), `accessibilityReduceMotion`, and tones the kit synthesizes (`Tone`: a 2 kHz click, C6 then G6 for approval, A3 for a decline; soft attack and release, no audio files) played through `AVAudioEngine`: in the ambient category, which follows the silent switch, except the approval tone with the switch in Ajustes on, which plays in the playback category. The kit's tests measure each tone's frequencies.
 
 ---
 

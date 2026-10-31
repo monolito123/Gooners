@@ -58,10 +58,14 @@ type Deposit struct {
 	At                                      time.Time
 }
 
-// Withdrawal sends an asset out.
+// Withdrawal sends an asset out: Units reach the address.
 type Withdrawal struct {
 	ClientID, Asset, Network, Address, Memo string
 	Units                                   int64
+	// FeeUnits is the network fee the platform expects the venue to take on top (the
+	// merchant pays it). Real venues charge their own; the nightly custody reconciliation
+	// shows any difference.
+	FeeUnits int64
 }
 
 // Exchange is one venue.
@@ -72,6 +76,9 @@ type Exchange interface {
 	DepositAddress(ctx context.Context, asset, network string) (address, memo string, err error)
 	Deposits(ctx context.Context, asset string, since time.Time) ([]Deposit, error)
 	Withdraw(ctx context.Context, w Withdrawal) (id string, err error)
+	// Balances is what the platform's account holds at the venue, available plus held, per
+	// asset the registry knows, in the asset's units. Other assets are left out.
+	Balances(ctx context.Context) (map[string]int64, error)
 }
 
 var (
@@ -115,6 +122,19 @@ func decimal(s, code string) (int64, error) {
 		return 0, fmt.Errorf("exchange: amount %q out of range", s)
 	}
 	return q.Int64(), nil
+}
+
+// addBalance adds a venue's amount of code to bs, if the registry knows the asset.
+func addBalance(bs map[string]int64, code, amount string) error {
+	if _, err := assets.Get(code); err != nil || strings.TrimSpace(amount) == "" {
+		return nil
+	}
+	n, err := decimal(amount, code)
+	if err != nil {
+		return err
+	}
+	bs[code] += n
+	return nil
 }
 
 // trimmed formats units of code without trailing zeros, as exchanges expect quantities.

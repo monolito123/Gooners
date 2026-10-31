@@ -34,6 +34,8 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/assets`, `internal/exchange`, `internal/payments` (crypto) | The asset registry (decimals, networks, exact conversions); Binance, Kraken and Coinbase adapters with a best-price router and an in-memory venue; crypto payments settled in reais, holdings, conversions with a slippage guard, withdrawals | [09 §3](../docs/09-digital-assets-international-b3.md#3-crypto) |
 | `internal/fx`, `internal/payments` (international) | Wise Platform adapter and an in-memory provider; USD, EUR and GBP balances, bank details and references, credits by reference, conversions with IOF, payments abroad (IBAN, ABA, sort code) | [09 §4](../docs/09-digital-assets-international-b3.md#4-accounts-abroad) |
 | `internal/brokerage`, `internal/payments` (investments) | B3 rules (tickers, lots and the fractional market, the session as it follows US daylight time, D+2, fees), suitability (CVM 30), a broker contract, brapi.dev prices and an in-memory broker | [09 §5](../docs/09-digital-assets-international-b3.md#5-b3) |
+| `internal/screening` | Sanctions screening of withdrawal addresses: OFAC's `SDN.CSV` or address lists (files or URLs, refreshed, refused when stale), a screening provider's contract, and a set that fails closed | [09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules) |
+| `internal/decripto`, `internal/payments` (decripto, custody) | The DeCripto file in the national-provider layout of ADE COPES 2/2025 (reproduces the manual's examples byte for byte), built monthly from payments, conversions and withdrawals; the nightly reconciliation of each exchange's balances against the ledger's custody | [09 §6.3, §8](../docs/09-digital-assets-international-b3.md#63-reporting-crypto-to-the-receita-federal) |
 | `internal/console` | The web console at `/console/`: every API function in the browser, statements checked client-side; static, embedded, strict CSP | below |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
 
@@ -111,6 +113,8 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `EXCHANGES`, `BINANCE_*`, `KRAKEN_*`, `COINBASE_*`, `CRYPTO_AUTHORIZATION`, `CRYPTO_FEE_BPS`, `CRYPTO_SPREAD_BPS` | Crypto venues and pricing ([09 §7](../docs/09-digital-assets-international-b3.md#7-configuration)) |
 | `FX_PROVIDER`, `WISE_*`, `FX_AUTHORIZATION`, `FX_FEE_BPS`, `FX_SPREAD_BPS`, `IOF_FX_OUT_BPS`, `IOF_FX_IN_BPS` | Accounts abroad, câmbio pricing and IOF |
 | `BROKER_URL`, `BROKER_TOKEN`, `BROKER_NAME`, `BRAPI_TOKEN` | The B3 broker and display prices |
+| `SANCTIONS_LISTS`, `SCREENING_URL`, `SCREENING_TOKEN` | Sanctions screening of withdrawal addresses ([09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)); the sandbox refuses its own test addresses without them |
+| `REPORTING_NAME`, `REPORTING_URL` | The platform's name and URL in the DeCripto, beside `PLATFORM_DOCUMENT` |
 
 | Guard | sandbox | certification | production |
 |-------|:-------:|:-------------:|:----------:|
@@ -121,6 +125,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | No receivables registrar, no attestation roots | allowed (in-memory registrar, attestation recorded) | allowed | refused |
 | In-memory exchange, FX provider and broker | allowed (the default) | allowed | refused |
 | Crypto or câmbio without `CRYPTO_AUTHORIZATION` / `FX_AUTHORIZATION` | allowed | allowed | refused |
+| Crypto without sanctions screening sources, or without the DeCripto's CNPJ and URL | allowed (sandbox test list) | allowed | refused |
 
 ## Implemented API surface
 
@@ -152,7 +157,8 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 - webhook signatures against the spec's vector;
 - configuration guards;
 - the full API flow, ending with L1–L6 and verified webhook signatures;
-- crypto, accounts abroad and B3 end to end: a USDT payment settled in reais, unique amounts, conversions both ways, a withdrawal, a credit from abroad by reference, IOF, a payment abroad, suitability, lots and the fractional market, D+2 settlement; the exchange adapters' signatures against fake venues;
+- crypto, accounts abroad and B3 end to end: a USDT payment settled in reais, unique amounts, conversions both ways, a withdrawal, a credit from abroad by reference, IOF, a payment abroad, suitability, lots and the fractional market, D+2 settlement; the exchange adapters' signatures and balances against fake venues;
+- compliance for crypto: sanctions screening (a hit refused before anything moves, every attempt recorded, fail closed without a source or when one errors), the custody reconciliation (balanced after the flows, an unmatched deposit found at a quiet time, a coin that leaves without a journal), and the DeCripto (records from real operations, filing, no rewrite after filing, December's balances), whose encoder reproduces the manual's examples;
 - operations: merchant lifecycle and revocations with their audit rows, a chargeback larger than the balance (booked as owed, recovered after the win), merchant acceptance and deadline expiry, a settlement report with true-ups, suspense, duplicate and replay protection, a lost Pix webhook healed by reconciliation, a MED return applied once, the jobs lease and the metrics.
 
 - security: tenant isolation on every route, scopes, input hardening, headers, rate limits, webhook SSRF and redirects, sealed webhook secrets, card data in no log or clear column, and STAN reuse ([security assessment](../integration/security-assessment.md)).
@@ -169,5 +175,7 @@ Operators run the platform with subcommands of the same binary, in the same envi
 | `terminal-revoke`, `apikey-list`, `apikey-revoke` | Lost devices and leaked keys |
 | `disputes-import`, `disputes-list`, `write-off` | Chargeback notices from the sponsor; what a closed merchant could not repay |
 | `recon-card`, `recon-pix`, `recon-exceptions`, `recon-allocate`, `recon-resolve` | Settlement-report and daily Pix reconciliation, and the exception queue |
+| `recon-custody` | Each exchange's balances against the ledger's custody, now (the job runs it every night) |
+| `decripto`, `decripto-filed` | Write a month's DeCripto for filing; record the Coleta Nacional's receipt |
 
-`serve` runs the periodic jobs every minute on one replica at a time (scheduled releases, payout outcomes, dispute deadlines, shortfall recovery, the previous day's Pix reconciliation after 06:00 Brasília time, crypto deposits and expiries, credits from abroad, and B3 settlement).
+`serve` runs the periodic jobs every minute on one replica at a time (scheduled releases, payout outcomes, dispute deadlines, shortfall recovery, the previous day's Pix reconciliation after 06:00 Brasília time, crypto deposits and expiries, credits from abroad, B3 settlement, the custody reconciliation after 02:00, and last month's DeCripto on the first days of the month).

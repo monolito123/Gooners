@@ -50,8 +50,11 @@ type Config struct {
 	// TransparencyPadTo pads each day's transparency log to a multiple of this many leaves
 	// (docs/03 §6.4). Default 4096.
 	TransparencyPadTo int
-	// PlatformDocument is the platform's CNPJ: the beneficiary of the assignments it registers.
+	// PlatformDocument is the platform's CNPJ: the beneficiary of the assignments it registers,
+	// and the declarant of the DeCripto.
 	PlatformDocument string
+	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
+	ReportingName, ReportingURL string
 	// RiskMode is how the fraud shield acts on card-present sales: enforce (default),
 	// shadow (assess and record only) or off.
 	RiskMode string
@@ -86,6 +89,7 @@ type Service struct {
 	exchanges    *exchange.Router
 	fx           fx.Provider
 	broker       brokerage.Broker
+	screener     AddressScreener
 	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
@@ -113,7 +117,10 @@ type Deps struct {
 	FX fx.Provider
 	// Broker routes merchants' orders to B3; nil turns investments off.
 	Broker brokerage.Broker
-	Logger *slog.Logger
+	// Screener checks withdrawal addresses against sanctions lists before anything is sent
+	// (docs/09 §6.1). Without one, withdrawals are refused.
+	Screener AddressScreener
+	Logger   *slog.Logger
 }
 
 // New returns the service.
@@ -141,7 +148,7 @@ func New(cfg Config, d Deps) *Service {
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
-		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker}
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener}
 }
 
 // Errors surfaced to the API as problem details.
@@ -156,6 +163,8 @@ var (
 	// ErrUnavailable is an upstream the operation needs (the receivables registrar) not answering.
 	ErrUnavailable = errors.New("upstream unavailable")
 	ErrSandboxed   = errors.New("not allowed outside the sandbox")
+	// ErrScreened is a destination sanctions screening refused.
+	ErrScreened = errors.New("refused by sanctions screening")
 )
 
 func invalid(format string, a ...any) error {

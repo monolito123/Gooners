@@ -1357,7 +1357,11 @@ paths:
       tags: [assets]
       operationId: withdrawCrypto
       summary: Send crypto the merchant holds to an outside address (payouts:write)
-      description: Final once sent. The network fee is taken from the holding; the address is checked against the network's format.
+      description: >
+        Final once sent. The address is checked against the network's format and screened
+        against sanctions lists before anything moves: a listed address is refused with 403
+        address_refused, and a screening that cannot be completed with 503 (nothing is sent
+        either way; every screening is recorded). The network fee is taken from the holding.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -3171,6 +3175,11 @@ components:
       type: object
       required: [asset, network, address, amount]
       properties:
+        destination_type:
+          type: string
+          enum: [wallet, exchange]
+          default: wallet
+          description: A wallet no provider keeps, or an account at another provider (the DeCripto reports them apart).
         merchant_id:
           $ref: "#/components/schemas/Id"
         asset:
@@ -3208,6 +3217,14 @@ components:
         status:
           type: string
           enum: [sent, failed]
+        destination_type:
+          type: string
+          enum: [wallet, exchange]
+        value_brl:
+          description: The amount's value in centavos at the best price to sell when sent; null without a price.
+          oneOf:
+            - $ref: "#/components/schemas/MinorUnits"
+            - type: "null"
     ReceiveDetails:
       type: object
       required: [holder, bank, reference]

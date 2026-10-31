@@ -109,6 +109,13 @@ type Config struct {
 	// production: its own BCB authorization or the licensed partner it acts for.
 	CryptoAuthorization, FXAuthorization                                      string
 	CryptoFeeBps, CryptoSpreadBps, FXFeeBps, FXSpreadBps, IOFOutBps, IOFInBps int
+	// SanctionsLists are lists of sanctioned addresses (paths or https URLs: OFAC's SDN.CSV,
+	// or one address per line); ScreeningURL is a screening provider's adapter. Crypto
+	// withdrawals are screened against all of them (docs/09 §6.1).
+	SanctionsLists               []string
+	ScreeningURL, ScreeningToken string
+	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
+	ReportingName, ReportingURL string
 	// RiskMode is how the fraud shield acts (docs/07 §3): enforce, shadow or off.
 	RiskMode  string
 	Relays    []string
@@ -224,6 +231,13 @@ func Load() (*Config, error) {
 	c.FXProvider, c.WiseToken, c.WiseProfile, c.WiseURL = os.Getenv("FX_PROVIDER"), os.Getenv("WISE_TOKEN"), os.Getenv("WISE_PROFILE_ID"), os.Getenv("WISE_BASE_URL")
 	c.BrokerURL, c.BrokerToken, c.BrokerName, c.BrapiToken = os.Getenv("BROKER_URL"), os.Getenv("BROKER_TOKEN"), env("BROKER_NAME", "broker"), os.Getenv("BRAPI_TOKEN")
 	c.CryptoAuthorization, c.FXAuthorization = os.Getenv("CRYPTO_AUTHORIZATION"), os.Getenv("FX_AUTHORIZATION")
+	for _, x := range strings.Split(os.Getenv("SANCTIONS_LISTS"), ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			c.SanctionsLists = append(c.SanctionsLists, x)
+		}
+	}
+	c.ScreeningURL, c.ScreeningToken = os.Getenv("SCREENING_URL"), os.Getenv("SCREENING_TOKEN")
+	c.ReportingName, c.ReportingURL = env("REPORTING_NAME", "goonersPAY"), os.Getenv("REPORTING_URL")
 	for name, dst := range map[string]*int{"CRYPTO_FEE_BPS": &c.CryptoFeeBps, "CRYPTO_SPREAD_BPS": &c.CryptoSpreadBps, "FX_FEE_BPS": &c.FXFeeBps,
 		"FX_SPREAD_BPS": &c.FXSpreadBps, "IOF_FX_OUT_BPS": &c.IOFOutBps, "IOF_FX_IN_BPS": &c.IOFInBps} {
 		if v := os.Getenv(name); v != "" {
@@ -327,6 +341,10 @@ func (c *Config) Validate() error {
 			return errors.New("config: the sandbox exchange and FX provider do not run in production")
 		case len(c.Exchanges) > 0 && c.CryptoAuthorization == "":
 			return errors.New("config: crypto in production needs CRYPTO_AUTHORIZATION: the BCB authorization (Res. BCB 519/2025) or the authorized provider the platform acts for")
+		case len(c.Exchanges) > 0 && len(c.SanctionsLists) == 0 && c.ScreeningURL == "":
+			return errors.New("config: crypto in production screens withdrawal addresses: set SANCTIONS_LISTS (OFAC's SDN.CSV or address lists) and/or SCREENING_URL")
+		case len(c.Exchanges) > 0 && (c.PlatformDocument == "" || c.ReportingURL == ""):
+			return errors.New("config: crypto in production files the DeCripto: set PLATFORM_DOCUMENT (the CNPJ) and REPORTING_URL")
 		case c.FXProvider != "" && c.FXAuthorization == "":
 			return errors.New("config: foreign exchange in production needs FX_AUTHORIZATION: the institution authorized for câmbio that carries the operations")
 		case c.RiskMode == "off":

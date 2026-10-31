@@ -615,6 +615,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusPaymentRequired, "card-declined", "The card was declined", err.Error())
 	case errors.Is(err, payments.ErrExpired):
 		problem(w, r, http.StatusGone, "expired", "Expired", err.Error())
+	case errors.Is(err, payments.ErrScreened):
+		problem(w, r, http.StatusForbidden, "address-refused", "The destination was refused by sanctions screening", err.Error())
 	case errors.Is(err, payments.ErrUnavailable):
 		problem(w, r, http.StatusServiceUnavailable, "upstream-unavailable", "A required upstream is unavailable; retry later", err.Error())
 	case errors.Is(err, payments.ErrDisabled):

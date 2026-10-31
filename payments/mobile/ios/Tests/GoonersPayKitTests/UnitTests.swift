@@ -79,14 +79,34 @@ final class UnitTests: XCTestCase {
         XCTAssertTrue(Wording.calm(status: 0, detail: nil).contains("Nada foi enviado"))
     }
 
+    /// The tones of docs/06 §7: two rising notes, one low note, a click; soft edges, no clipping.
+    func testTones() {
+        let rate = 8_000.0
+        func crossings(_ s: ArraySlice<Float>) -> Int { zip(s, s.dropFirst()).filter { ($0 < 0) != ($1 < 0) }.count }
+        let approved = Tone.approved.samples(sampleRate: rate)
+        XCTAssertEqual(approved.count, Int(0.12 * rate) + Int(0.03 * rate) + Int(0.16 * rate))
+        let first = approved[0..<Int(0.12 * rate)], second = approved[Int(0.15 * rate)...]
+        // Zero crossings per second are twice the frequency: about 1047 Hz, then 1568 Hz.
+        XCTAssertEqual(Double(crossings(first)) / 0.12 / 2, 1_046.5, accuracy: 60)
+        XCTAssertEqual(Double(crossings(second)) / 0.16 / 2, 1_568, accuracy: 60)
+        let declined = Tone.declined.samples(sampleRate: rate)
+        XCTAssertEqual(Double(crossings(declined[...])) / 0.35 / 2, 220, accuracy: 20)
+        for t in Tone.allCases {
+            let s = t.samples(sampleRate: rate)
+            XCTAssertLessThanOrEqual(s.map(abs).max() ?? 1, 0.5, "\(t) clips")
+            XCTAssertLessThan(abs(s.first!) + abs(s.last!), 0.01, "\(t) clicks at its edges")
+        }
+    }
+
     /// The method sheet puts the last method first; a long press repeats it (docs/06 §5).
     @MainActor
     func testTheLastMethodComesFirst() {
         struct Fixed: StanSource { func next() -> String { "000001" } }
         let memory = InMemoryMethods()
-        var crypto: CryptoChoice? = nil
+        final class Offer { var choice: CryptoChoice? }
+        let offer = Offer()
         let c = CheckoutController(api: { throw APIError(status: 0, problem: nil) }, reader: { throw APIError(status: 0, problem: nil) },
-                                   stan: Fixed(), memory: memory, cryptoOffer: { crypto })
+                                   stan: Fixed(), memory: memory, cryptoOffer: { offer.choice })
         XCTAssertEqual(c.methods(), [.credit, .debit, .pix])
         XCTAssertEqual(c.state, .entering(.zero, repeat: nil))
         for d in [5, 0, 0] { c.digit(d) }
@@ -98,7 +118,7 @@ final class UnitTests: XCTestCase {
         XCTAssertEqual(c.methods(), [.pix, .credit, .debit])
         memory.last = .crypto
         XCTAssertEqual(c.methods(), [.credit, .debit, .pix]) // crypto only where the merchant takes it
-        crypto = CryptoChoice()
+        offer.choice = CryptoChoice()
         XCTAssertEqual(c.methods(), [.crypto, .credit, .debit, .pix])
         c.nextSale()
         c.set(Money(5_000))

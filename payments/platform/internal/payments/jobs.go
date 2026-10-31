@@ -85,6 +85,26 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	} else if n > 0 {
 		s.log.Info("investment trades settled", "count", n)
 	}
+	// The exchanges' balances against the ledger's custody, once a night (docs/09 §8).
+	if due, err := s.custodyReconDue(ctx, now); err != nil {
+		s.log.Error("custody reconciliation", "err", err)
+	} else if due && renew() {
+		if run, err := s.ReconcileCustody(ctx, now); err != nil {
+			s.log.Error("custody reconciliation", "err", err)
+		} else {
+			s.log.Info("custody reconciliation", "date", run.Date, "status", run.Status, "exceptions", len(run.Exceptions))
+		}
+	}
+	// Last month's DeCripto, written early in the month for operations to review and file.
+	if month, due, err := s.deCriptoDue(ctx, now); err != nil {
+		s.log.Error("decripto", "err", err)
+	} else if due && renew() {
+		if rep, err := s.BuildDeCripto(ctx, month); err != nil {
+			s.log.Error("decripto", "period", month.Format("2006-01"), "err", err)
+		} else {
+			s.log.Info("decripto written", "period", rep.Period, "due_by", rep.DueBy, "records", rep.Records, "warnings", len(rep.Warnings))
+		}
+	}
 	if b := now.In(brt); b.Hour() == 3 && b.Minute() == 17 { // once a night, off peak
 		if n, err := s.PurgeRiskAssessments(ctx, now); err != nil {
 			s.log.Error("purge risk assessments", "err", err)
@@ -180,6 +200,9 @@ func (s *Service) RegisterMetrics(r *metrics.Registry) {
 	grouped("goonerspay_recon_exceptions_open", "Unresolved reconciliation exceptions by kind.", "kind",
 		`SELECT kind, count(*) FROM recon_exceptions WHERE resolved_at IS NULL GROUP BY kind`)
 	grouped("goonerspay_merchants", "Merchants by status.", "status", `SELECT status, count(*) FROM merchants GROUP BY status`)
+	count("goonerspay_decripto_unfiled", "DeCripto files written and not yet marked filed.", `SELECT count(*) FROM decripto_reports WHERE filed_at IS NULL`)
+	count("goonerspay_address_screening_hits_24h", "Withdrawal addresses refused by sanctions screening in the last 24 hours.",
+		`SELECT count(*) FROM address_screenings WHERE result = 'hit' AND created_at > now() - interval '24 hours'`)
 	// L5 headroom: safeguarding reserve minus client money. Alert well before it reaches zero.
 	grouped("goonerspay_safeguarding_headroom_centavos", "Safeguarding reserve minus client liabilities, per tenant.", "tenant",
 		`SELECT tenant_id::text, COALESCE(SUM(CASE WHEN account_id = '`+ledger.AccSafeguardingReserve+`' THEN balance ELSE -balance END), 0)

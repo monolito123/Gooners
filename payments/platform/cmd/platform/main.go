@@ -24,6 +24,9 @@
 //	platform recon-exceptions -tenant UUID
 //	platform recon-resolve -tenant UUID -id N -resolution R -actor A
 //	platform recon-allocate -tenant UUID -amount CENTS -to ACCOUNT -reason R -actor A
+//	platform recon-custody                  compare the exchanges' balances with the ledger now
+//	platform decripto [-month YYYY-MM] [-out FILE]   write a month's DeCripto for filing
+//	platform decripto-filed -month YYYY-MM -sha256 H -receipt N -actor A
 package main
 
 import (
@@ -63,6 +66,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
 	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
+	"github.com/monolito123/Gooners/payments/platform/internal/screening"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -334,6 +338,29 @@ func serve(ctx context.Context) error {
 	case c.Env == config.Sandbox:
 		deps.Broker = brokerage.NewMemory()
 	}
+	if deps.Exchanges != nil {
+		var set screening.Set
+		if len(c.SanctionsLists) > 0 {
+			l := &screening.List{Sources: c.SanctionsLists}
+			if err := l.Load(ctx); err != nil {
+				// Withdrawals are refused (fail closed) until a refresh succeeds.
+				log.Error("sanctions lists not loaded", "err", err)
+			} else {
+				log.Info("sanctions lists loaded", "addresses", l.Size())
+			}
+			go l.Refresh(ctx, 6*time.Hour, log.Error)
+			set = append(set, l)
+		}
+		if c.ScreeningURL != "" {
+			set = append(set, &screening.Service{URL: c.ScreeningURL, Token: c.ScreeningToken})
+		}
+		if len(set) == 0 && c.Env == config.Sandbox {
+			set = screening.Set{screening.SandboxAddresses}
+		}
+		if len(set) > 0 {
+			deps.Screener = set
+		}
+	}
 	if len(c.TransparencySecret) == 32 {
 		k, err := nostr.KeysFromSecret(c.TransparencySecret)
 		if err != nil {
@@ -344,6 +371,7 @@ func serve(ctx context.Context) error {
 		log.Info("transparency signer", "npub", npub)
 	}
 	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
+		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL,
 		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {

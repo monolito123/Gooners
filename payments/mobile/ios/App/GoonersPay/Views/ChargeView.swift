@@ -228,6 +228,7 @@ private struct TapTarget: View {
 /// The check draws in 400 ms and the amount scales 1.0 → 1.04 → 1.0 (motion.approve,
 /// docs/06 §7), with the success haptic; with Reduce Motion it cross-fades instead.
 private struct ApprovedView: View {
+    @Environment(AppModel.self) private var model
     let sale: Sale
     let stay: @MainActor () -> Void
     let next: @MainActor () -> Void
@@ -273,6 +274,7 @@ private struct ApprovedView: View {
             .onAppear {
                 appeared = true
                 shownAt = Date()
+                model.sounds.play(.approved, ignoringSilentSwitch: model.settings.approvalTone)
                 if reduceMotion {
                     drawn = 1
                 } else {
@@ -305,6 +307,7 @@ private struct CheckMark: Shape {
 
 /// Declined: the amount shakes 2 pt once, with the error haptic (docs/06 §7).
 private struct DeclinedView: View {
+    @Environment(AppModel.self) private var model
     let amount: Money
     let message: String
     let retry: @MainActor () -> Void
@@ -317,7 +320,10 @@ private struct DeclinedView: View {
         AmountText(amount: amount)
             .modifier(Shake(travel: reduceMotion ? 0 : 2, shakes: shakes))
             .sensoryFeedback(.error, trigger: shakes)
-            .onAppear { withAnimation(.linear(duration: 0.2)) { shakes = 1 } }
+            .onAppear {
+                model.sounds.play(.declined)
+                withAnimation(.linear(duration: 0.2)) { shakes = 1 }
+            }
         Text(message).multilineTextAlignment(.center)
         Spacer()
         Button("Tentar de novo") { retry() }.buttonStyle(.primary)
@@ -340,12 +346,16 @@ private struct Shake: GeometryEffect {
 
 /// A light tick, once, when the card has been read.
 private struct CardDetected: View {
+    @Environment(AppModel.self) private var model
     @State private var read = false
 
     var body: some View {
         Color.clear.frame(height: 0)
             .sensoryFeedback(.impact(weight: .light), trigger: read)
-            .onAppear { read = true }
+            .onAppear {
+                read = true
+                model.sounds.play(.cardRead)
+            }
             .accessibilityHidden(true)
     }
 }

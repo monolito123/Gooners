@@ -71,6 +71,12 @@ final class AppSettings: @unchecked Sendable {
         set { defaults.set(newValue, forKey: "last_method") }
     }
 
+    /// The approval tone plays even in silent mode: a busy counter often needs it (docs/06 §7).
+    var approvalTone: Bool {
+        get { defaults.bool(forKey: "approval_tone") }
+        set { defaults.set(newValue, forKey: "approval_tone") }
+    }
+
     /// The merchant takes stablecoins at the counter, settled in reais (docs/09).
     var acceptsCrypto: Bool {
         get { defaults.bool(forKey: "accepts_crypto") }
@@ -91,7 +97,7 @@ final class AppSettings: @unchecked Sendable {
 
     func clear() {
         for k in ["api_url", "sandbox_card_key", "merchant_id", "device_id", "device_pubkey", "merchant_root_pub", "trade_name", "root_backed_up",
-                  "device_list", "device_list_at", "stan", "last_method", "accepts_crypto"] {
+                  "device_list", "device_list_at", "stan", "last_method", "accepts_crypto", "approval_tone"] {
             defaults.removeObject(forKey: k)
         }
     }

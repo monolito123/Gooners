@@ -96,6 +96,10 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 		"do not run in production": func(c *Config) { c.Exchanges = []string{"sandbox"} },
 		"CRYPTO_AUTHORIZATION":     func(c *Config) { c.Exchanges = []string{"binance"} },
 		"FX_AUTHORIZATION":         func(c *Config) { c.FXProvider = "wise" },
+		"SANCTIONS_LISTS":          func(c *Config) { c.Exchanges, c.CryptoAuthorization = []string{"binance"}, "SPSAV" },
+		"REPORTING_URL": func(c *Config) {
+			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists = []string{"binance"}, "SPSAV", []string{"/etc/platform/sdn.csv"}
+		},
 	} {
 		c := prod()
 		mod(c)
@@ -105,6 +109,7 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 	}
 	c := prod()
 	c.Exchanges, c.CryptoAuthorization, c.FXProvider, c.FXAuthorization = []string{"binance"}, "SPSAV autorizada pelo BCB", "wise", "Banco parceiro de câmbio"
+	c.ScreeningURL, c.ReportingURL = "https://screening.internal/v1/screen", "https://goonerspay.example"
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
 		t.Errorf("with authorizations the remaining check is the HSM adapters: %v", err)
 	}

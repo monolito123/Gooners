@@ -1056,7 +1056,7 @@ A conversion is quoted first and executed only on request, within 30 seconds. A 
 
 ### 11.3 `POST /v1/crypto/withdrawals`
 
-Sends crypto the merchant holds to an outside address. The address is checked against the network's format and the network fee is taken from the holding. Sending is final, so it needs `payouts:write` like a Pix payout.
+Sends crypto the merchant holds to an outside address. The address is checked against the network's format and **screened against sanctions lists before anything moves** ([09 §6.1](09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)): a listed address is refused with `403 address_refused`, and a screening that cannot be completed with `503`; nothing is sent either way, and every screening is recorded. The network fee is taken from the holding. `destination_type` says whether the coins go to a wallet no provider keeps (`wallet`, the default) or to an account at another provider (`exchange`); the DeCripto reports them apart. Sending is final, so it needs `payouts:write` like a Pix payout.
 
 ```json
 {
@@ -1064,7 +1064,8 @@ Sends crypto the merchant holds to an outside address. The address is checked ag
   "asset": "BTC",
   "network": "bitcoin",
   "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
-  "amount": "0.0001"
+  "amount": "0.0001",
+  "destination_type": "wallet"
 }
 ```
 
@@ -1079,7 +1080,9 @@ Sends crypto the merchant holds to an outside address. The address is checked ag
   "network_fee_units": 10000,
   "object": "crypto_withdrawal",
   "status": "sent",
-  "venue": "simex"
+  "venue": "simex",
+  "destination_type": "wallet",
+  "value_brl": 3493
 }
 ```
 

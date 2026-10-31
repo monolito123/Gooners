@@ -12,7 +12,9 @@ Everything here is built and tested against simulators that behave like the venu
 |------------|----------|-------------|------|------------------------|
 | Crypto payment, settled in reais | Unique-amount charges, deposit polling, sale at once, fee | Charge with QR and countdown | Checkout method (opt-in) | An exchange account and a VASP authorization (§6.1) |
 | Crypto prices, holdings, buy and sell | Router across Binance, Kraken and Coinbase | Markets, holdings, quote and confirm | Ativos: holdings, quote and confirm | Same |
-| Crypto withdrawal | Address checks per network, fees | Enviar cripto | Not in the apps (final once sent) | Same, plus withdrawal allow-lists at the venue |
+| Crypto withdrawal | Address checks per network, sanctions screening before anything moves, fees | Enviar cripto | Not in the apps (final once sent) | Same, plus withdrawal allow-lists at the venue and the lists or provider of §6.1 |
+| Custody reconciliation | Each venue's balances against the ledger, every night; unapplied deposits | | | The venues' read-only keys |
+| DeCripto (monthly report to the Receita) | The file in the layout of ADE COPES 2/2025, written on the first days of each month | | | Filing at the Coleta Nacional with the company's e-CNPJ certificate |
 | Accounts abroad (USD, EUR, GBP) | Balances, bank details, references, credits | Accounts, details, simulated credit | Ativos: balances and details to copy | A câmbio institution and a Wise Platform contract (§6.2) |
 | Buying and selling foreign currency | Quotes with IOF apart | Converter | Ativos | Same |
 | Paying abroad | IBAN, ABA, sort code checks; reversal on failure | Pagar no exterior | Not in the apps | Same |
@@ -107,7 +109,7 @@ sequenceDiagram
 
 ### 3.3 Holdings, conversions and withdrawals
 
-A merchant may also keep crypto: buy with reais from the wallet, sell into it, and send it out. Every conversion is quoted first (30 seconds, the fee shown apart) and executed only on request; execution is idempotent. A withdrawal checks the address against the network (Bitcoin bech32 or base58, Ethereum and Polygon hex, Tron base58 `T…`, Solana base58), takes the network fee from the holding, and is final once the exchange accepts it.
+A merchant may also keep crypto: buy with reais from the wallet, sell into it, and send it out. Every conversion is quoted first (30 seconds, the fee shown apart) and executed only on request; execution is idempotent. A withdrawal checks the address against the network (Bitcoin bech32 or base58, Ethereum and Polygon hex, Tron base58 `T…`, Solana base58), screens it against sanctions lists (§6.1), takes the network fee from the holding, and is final once the exchange accepts it. It also records its value in reais at the best price to sell at that moment, and whether it goes to a wallet no provider keeps or to an account at another provider (`destination_type`), which the DeCripto reports apart.
 
 ---
 
@@ -176,6 +178,7 @@ Law 14.478/2022 set the legal framework for virtual-asset service providers, and
 - Segregation is already the ledger's shape: custody accounts per venue and asset, merchant holdings per merchant, and invariant L6.
 - Payments in stablecoins to or from abroad may be câmbio under Resolution 521; the crypto payments here are domestic (a Brazilian merchant, an exchange in Brazil or abroad through the authorized provider). Counsel classifies each flow before launch ([08](08-roadmap-risks.md)).
 - Transition deadlines for providers already operating ran through 2026; one guide gives 30 October 2026 for filing authorization requests. Confirm against the Central Bank's text.
+- **Sanctions screening.** Every withdrawal address is screened before anything moves, against all the sources configured, and the result is recorded (`address_screenings`), clear or not. A listed address is refused (`403 address_refused`) and the attempt is kept for compliance; a screening that cannot be completed refuses too (`503`): an error is never a pass. The sources are lists, refreshed every six hours and refused once older than 72 hours: OFAC's `SDN.CSV`, whose remarks carry each "Digital Currency Address - XBT …" ([OFAC Sanctions List Search](https://sanctionssearch.ofac.treas.gov/)), or one address per line, such as the nightly lists extracted from OFAC's data ([0xB10C/ofac-sanctioned-digital-currency-addresses](https://github.com/0xB10C/ofac-sanctioned-digital-currency-addresses)) or a compliance team's own; and a screening provider through a small contract (`GET {SCREENING_URL}?network=…&address=…` answering `{"sanctioned": …, "matches": […]}`) an adapter translates to the contracted vendor's API. Production refuses to start crypto without at least one source. The sandbox refuses its own synthetic test addresses (`0x0000000000000000000000000000000000000bad` and `TSanctionedTestAddressForSandbox12`) so integrations can see a refusal.
 
 ### 6.2 Câmbio and accounts abroad
 
@@ -183,7 +186,19 @@ Foreign-currency balances, conversions and payments abroad are câmbio operation
 
 ### 6.3 Reporting crypto to the Receita Federal
 
-IN RFB 2.291 of 14 November 2025 created the DeCripto, replacing IN RFB 1.888/2019 with per-operation reporting aligned with the OECD's crypto-asset framework; providers in Brazil report their clients' operations, monthly, through e-CAC ([Mattos Filho](https://www.mattosfilho.com.br/unico/decripto-receita-federal-ocde/), [Normas Legais](https://www.normaslegais.com.br/legislacao/instrucao-normativa-rfb-2291-2025.htm), [Cepeda](https://cepeda.law/instrucao-normativa-rfb-no-2-291-2025-declaracao-de-criptoativos-decripto/?lang=en)). Sources differ on the first month due (July 2026 is the most cited). The platform keeps what the report needs, one row per operation: `crypto_deposits`, `conversions` and `asset_transfers`, each with the merchant, asset, quantity, value in reais, venue and time. The export in the DeCripto layout (ADE COPES 2/2025) is a reporting job still to write (§8).
+IN RFB 2.291 of 14 November 2025 created the DeCripto, replacing IN RFB 1.888/2019 with per-operation reporting aligned with the OECD's crypto-asset framework; providers in Brazil report their clients' operations, monthly, through e-CAC ([Mattos Filho](https://www.mattosfilho.com.br/unico/decripto-receita-federal-ocde/), [Normas Legais](https://www.normaslegais.com.br/legislacao/instrucao-normativa-rfb-2291-2025.htm), [Cepeda](https://cepeda.law/instrucao-normativa-rfb-no-2-291-2025-declaracao-de-criptoativos-decripto/?lang=en)). Sources differ on the first month due (July 2026 is the most cited). The monthly obligation started on 1 July 2026, and each month is due by the last business day of the next, 23:59:59 Brasília ([Receita Federal: atos da DeCripto](https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/declaracoes-e-demonstrativos/criptoativos/decripto), [DNA Law](https://dnalaw.law/2025/11/19/in-rfb-no-2-291-2025-inaugura-novo-marco-regulatorio-para-reporte-de-criptoativos/)).
+
+The platform writes the file itself (`internal/decripto`), in the national-provider ("Exchange") layout of version 1.0, as the [Manual de Orientação do Leiaute da DeCripto](https://www.gov.br/receitafederal/pt-br/centrais-de-conteudo/publicacoes/manuais/manual-orientacao-leiaute-criptoativos/manual-de-orientacao-do-leiaute-da-decripto-v1.pdf) (version 1.01) describes it: UTF-8 text, one record per line ending in CR LF, fields joined by `|`, decimal commas without thousands separators, dates as DDMMAAAA in Brasília, CNPJ and CPF as digits only. The tests reproduce the manual's own examples of records 0110, 0350, 0450 and 0650 byte for byte. Each operation of the platform's clients becomes:
+
+| Operation | Records |
+|-----------|---------|
+| A crypto payment to a merchant | 0350 (code III, transfer in for the sale of goods or services, `TipoTransferenciaEntrada` 6) and 0110 (code I, the merchant sells the coins to the platform for the amount in reais, with the fee) |
+| A conversion | 0110: buying, the merchant is the buyer and the platform the seller; selling, the reverse |
+| A withdrawal to an account at another provider | 0450 (code IV, `TipoTransferenciaSaida` 1), valued in reais when sent |
+| A withdrawal to a wallet no provider keeps | 0650 (code VI) |
+| December's file (delivered in January) | Also 1000/1010, each client's balance in reais and in each crypto-asset on 31 December, from the ledger's postings; and 2000/2999, the platform's CARF identification (constituted in Brazil, `CARF902`), with no reportable persons: its clients are Brazilian businesses |
+
+Record 0000 names the platform (`PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTING_URL`) and 9999 closes the file with the count and total of each record type. The file is written on the first days of each month for the previous one and kept with its SHA-256 (`decripto_reports`); `platform decripto -month YYYY-MM` writes it out for review, and once operations has transmitted it through the Coleta Nacional with the company's e-CNPJ certificate, `platform decripto-filed` records the receipt. A filed month is never rewritten: a correction is a rectifying file. Warnings (a withdrawal without a price in reais, a December balance of zero reais beside crypto, which the layout does not accept) are listed for operations to resolve before filing.
 
 ### 6.4 B3 and the investor's profile
 
@@ -207,6 +222,9 @@ Orders reach B3 only through a broker authorized by the CVM and accepted as a B3
 | `FX_FEE_BPS`, `FX_SPREAD_BPS`, `IOF_FX_OUT_BPS`, `IOF_FX_IN_BPS` | Conversion fee and spread; IOF out and in (defaults 350 and 38) |
 | `BROKER_URL`, `BROKER_TOKEN`, `BROKER_NAME` | The broker contract of §5.2; the sandbox uses an in-memory broker |
 | `BRAPI_TOKEN` | Display prices from brapi.dev |
+| `SANCTIONS_LISTS` | Lists of sanctioned addresses, comma-separated paths or https URLs: OFAC's `SDN.CSV`, or one address per line (§6.1) |
+| `SCREENING_URL`, `SCREENING_TOKEN` | A screening provider's adapter (§6.1). With the lists, production needs at least one source |
+| `PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTING_URL` | The platform's CNPJ, name and URL in the DeCripto (record 0000); production needs the CNPJ and the URL with crypto on |
 
 Every basis-point setting accepts 0 to 2000. Production refuses the sandbox venue, the sandbox FX provider, and either line without its authorization.
 
@@ -214,12 +232,14 @@ Every basis-point setting accepts 0 to 2000. Production refuses the sandbox venu
 
 ## 8. Operations and what is left
 
-The periodic jobs run every minute under a lease, so one replica runs them: crypto deposits are polled and matched (a deposit that matches nothing is recorded in `crypto_deposits` for operations); expired crypto charges are canceled; credits into the accounts abroad are polled and applied by reference (a credit without a known reference is kept in `fx_credits` without a merchant, for operations); B3 trades are settled after D+2. Operations procedures are in the [operations runbook](../integration/operations-runbook.md).
+The periodic jobs run every minute under a lease, so one replica runs them: crypto deposits are polled and matched (a deposit that matches nothing is recorded in `crypto_deposits` for operations); expired crypto charges are canceled; credits into the accounts abroad are polled and applied by reference (a credit without a known reference is kept in `fx_credits` without a merchant, for operations); B3 trades are settled after D+2; last month's DeCripto is written on the first days of the month. Operations procedures are in the [operations runbook](../integration/operations-runbook.md).
+
+**Custody reconciliation, every night after 02:00 Brasília.** For each venue the platform reads the account's balances (Binance `GET /api/v3/account`, Kraken `Balance`, Coinbase `GET /api/v3/brokerage/accounts`, every page; available plus held) and compares each asset with the sum of `asset.custody.<venue>.<asset>` across every tenant, plus the deposits the venue credited that the ledger has not applied. Before comparing, it records the venue's last week of deposits for every asset, so a transfer that arrived when no charge was waiting is found too. Each difference is a `custody_mismatch` exception (expected, actual, and the gap) and each unapplied deposit an `unapplied_crypto_deposit`, in the reconciliation queue under the platform tenant (`00000000-0000-0000-0000-000000000000`); `platform recon-custody` runs it on demand. A venue that cannot be read is an exception too (`custody_unreadable`), never a pass. In the sandbox the in-memory venue keeps balances as a real account would, so the end-to-end test proves the books and the venue agree after payments, conversions and withdrawals, and catches a coin that leaves without a journal.
 
 Before production, in order:
 
-1. The authorizations of §6 (or the partners that hold them), and contracts with the exchanges, the FX institution and the broker.
-2. The DeCripto export (§6.3) and the câmbio reporting the FX institution requires.
-3. Travel-rule data for withdrawals above the thresholds the Central Bank sets, and screening of deposit and withdrawal addresses against sanctions lists.
-4. Reconciliation of the venues' balances against `asset.custody.*` every night, with the same exception queue as card settlement.
+1. The authorizations of §6 (or the partners that hold them), and contracts with the exchanges, the FX institution, the broker and a screening provider (or the lists' sources).
+2. The câmbio reporting the FX institution requires; the first DeCripto filings reviewed with the accountants before transmission.
+3. Travel-rule data for withdrawals above the thresholds the Central Bank sets, and screening of the senders of deposits.
+4. Read-only keys at each venue for the custody reconciliation, separate from the trading keys.
 5. Classification by counsel of each flow under Resolution BCB 521 (domestic payment, câmbio, or international transfer).

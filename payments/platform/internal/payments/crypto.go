@@ -825,8 +825,12 @@ func (s *Service) ensureFunded(ctx context.Context, tenantID, account string, ne
 	if s.cfg.Env == "production" {
 		return fmt.Errorf("%w: treasury must fund %s (has %d, needs %d)", ErrUnavailable, account, have, need)
 	}
-	return s.post(ctx, tenantID, ids.New("fund"), "treasury_funding", account, []ledger.Posting{
-		{Account: account, Direction: ledger.Debit, Amount: need - have}, {Account: ledger.AccSettlementBank, Direction: ledger.Credit, Amount: need - have}})
+	if err := s.post(ctx, tenantID, ids.New("fund"), "treasury_funding", account, []ledger.Posting{
+		{Account: account, Direction: ledger.Debit, Amount: need - have}, {Account: ledger.AccSettlementBank, Direction: ledger.Credit, Amount: need - have}}); err != nil {
+		return err
+	}
+	s.fundVenue(account, need-have)
+	return nil
 }
 
 // moved is how many basis points the market moved against the merchant since price.
@@ -851,13 +855,25 @@ func moved(side, quoted, now string) int64 {
 type CryptoWithdrawal struct {
 	ID, MerchantID, Asset, Network, Address, Memo, Amount, Venue, Status string
 	Units, FeeUnits                                                      int64
+	// DestinationType says where the coins go: "wallet" (one no provider keeps, the
+	// default) or "exchange" (an account at another provider). The DeCripto reports them
+	// apart (records 0650 and 0450).
+	DestinationType string
+	ValueBRL        *int64 // at the best price to sell when sent
 }
 
 // WithdrawCrypto sends units of an asset from the merchant's holding to an address outside
 // the platform, from a venue whose custody covers it. The network fee is the merchant's.
-func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code, network, address, memo, amount string) (*CryptoWithdrawal, error) {
+func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code, network, address, memo, amount, destinationType string) (*CryptoWithdrawal, error) {
 	if s.exchanges == nil {
 		return nil, ErrCryptoDisabled
+	}
+	switch destinationType {
+	case "":
+		destinationType = "wallet"
+	case "wallet", "exchange":
+	default:
+		return nil, invalid("destination_type is wallet or exchange")
 	}
 	a, err := cryptoAsset(code)
 	if err != nil {
@@ -872,6 +888,11 @@ func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code
 	units, err := a.Parse(amount)
 	if err != nil || units <= 0 {
 		return nil, invalid("amount: a positive %s amount", a.Code)
+	}
+	// Nothing is sent to an address sanctions screening has not cleared (docs/09 §6.1). It
+	// comes before the balance check, so every attempt is screened and recorded.
+	if err := s.screenAddress(ctx, tenantID, merchantID, network, address); err != nil {
+		return nil, err
 	}
 	fee := cryptoNetworkFees[a.Code+"/"+network]
 	holding := ledger.MerchantHolding(merchantID, a.Code)
@@ -889,23 +910,29 @@ func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code
 		return nil, fmt.Errorf("%w: no venue holds enough %s; treasury must rebalance", ErrUnavailable, a.Code)
 	}
 	w := &CryptoWithdrawal{ID: ids.New("cw"), MerchantID: merchantID, Asset: a.Code, Network: network, Address: address, Memo: memo, Amount: a.Format(units),
-		Venue: venue.Name(), Units: units, FeeUnits: fee}
+		Venue: venue.Name(), Units: units, FeeUnits: fee, DestinationType: destinationType}
+	if price, ok := s.sellPrice(ctx, a); ok {
+		brl, _ := assets.Get(assets.Base)
+		if v, err := assets.Convert(units, a, brl, price); err == nil {
+			w.ValueBRL = &v
+		}
+	}
 	// The journal first: if the venue then fails, the reversal puts the balance back.
 	custody := ledger.Custody(venue.Name(), a.Code)
 	if err := s.post(ctx, tenantID, "crypto_withdraw:"+w.ID, "crypto_withdrawal", w.ID, []ledger.Posting{
 		{Account: holding, Direction: ledger.Debit, Amount: units + fee}, {Account: custody, Direction: ledger.Credit, Amount: units + fee}}); err != nil {
 		return nil, err
 	}
-	ref, err := venue.Withdraw(ctx, exchange.Withdrawal{ClientID: w.ID, Asset: a.Code, Network: network, Address: address, Memo: memo, Units: units})
+	ref, err := venue.Withdraw(ctx, exchange.Withdrawal{ClientID: w.ID, Asset: a.Code, Network: network, Address: address, Memo: memo, Units: units, FeeUnits: fee})
 	w.Status = "sent"
 	if err != nil {
 		w.Status = "failed"
 		_ = s.post(ctx, tenantID, "crypto_withdraw_back:"+w.ID, "crypto_withdrawal_reversed", w.ID, []ledger.Posting{
 			{Account: custody, Direction: ledger.Debit, Amount: units + fee}, {Account: holding, Direction: ledger.Credit, Amount: units + fee}})
 	}
-	dest := fmt.Sprintf(`{"network":%q,"address":%q,"memo":%q}`, network, address, memo)
-	if _, dbErr := s.pool.Exec(ctx, `INSERT INTO asset_transfers (id, tenant_id, merchant_id, kind, venue, asset, units, fee_units, destination, status, venue_ref)
-		VALUES ($1, $2, $3, 'crypto', $4, $5, $6, $7, $8, $9, NULLIF($10, ''))`, w.ID, tenantID, merchantID, venue.Name(), a.Code, units, fee, dest, w.Status, ref); dbErr != nil {
+	dest := fmt.Sprintf(`{"network":%q,"address":%q,"memo":%q,"type":%q}`, network, address, memo, destinationType)
+	if _, dbErr := s.pool.Exec(ctx, `INSERT INTO asset_transfers (id, tenant_id, merchant_id, kind, venue, asset, units, fee_units, destination, status, venue_ref, value_brl)
+		VALUES ($1, $2, $3, 'crypto', $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11)`, w.ID, tenantID, merchantID, venue.Name(), a.Code, units, fee, dest, w.Status, ref, w.ValueBRL); dbErr != nil {
 		return nil, dbErr
 	}
 	if err != nil {

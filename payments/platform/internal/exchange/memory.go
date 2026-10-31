@@ -27,11 +27,12 @@ type Memory struct {
 	fills    map[string]Fill   // by client ID
 	deposits []Deposit
 	sent     map[string]string // withdrawals by client ID
+	balances map[string]int64  // what the platform holds here, as a real account would show
 }
 
 // NewMemory returns an exchange with the sandbox's reference prices.
 func NewMemory(name string) *Memory {
-	return &Memory{ExchangeName: name, SpreadBps: 40, FeeBps: 10, fills: map[string]Fill{}, sent: map[string]string{}, mids: map[string]string{
+	return &Memory{ExchangeName: name, SpreadBps: 40, FeeBps: 10, fills: map[string]Fill{}, sent: map[string]string{}, balances: map[string]int64{}, mids: map[string]string{
 		"BTC/BRL": "350000", "ETH/BRL": "12000", "USDT/BRL": "5.40", "USDC/BRL": "5.40",
 		"BTC/USD": "65000", "ETH/USD": "2200", "USDT/USD": "1", "USDC/USD": "1",
 		"BTC/EUR": "60000", "ETH/EUR": "2030",
@@ -97,8 +98,18 @@ func (m *Memory) Market(ctx context.Context, o Order) (Fill, error) {
 	}
 	f.FeeUnits = f.QuoteUnits * int64(m.FeeBps) / 10000
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if prev, ok := m.fills[o.ClientID]; ok {
+		return prev, nil
+	}
 	m.fills[o.ClientID] = f
-	m.mu.Unlock()
+	if o.Side == Buy {
+		m.balances[o.Base] += f.BaseUnits
+		m.balances[o.Quote] -= f.QuoteUnits + f.FeeUnits
+	} else {
+		m.balances[o.Base] -= f.BaseUnits
+		m.balances[o.Quote] += f.QuoteUnits - f.FeeUnits
+	}
 	return f, nil
 }
 
@@ -132,8 +143,29 @@ func (m *Memory) SimulateDeposit(code, network, address, memo string, units int6
 		TxID: hex.EncodeToString(tx), Confirmed: true, At: time.Now()}
 	m.mu.Lock()
 	m.deposits = append(m.deposits, d)
+	m.balances[code] += units
 	m.mu.Unlock()
 	return d
+}
+
+// Fund adds to the platform's balance here, as a treasury transfer to the venue would.
+func (m *Memory) Fund(code string, units int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.balances[code] += units
+}
+
+// Balances implements Exchange.
+func (m *Memory) Balances(context.Context) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]int64, len(m.balances))
+	for k, v := range m.balances {
+		if v != 0 {
+			out[k] = v
+		}
+	}
+	return out, nil
 }
 
 // Deposits implements Exchange.
@@ -158,6 +190,7 @@ func (m *Memory) Withdraw(_ context.Context, w Withdrawal) (string, error) {
 	}
 	id := ids.New("wd")
 	m.sent[w.ClientID] = id
+	m.balances[w.Asset] -= w.Units + w.FeeUnits
 	return id, nil
 }
 

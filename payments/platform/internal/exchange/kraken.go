@@ -247,3 +247,38 @@ func (k *Kraken) Withdraw(ctx context.Context, w Withdrawal) (string, error) {
 	}
 	return r.RefID, nil
 }
+
+// fromKraken maps Kraken's asset codes back to the registry's: the legacy four-letter codes
+// (XXBT, XETH, ZEUR) lose their prefix, and XBT is BTC. Codes with a suffix (".F" earn, ".S"
+// staked) are other products, not custody.
+func fromKraken(code string) string {
+	if strings.Contains(code, ".") {
+		return ""
+	}
+	if len(code) == 4 && (code[0] == 'X' || code[0] == 'Z') {
+		code = code[1:]
+	}
+	for ours, theirs := range krakenAssets {
+		if code == theirs {
+			return ours
+		}
+	}
+	return code
+}
+
+// Balances implements Exchange (private Balance).
+func (k *Kraken) Balances(ctx context.Context) (map[string]int64, error) {
+	var r map[string]string
+	if err := k.private(ctx, "Balance", url.Values{}, &r); err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	for code, amount := range r {
+		if c := fromKraken(code); c != "" {
+			if err := addBalance(out, c, amount); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
+}

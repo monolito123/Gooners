@@ -59,7 +59,9 @@ function explain(e) {
   switch (e.status) {
     case 0: return ['Sem conexão com a plataforma.', 'Nada foi enviado. Confira a rede e tente de novo.'];
     case 401: return ['A chave de API foi recusada.', 'Nada mudou. Confira a chave e entre de novo.'];
-    case 403: return ['Esta chave não tem permissão para isso.', `Peça uma chave com o escopo ${d}.`];
+    case 403:
+      if (e.body && e.body.code === 'address_refused') return ['Endereço recusado pela verificação de sanções.', 'Nada foi enviado. A tentativa fica registrada para a equipe de compliance.'];
+      return ['Esta chave não tem permissão para isso.', `Peça uma chave com o escopo ${d}.`];
     case 404: return ['Não encontrado.', d || 'Confira o identificador.'];
     case 409: return ['Não foi possível agora.', d];
     case 410: return ['Expirou.', 'Peça uma nova cotação; o preço anterior não vale mais.'];
@@ -542,7 +544,8 @@ views.crypto = async () => {
   if (!S.merchant) return needMerchant();
   const [markets, holdings] = await Promise.all([api('GET', '/v1/crypto/markets'), api('GET', `/v1/holdings?merchant_id=${S.merchant.id}`)]);
   const w = { asset: select([['BTC', 'BTC'], ['ETH', 'ETH'], ['USDT', 'USDT'], ['USDC', 'USDC']]), network: select([['bitcoin', 'bitcoin'], ['ethereum', 'ethereum'], ['tron', 'tron'], ['polygon', 'polygon'], ['solana', 'solana']]),
-    address: input({}), memo: input({ placeholder: 'opcional' }), amount: input({ inputmode: 'decimal' }) };
+    address: input({}), memo: input({ placeholder: 'opcional' }), amount: input({ inputmode: 'decimal' }),
+    kind: select([['wallet', 'Carteira própria (sem corretora)'], ['exchange', 'Conta em outra corretora']]) };
   return [
     card('Mercados', h('p', { class: 'muted' }, 'O melhor preço entre as corretoras conectadas, em reais.'), h('div', { class: 'table-wrap' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Ativo'), h('th', { class: 'num' }, 'Vender a'), h('th', { class: 'num' }, 'Comprar a'), h('th', {}, 'Redes'))),
@@ -551,10 +554,10 @@ views.crypto = async () => {
     card('Saldos', holdings.data.filter((x) => x.kind === 'crypto').length ? h('ul', {}, holdings.data.filter((x) => x.kind === 'crypto').map((x) => h('li', {}, `${x.amount} ${x.asset}`, x.value_brl != null ? h('span', { class: 'muted' }, ` ≈ ${brl(x.value_brl)}`) : '')))
       : h('p', { class: 'muted' }, 'Sem cripto ainda.')),
     conversionForm(['BTC', 'ETH', 'USDT', 'USDC'], 'Comprar ou vender cripto', 'Preço firme por 30 segundos; se o mercado andar mais de 1% antes da confirmação, a operação é recusada e nada é cobrado.'),
-    card('Enviar cripto', h('p', { class: 'muted' }, 'Envio para fora da plataforma é definitivo. Confira a rede e o endereço; a taxa da rede é descontada do seu saldo.'),
-      h('div', { class: 'row' }, field('Ativo', w.asset), field('Rede', w.network), field('Quantia', w.amount)), h('div', { class: 'row' }, field('Endereço', w.address), field('Memo/tag', w.memo)),
+    card('Enviar cripto', h('p', { class: 'muted' }, 'Envio para fora da plataforma é definitivo. Confira a rede e o endereço; a taxa da rede é descontada do seu saldo. Todo endereço passa pela verificação de sanções antes do envio.'),
+      h('div', { class: 'row' }, field('Ativo', w.asset), field('Rede', w.network), field('Quantia', w.amount)), h('div', { class: 'row' }, field('Endereço', w.address), field('Memo/tag', w.memo), field('Destino', w.kind)),
       h('div', { class: 'actions' }, h('button', { class: 'danger', type: 'button', onclick: (ev) => act(ev.target, () => api('POST', '/v1/crypto/withdrawals', { merchant_id: S.merchant.id, asset: w.asset.value, network: w.network.value,
-        address: w.address.value.trim(), memo: w.memo.value.trim(), amount: w.amount.value.replace(',', '.') }), 'Envio solicitado.') }, 'Enviar'))),
+        address: w.address.value.trim(), memo: w.memo.value.trim(), amount: w.amount.value.replace(',', '.'), destination_type: w.kind.value }), 'Envio solicitado.') }, 'Enviar'))),
   ];
 };
 

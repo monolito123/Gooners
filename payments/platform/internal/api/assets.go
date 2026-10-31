@@ -98,6 +98,8 @@ func (s *Server) cryptoWithdrawal(w http.ResponseWriter, r *http.Request) {
 		Address    string `json:"address"`
 		Memo       string `json:"memo"`
 		Amount     string `json:"amount"`
+		// DestinationType is wallet (a self-hosted wallet, the default) or exchange.
+		DestinationType string `json:"destination_type"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -106,13 +108,14 @@ func (s *Server) cryptoWithdrawal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cw, err := s.svc.WithdrawCrypto(r.Context(), from(r.Context()).tenantID, m, in.Asset, in.Network, in.Address, in.Memo, in.Amount)
+	cw, err := s.svc.WithdrawCrypto(r.Context(), from(r.Context()).tenantID, m, in.Asset, in.Network, in.Address, in.Memo, in.Amount, in.DestinationType)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": cw.ID, "object": "crypto_withdrawal", "merchant_id": m, "asset": cw.Asset, "network": cw.Network,
-		"address": cw.Address, "amount": cw.Amount, "network_fee_units": cw.FeeUnits, "venue": cw.Venue, "status": cw.Status})
+		"address": cw.Address, "amount": cw.Amount, "network_fee_units": cw.FeeUnits, "venue": cw.Venue, "status": cw.Status,
+		"destination_type": cw.DestinationType, "value_brl": cw.ValueBRL})
 }
 
 func (s *Server) internationalAccounts(w http.ResponseWriter, r *http.Request) {

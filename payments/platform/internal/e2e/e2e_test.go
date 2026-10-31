@@ -37,6 +37,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/schemesim"
+	"github.com/monolito123/Gooners/payments/platform/internal/screening"
 	"github.com/monolito123/Gooners/payments/platform/internal/testpg"
 	"github.com/monolito123/Gooners/payments/platform/internal/testpki"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
@@ -151,6 +152,7 @@ func newStack(t *testing.T, opts ...any) *stack {
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
 		Exchanges: &exchange.Router{Venues: []exchange.Exchange{exchange.NewMemory("simex")}}, FX: fx.NewMemory(), Broker: brokerage.NewMemory(),
+		Screener: screening.Set{screening.SandboxAddresses},
 	}
 	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
 	for _, o := range opts {

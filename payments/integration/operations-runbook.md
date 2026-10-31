@@ -16,7 +16,10 @@ Every command that changes access or money needs `-actor` (the operator's SSO id
 | 06:00 | Pix reconciliation of the previous day against `GET /pix` | Automatic. Re-run with `platform recon-pix -tenant … -date YYYY-MM-DD` |
 | When the sponsor's settlement report arrives | Card settlement reconciliation | `platform recon-card -tenant … -report <report id> -date … -file report.csv` |
 | When the sponsor's chargeback file arrives | Chargeback intake and outcomes | `platform disputes-import -tenant … -file chargebacks.csv` |
-| 09:00 | Work the exception queue (§5) | `platform recon-exceptions -tenant …` |
+| 02:00 | Custody reconciliation: each exchange's balances against the ledger ([09 §8](../docs/09-digital-assets-international-b3.md#8-operations-and-what-is-left)) | Automatic. Re-run with `platform recon-custody`; exceptions under the platform tenant `00000000-0000-0000-0000-000000000000` |
+| First days of the month | Last month's DeCripto written for review (§4.10) | Automatic; `platform decripto -month YYYY-MM` writes the file |
+| By the last business day of the month | File last month's DeCripto at the Coleta Nacional (§4.10) | e-CAC with the company's e-CNPJ; then `platform decripto-filed` |
+| 09:00 | Work the exception queue (§5), the platform tenant's included | `platform recon-exceptions -tenant …` |
 | 10:00 | File the day's representments with the sponsor (§4.6) | `platform disputes-list -tenant … -status represented` |
 | Daily | Safeguarding: reserve vs the CCME statement and Selic custody ([04 §3.6](../docs/04-serverless-backend.md#36-safeguarding-reconciliation)) | Treasury |
 | Daily, and after any manual posting | Ledger invariants L1–L5 | `platform verify-ledger` (exit 1 on a violation) |
@@ -77,6 +80,8 @@ The platform serves Prometheus metrics on `METRICS_ADDR` (internal network only)
 | `goonerspay_disputes_open{status="represented"}` | Any representment older than one business day | File it with the sponsor (§4.6) |
 | `goonerspay_pix_med_returns_total` | Any | Risk review of the merchant (§4.7) |
 | `goonerspay_risk_reviews_open`, `goonerspay_terminals_frozen` | A review older than one business day; any frozen terminal | Work the review (§4.9): the merchant's money or till waits on it |
+| `goonerspay_address_screenings_total{result="error"}`, `goonerspay_address_screening_hits_24h` | Any error for 5 minutes (withdrawals are refused meanwhile); any hit | A stale list or a provider down: check the lists' refresh in the logs (§4.11). A hit: §4.11 |
+| `goonerspay_decripto_unfiled` | Above 0 five business days before the deadline | File it (§4.10) |
 | `goonerspay_risk_assessments_total` by `action` | Declines or holds above their weekly baseline | A new attack, or a rule misfiring on honest sales: read `goonerspay_risk_signals_total` by `signal`, and move a misfiring rule to shadow (`RISK_MODE=shadow`) while it is fixed |
 
 ## 4. Procedures
@@ -159,6 +164,20 @@ The fraud shield ([07 §3](../docs/07-enhancements.md#3-autonomous-fraud-shield)
 
 Both are audited. A step-up (the card asked for its PIN) and a plain decline need no review: no money moved.
 
+### 4.10 Filing the DeCripto
+
+The DeCripto ([09 §6.3](../docs/09-digital-assets-international-b3.md#63-reporting-crypto-to-the-receita-federal)) of each month is due by the last business day of the next, 23:59:59 Brasília. The platform writes it on the first days of the month.
+
+1. `platform decripto -month 2026-10 -out decripto-2026-10.txt` writes the file and prints the count and total of each record type, the SHA-256 and any warnings. Resolve every warning first: a withdrawal without a value in reais (value it at the market of that day and add it), a December balance of zero reais beside crypto.
+2. Validate and transmit the file in the Coleta Nacional (e-CAC), with the company's e-CNPJ certificate. A file too large to validate can be split by the manual's rule (each part with its own 0000 and 9999, no operation split).
+3. `platform decripto-filed -month 2026-10 -sha256 <as printed> -receipt <receipt number> -actor you@goonerspay.example`. The month is then never rewritten; a correction is a rectifying file prepared by hand from the stored one.
+
+### 4.11 A withdrawal address refused by sanctions screening
+
+A hit refuses the withdrawal before anything moves and records it in `address_screenings` (`result = 'hit'`), with the lists or provider that matched; the partner receives `compliance.address_refused`. Do not tell the merchant which list matched. Compliance reviews the merchant's activity the same day, decides whether a report to the COAF is due, and records the decision. A false positive (an address wrongly listed) is cleared only by the list's owner or the provider; the platform keeps refusing until then.
+
+When screening errors (`result = 'error'`), withdrawals are refused with `503`: a list older than 72 hours, a list source that cannot be read, or the provider down. Fix the source (the logs say which); the next refresh, every six hours, or a restart reloads the lists.
+
 ## 5. Reconciliation exceptions
 
 `platform recon-exceptions` lists the open ones. Close each with what was done:
@@ -184,6 +203,9 @@ platform recon-resolve -tenant T -id 17 -resolution "allocated to the merchant, 
 | `unidentified_pix` | A Pix arrived without a known `txid` (a transfer to the key, a static QR) | Return it with a devolução, or allocate it to the right merchant |
 | `not_at_psp` | The ledger credited a Pix the PSP does not list for the day | Check the `horario` at the PSP (a different day near midnight); otherwise a P1 with the PSP |
 | `replay_failed` | Replaying a Pix through the normal path failed | Read the detail; fix and re-run `recon-pix` |
+| `custody_mismatch` | An exchange holds a different amount of an asset than the ledger's custody plus unapplied deposits (platform tenant) | Find the movement: the venue's history against the journals of that asset. A fee the venue charged differently: book it to `expense.venue_fees.<asset>`. A transfer treasury made without a journal: post it. Anything unexplained is a security incident |
+| `unapplied_crypto_deposit` | Crypto arrived that matches no charge, or after its charge expired (platform tenant) | Return it to the sender at the same network, or with the customer's agreement settle it at the market and credit the merchant by hand |
+| `custody_unreadable` | The venue's balances could not be read | The read-only key or the venue's API; re-run `platform recon-custody` once fixed |
 
 ## 6. Audit trail
 

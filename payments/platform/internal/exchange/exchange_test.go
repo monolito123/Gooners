@@ -71,6 +71,9 @@ func TestBinance(t *testing.T) {
 				{"id":"d2","amount":"5","coin":"USDT","network":"TRX","status":0,"address":"TXyz","txId":"0xcd","insertTime":1700000001000}]`))
 		case "/sapi/v1/capital/withdraw/apply":
 			_, _ = w.Write([]byte(`{"id":"w9"}`))
+		case "/api/v3/account":
+			_, _ = w.Write([]byte(`{"balances":[{"asset":"BTC","free":"0.10000000","locked":"0.00500000"},{"asset":"BRL","free":"1234.56","locked":"0.00"},
+				{"asset":"DOGE","free":"100","locked":"0"},{"asset":"ETH","free":"1.123456789123456789","locked":"0"}]}`))
 		}
 	}))
 	defer srv.Close()
@@ -99,6 +102,10 @@ func TestBinance(t *testing.T) {
 	}
 	if id, err := b.Withdraw(ctx, Withdrawal{ClientID: "w_1", Asset: "USDT", Network: "tron", Address: "TAbc", Units: 1_000_000}); err != nil || id != "w9" {
 		t.Fatalf("withdraw: %s %v", id, err)
+	}
+	// Balances: free plus locked, assets the registry knows, extra precision dropped.
+	if bs, err := b.Balances(ctx); err != nil || len(bs) != 3 || bs["BTC"] != 10_500_000 || bs["BRL"] != 123456 || bs["ETH"] != 1_123456789 {
+		t.Fatalf("balances: %v %v", bs, err)
 	}
 	if _, err := (&Binance{BaseURL: srv.URL, APIKey: key, SecretKey: "wrong"}).Deposits(ctx, "USDT", time.Now()); err == nil {
 		t.Fatal("a bad signature must be refused")
@@ -137,6 +144,8 @@ func TestKraken(t *testing.T) {
 				reply(`[{"method":"Bitcoin","refid":"R1","txid":"tx","info":"bc1qkraken","amount":"0.01","time":1700000000,"status":"Success"}]`)
 			case "/0/private/Withdraw":
 				reply(`{"refid":"W1"}`)
+			case "/0/private/Balance":
+				reply(`{"XXBT":"0.0500000000","XETH":"2.5000000000","ZEUR":"100.0000","USDT":"25.00000000","ETH2.S":"1.0","XXDG":"10"}`)
 			}
 			return
 		}
@@ -144,6 +153,10 @@ func TestKraken(t *testing.T) {
 	}))
 	defer srv.Close()
 	k := &Kraken{BaseURL: srv.URL, APIKey: "k", SecretKey: secret, WithdrawKeys: map[string]string{"bc1qmine": "my cold wallet"}}
+	// Kraken's legacy codes map back (XXBT is BTC, ZEUR is EUR); staked products are not custody.
+	if bs, err := k.Balances(ctx); err != nil || len(bs) != 4 || bs["BTC"] != 5_000_000 || bs["ETH"] != 2_500_000_000 || bs["EUR"] != 10000 || bs["USDT"] != 25_000_000 {
+		t.Fatalf("kraken balances: %v %v", bs, err)
+	}
 	if b, err := k.Book(ctx, "BTC", "USD"); err != nil || b.Bid != "64990.0" || b.Ask != "65010.0" {
 		t.Fatalf("book: %+v %v", b, err)
 	}
@@ -206,6 +219,10 @@ func TestCoinbase(t *testing.T) {
 			_, _ = w.Write([]byte(`{"success":true,"success_response":{"order_id":"O1"}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/v3/brokerage/orders/historical/O1"):
 			_, _ = w.Write([]byte(`{"order":{"status":"FILLED","filled_size":"0.001","filled_value":"64.98","total_fees":"0.39"}}`))
+		case r.URL.Path == "/api/v3/brokerage/accounts" && r.URL.Query().Get("cursor") == "":
+			_, _ = w.Write([]byte(`{"accounts":[{"currency":"BTC","available_balance":{"value":"0.2"},"hold":{"value":"0.05"}}],"has_next":true,"cursor":"p2"}`))
+		case r.URL.Path == "/api/v3/brokerage/accounts":
+			_, _ = w.Write([]byte(`{"accounts":[{"currency":"USDC","available_balance":{"value":"10.5"},"hold":{"value":"0"}}],"has_next":false,"cursor":""}`))
 		}
 	}))
 	defer srv.Close()
@@ -221,6 +238,9 @@ func TestCoinbase(t *testing.T) {
 	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if _, err := (&Coinbase{BaseURL: srv.URL, KeyName: name, Key: other}).Book(ctx, "BTC", "USD"); err == nil {
 		t.Fatal("another key must be refused")
+	}
+	if bs, err := c.Balances(ctx); err != nil || bs["BTC"] != 25_000_000 || bs["USDC"] != 10_500_000 {
+		t.Fatalf("coinbase balances, every page: %v %v", bs, err)
 	}
 	if _, _, err := c.DepositAddress(ctx, "BTC", "bitcoin"); !errors.Is(err, ErrUnsupported) {
 		t.Fatal("deposits are not through Advanced Trade")
@@ -266,5 +286,25 @@ func TestRouterAndMemory(t *testing.T) {
 	}
 	if _, err := cheap.Market(ctx, Order{ClientID: "y", Side: Buy, Base: "BTC", Quote: "BRL"}); err == nil {
 		t.Fatal("an order without an amount")
+	}
+}
+
+// The memory venue keeps balances the way an exchange account does, so the custody
+// reconciliation can be tested end to end.
+func TestMemoryBalances(t *testing.T) {
+	m := NewMemory("m")
+	m.Fund("BRL", 100_000_00)
+	m.SimulateDeposit("USDT", "tron", "T", "", 10_000_000)
+	buy, _ := m.Market(ctx, Order{ClientID: "b", Side: Buy, Base: "BTC", Quote: "BRL", QuoteUnits: 350_00})
+	_, _ = m.Market(ctx, Order{ClientID: "b", Side: Buy, Base: "BTC", Quote: "BRL", QuoteUnits: 350_00}) // a retry fills nothing more
+	sell, _ := m.Market(ctx, Order{ClientID: "s", Side: Sell, Base: "USDT", Quote: "BRL", BaseUnits: 10_000_000})
+	_, _ = m.Withdraw(ctx, Withdrawal{ClientID: "w", Asset: "BTC", Units: 1_000, FeeUnits: 100})
+	_, _ = m.Withdraw(ctx, Withdrawal{ClientID: "w", Asset: "BTC", Units: 1_000, FeeUnits: 100})
+	bs, _ := m.Balances(ctx)
+	if bs["BTC"] != buy.BaseUnits-1_100 || bs["USDT"] != 0 || bs["BRL"] != 100_000_00-buy.QuoteUnits-buy.FeeUnits+sell.QuoteUnits-sell.FeeUnits {
+		t.Fatalf("balances %v (buy %+v sell %+v)", bs, buy, sell)
+	}
+	if _, ok := bs["USDT"]; ok {
+		t.Fatal("a zero balance is not listed")
 	}
 }

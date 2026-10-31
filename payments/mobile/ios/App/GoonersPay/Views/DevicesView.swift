@@ -73,6 +73,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirming = false
     @State private var crypto = false
+    @State private var tone = false
 
     var body: some View {
         List {
@@ -92,8 +93,15 @@ struct SettingsView: View {
                             .font(.footnote).foregroundStyle(Theme.textSecondary)
                     }
                 }
+                Toggle(isOn: $tone) {
+                    VStack(alignment: .leading) {
+                        Text("Som de aprovação sempre ligado")
+                        Text("Toca mesmo no silencioso: útil num balcão movimentado.")
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    }
+                }
             } footer: {
-                Text("Aprovação e recusa vibram de formas diferentes, para o caixa sentir o resultado sem olhar.")
+                Text("Aprovação e recusa têm som e vibração diferentes, para o caixa sentir o resultado sem olhar. Os sons seguem a chave de silêncio.")
             }
             Section {
                 Button("Desparear este aparelho", role: .destructive) { confirming = true }
@@ -103,7 +111,11 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
-        .onAppear { crypto = model.settings.acceptsCrypto }
+        .onAppear {
+            crypto = model.settings.acceptsCrypto
+            tone = model.settings.approvalTone
+        }
+        .onChange(of: tone) { _, on in model.settings.approvalTone = on }
         .onChange(of: crypto) { _, on in if on != model.settings.acceptsCrypto { model.setAcceptsCrypto(on) } }
         .confirmationDialog("Desparear este aparelho?", isPresented: $confirming, titleVisibility: .visible) {
             Button("Apagar chaves e desparear", role: .destructive) { model.unpair() }
