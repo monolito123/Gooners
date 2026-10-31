@@ -10,6 +10,7 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
 
@@ -304,6 +305,9 @@ func (s *Server) confirmIntent(w http.ResponseWriter, r *http.Request) {
 		PaymentMethod     string `json:"payment_method"`
 		Asset             string `json:"asset"`   // crypto
 		Network           string `json:"network"` // crypto
+		// Payer is who the customer declared they are, when the checkout asked (crypto):
+		// the deposit's originator for the travel rule.
+		Payer *travelrule.Party `json:"payer"`
 	}
 	if r.ContentLength != 0 && !decode(w, r, &in) {
 		return
@@ -312,7 +316,7 @@ func (s *Server) confirmIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.PaymentMethodType == "crypto" {
-		pi, err := s.svc.ConfirmCrypto(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in.Asset, in.Network)
+		pi, err := s.svc.ConfirmCrypto(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in.Asset, in.Network, in.Payer)
 		if err != nil {
 			s.fail(w, r, err)
 			return

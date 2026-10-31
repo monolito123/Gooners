@@ -36,6 +36,8 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/brokerage`, `internal/payments` (investments) | B3 rules (tickers, lots and the fractional market, the session as it follows US daylight time, D+2, fees), suitability (CVM 30), a broker contract, brapi.dev prices and an in-memory broker | [09 §5](../docs/09-digital-assets-international-b3.md#5-b3) |
 | `internal/screening` | Sanctions screening of withdrawal addresses: OFAC's `SDN.CSV` or address lists (files or URLs, refreshed, refused when stale), a screening provider's contract, and a set that fails closed | [09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules) |
 | `internal/decripto`, `internal/payments` (decripto, custody) | The DeCripto file in the national-provider layout of ADE COPES 2/2025 (reproduces the manual's examples byte for byte), built monthly from payments, conversions and withdrawals; the nightly reconciliation of each exchange's balances against the ledger's custody | [09 §6.3, §8](../docs/09-digital-assets-international-b3.md#63-reporting-crypto-to-the-receita-federal) |
+| `internal/chain`, `internal/payments` (compliance) | Who sent each crypto deposit, read from the chain (Esplora, Ethereum and Polygon JSON-RPC with ERC-20 logs, a Tron node, or a provider's contract); senders screened before the deposit settles, held in `liability.compliance_hold` on a hit or an error, re-screened, and compliance cases released, blocked or closed with a note | [09 §6.5, §6.7](../docs/09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit) |
+| `internal/travelrule`, `internal/payments` (travelrule) | The travel rule: IVMS101.2023 with its constraints C1–C11 (LEI check digits, GLEIF codes, ISO countries), sent through a travel-rule network before a withdrawal to another provider (refused without an acceptance), the owner's declaration for self-hosted wallets, and signed inbound messages matched to deposits | [09 §6.6](../docs/09-digital-assets-international-b3.md#66-the-travel-rule) |
 | `internal/console` | The web console at `/console/`: every API function in the browser, statements checked client-side; static, embedded, strict CSP | below |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
 
@@ -115,6 +117,8 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `BROKER_URL`, `BROKER_TOKEN`, `BROKER_NAME`, `BRAPI_TOKEN` | The B3 broker and display prices |
 | `SANCTIONS_LISTS`, `SCREENING_URL`, `SCREENING_TOKEN` | Sanctions screening of withdrawal addresses ([09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)); the sandbox refuses its own test addresses without them |
 | `REPORTING_NAME`, `REPORTING_URL` | The platform's name and URL in the DeCripto, beside `PLATFORM_DOCUMENT` |
+| `BITCOIN_ESPLORA_URL`, `ETHEREUM_RPC_URL`, `POLYGON_RPC_URL`, `TRON_API_URL`, `TRON_API_KEY`, `SENDER_LOOKUP_URL`, `SENDER_LOOKUP_TOKEN` | Where the senders of deposits are read ([09 §6.5](../docs/09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit)); the sandbox's exchange answers for its own deposits |
+| `TRAVEL_RULE_URL`, `TRAVEL_RULE_TOKEN`, `TRAVEL_RULE_INBOUND_SECRET`, `TRAVEL_RULE_THRESHOLD_BRL`, `TRAVEL_RULE_REVIEW_BRL`, `PLATFORM_LEI` | The travel-rule network and its values ([09 §6.6](../docs/09-digital-assets-international-b3.md#66-the-travel-rule)); the sandbox uses an in-memory network |
 
 | Guard | sandbox | certification | production |
 |-------|:-------:|:-------------:|:----------:|
@@ -126,6 +130,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | In-memory exchange, FX provider and broker | allowed (the default) | allowed | refused |
 | Crypto or câmbio without `CRYPTO_AUTHORIZATION` / `FX_AUTHORIZATION` | allowed | allowed | refused |
 | Crypto without sanctions screening sources, or without the DeCripto's CNPJ and URL | allowed (sandbox test list) | allowed | refused |
+| Crypto without a sender lookup for every network, or without a travel-rule network and its inbound secret | allowed (the sandbox exchange and travel-rule network) | allowed | refused |
 
 ## Implemented API surface
 
@@ -159,6 +164,7 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 - the full API flow, ending with L1–L6 and verified webhook signatures;
 - crypto, accounts abroad and B3 end to end: a USDT payment settled in reais, unique amounts, conversions both ways, a withdrawal, a credit from abroad by reference, IOF, a payment abroad, suitability, lots and the fractional market, D+2 settlement; the exchange adapters' signatures and balances against fake venues;
 - compliance for crypto: sanctions screening (a hit refused before anything moves, every attempt recorded, fail closed without a source or when one errors), the custody reconciliation (balanced after the flows, an unmatched deposit found at a quiet time, a coin that leaves without a journal), and the DeCripto (records from real operations, filing, no rewrite after filing, December's balances), whose encoder reproduces the manual's examples;
+- deposit senders and the travel rule: a sanctioned sender's payment held, booked to the compliance hold, kept out of the custody difference and blocked; a lookup outage held, re-screened and released by the job; a frozen deposit nobody can match; withdrawals refused without a provider, on a rejection and without an answer, and accepted with IVMS101 that carries the merchant's CNPJ and the platform's LEI; inbound messages signed, idempotent, refused for invalid data or a foreign address, matched before and after the coins, a beneficiary that is not the merchant reviewed, a payer's declaration, and a missing originator's review closed when the data arrives;
 - operations: merchant lifecycle and revocations with their audit rows, a chargeback larger than the balance (booked as owed, recovered after the win), merchant acceptance and deadline expiry, a settlement report with true-ups, suspense, duplicate and replay protection, a lost Pix webhook healed by reconciliation, a MED return applied once, the jobs lease and the metrics.
 
 - security: tenant isolation on every route, scopes, input hardening, headers, rate limits, webhook SSRF and redirects, sealed webhook secrets, card data in no log or clear column, and STAN reuse ([security assessment](../integration/security-assessment.md)).
@@ -177,5 +183,6 @@ Operators run the platform with subcommands of the same binary, in the same envi
 | `recon-card`, `recon-pix`, `recon-exceptions`, `recon-allocate`, `recon-resolve` | Settlement-report and daily Pix reconciliation, and the exception queue |
 | `recon-custody` | Each exchange's balances against the ledger's custody, now (the job runs it every night) |
 | `decripto`, `decripto-filed` | Write a month's DeCripto for filing; record the Coleta Nacional's receipt |
+| `compliance-cases`, `compliance-decide` | List held deposits and travel-rule reviews; release, block or close one with a note ([runbook §4.12](../integration/operations-runbook.md#412-a-held-crypto-deposit)) |
 
 `serve` runs the periodic jobs every minute on one replica at a time (scheduled releases, payout outcomes, dispute deadlines, shortfall recovery, the previous day's Pix reconciliation after 06:00 Brasília time, crypto deposits and expiries, credits from abroad, B3 settlement, the custody reconciliation after 02:00, and last month's DeCripto on the first days of the month).

@@ -335,6 +335,15 @@ private fun ChargeTab(vm: MainViewModel) {
                 if (s.done) PrimaryButton("Nova venda", onClick = co::nextSale) else TextButton(co::nextSale, Modifier.fillMaxWidth()) { Text("Voltar ao teclado") }
             }
             is CheckoutState.Declined -> DeclinedView(s, co, vm.feedback)
+            is CheckoutState.Reviewing -> {
+                // Neither approved nor declined: no tone, no red, one calm next step.
+                Text("Pagamento em verificação", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                Amount(s.amount)
+                Text(s.message, textAlign = TextAlign.Center)
+                Spacer(Modifier.weight(1f))
+                PrimaryButton("Nova venda", onClick = co::nextSale)
+            }
         }
     }
 }

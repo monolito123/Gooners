@@ -75,6 +75,12 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	if _, err := s.ExpireCryptoCharges(ctx, now); err != nil {
 		s.log.Error("expire crypto charges", "err", err)
 	}
+	// Deposits held because screening could not be completed are asked about again.
+	if n, err := s.RescreenHeldDeposits(ctx); err != nil {
+		s.log.Error("re-screen held deposits", "err", err)
+	} else if n > 0 {
+		s.log.Info("held deposits re-screened", "settled", n)
+	}
 	if n, err := s.PollFXCredits(ctx, now.Add(-72*time.Hour)); err != nil {
 		s.log.Error("international credits", "err", err)
 	} else if n > 0 {
@@ -201,8 +207,16 @@ func (s *Service) RegisterMetrics(r *metrics.Registry) {
 		`SELECT kind, count(*) FROM recon_exceptions WHERE resolved_at IS NULL GROUP BY kind`)
 	grouped("goonerspay_merchants", "Merchants by status.", "status", `SELECT status, count(*) FROM merchants GROUP BY status`)
 	count("goonerspay_decripto_unfiled", "DeCripto files written and not yet marked filed.", `SELECT count(*) FROM decripto_reports WHERE filed_at IS NULL`)
-	count("goonerspay_address_screening_hits_24h", "Withdrawal addresses refused by sanctions screening in the last 24 hours.",
-		`SELECT count(*) FROM address_screenings WHERE result = 'hit' AND created_at > now() - interval '24 hours'`)
+	grouped("goonerspay_address_screening_hits_24h", "Addresses sanctions screening matched in the last 24 hours, by purpose (withdrawal, deposit_sender).", "purpose",
+		`SELECT purpose, count(*) FROM address_screenings WHERE result = 'hit' AND created_at > now() - interval '24 hours' GROUP BY purpose`)
+	grouped("goonerspay_compliance_cases_open", "Compliance cases waiting for a decision, by reason.", "reason",
+		`SELECT reason, count(*) FROM compliance_cases WHERE status = 'open' GROUP BY reason`)
+	count("goonerspay_compliance_held_deposits", "Crypto deposits held for compliance (open cases holding funds).",
+		`SELECT count(*) FROM compliance_cases WHERE status = 'open' AND holds_funds`)
+	count("goonerspay_deposits_unscreened", "Crypto deposits whose screening never finished (stuck in pending for over 15 minutes).",
+		`SELECT count(*) FROM crypto_deposits WHERE screening = 'pending' AND created_at < now() - interval '15 minutes'`)
+	grouped("goonerspay_travel_rule_refusals_24h", "Withdrawals refused on travel-rule grounds in the last 24 hours, by status (rejected, unreachable).", "status",
+		`SELECT status, count(*) FROM travel_rule_messages WHERE direction = 'outbound' AND status IN ('rejected', 'unreachable') AND created_at > now() - interval '24 hours' GROUP BY status`)
 	// L5 headroom: safeguarding reserve minus client money. Alert well before it reaches zero.
 	grouped("goonerspay_safeguarding_headroom_centavos", "Safeguarding reserve minus client liabilities, per tenant.", "tenant",
 		`SELECT tenant_id::text, COALESCE(SUM(CASE WHEN account_id = '`+ledger.AccSafeguardingReserve+`' THEN balance ELSE -balance END), 0)

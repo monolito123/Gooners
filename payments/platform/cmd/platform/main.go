@@ -27,6 +27,8 @@
 //	platform recon-custody                  compare the exchanges' balances with the ledger now
 //	platform decripto [-month YYYY-MM] [-out FILE]   write a month's DeCripto for filing
 //	platform decripto-filed -month YYYY-MM -sha256 H -receipt N -actor A
+//	platform compliance-cases -tenant T [-status open|all]   held deposits and travel-rule reviews
+//	platform compliance-decide -tenant T -case C -action release|block|close -reason R -actor A
 package main
 
 import (
@@ -54,6 +56,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
 	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/chain"
 	"github.com/monolito123/Gooners/payments/platform/internal/config"
 	"github.com/monolito123/Gooners/payments/platform/internal/db"
 	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
@@ -67,6 +70,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -360,6 +364,47 @@ func serve(ctx context.Context) error {
 		if len(set) > 0 {
 			deps.Screener = set
 		}
+		// Who sent each deposit, read from each network (docs/09 §6.5).
+		lookups := chain.Router{}
+		for network, u := range c.SenderLookups {
+			switch network {
+			case "bitcoin":
+				lookups[network] = &chain.Esplora{URL: u}
+			case "ethereum", "polygon":
+				lookups[network] = &chain.EVM{URL: u}
+			case "tron":
+				lookups[network] = &chain.Tron{URL: u, APIKey: c.TronAPIKey}
+			}
+		}
+		if c.SenderLookupURL != "" {
+			svc := &chain.Service{URL: c.SenderLookupURL, Token: c.SenderLookupToken}
+			for _, network := range []string{"bitcoin", "ethereum", "polygon", "tron", "solana"} {
+				if _, ok := lookups[network]; !ok {
+					lookups[network] = svc
+				}
+			}
+		}
+		if c.Env == config.Sandbox {
+			// The sandbox exchange knows who sent its simulated deposits.
+			for _, v := range deps.Exchanges.Venues {
+				if m, ok := v.(*exchange.Memory); ok {
+					for _, network := range []string{"bitcoin", "ethereum", "polygon", "tron", "solana"} {
+						if _, ok := lookups[network]; !ok {
+							lookups[network] = m
+						}
+					}
+				}
+			}
+		}
+		if len(lookups) > 0 {
+			deps.Senders = lookups
+		}
+		switch {
+		case c.TravelRuleURL != "":
+			deps.TravelRule = &travelrule.Service{URL: c.TravelRuleURL, Token: c.TravelRuleToken}
+		case c.Env == config.Sandbox:
+			deps.TravelRule = travelrule.Sandbox{}
+		}
 	}
 	if len(c.TransparencySecret) == 32 {
 		k, err := nostr.KeysFromSecret(c.TransparencySecret)
@@ -371,7 +416,7 @@ func serve(ctx context.Context) error {
 		log.Info("transparency signer", "npub", npub)
 	}
 	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
-		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL,
+		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview,
 		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
@@ -384,7 +429,7 @@ func serve(ctx context.Context) error {
 		}
 	}
 
-	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy, PublicURL: c.PublicURL}, svc, pool, log)
+	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret}, svc, pool, log)
 	disp := &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	go disp.Run(ctx, time.Second)
 	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])

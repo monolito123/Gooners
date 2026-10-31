@@ -132,7 +132,7 @@ func main() {
 	waitTCP(hookAddr)
 	ok("schemesim, pixsim and platform are listening (API, Pix webhook over mTLS)")
 
-	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke").Output()
+	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke", "-scopes", "*,compliance:write").Output()
 	if err != nil {
 		fail("apikey: %v", err)
 	}
@@ -330,6 +330,15 @@ func main() {
 		"address": "0x0000000000000000000000000000000000000bad", "amount": "1"}, 403); r["code"] != "address_refused" {
 		fail("sanctions screening: %v", r)
 	}
+	// A payment from the sandbox's sanctioned sender is held for compliance, not settled.
+	hpi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 2000, "channel": "crypto"}, 201)
+	call("POST", "/v1/payment-intents/"+hpi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
+	if held := call("POST", "/v1/sandbox/crypto/payments/"+hpi["id"].(string), map[string]any{"from": "TSanctionedTestAddressForSandbox12"}, 200); held["status"] != "processing" {
+		fail("a sanctioned sender's payment: %v", held)
+	}
+	if cs, _ := call("GET", "/v1/compliance/cases", nil, 200)["data"].([]any); len(cs) != 1 || cs[0].(map[string]any)["reason"] != "sanctions_hit" {
+		fail("the held payment's compliance case: %v", cs)
+	}
 	// This month's DeCripto, written by the operator command as it would be filed.
 	dc := filepath.Join(dir, "decripto.txt")
 	cli("decripto", "-month", time.Now().In(brt).Format("2006-01"), "-out", dc)
@@ -337,7 +346,7 @@ func main() {
 	if !strings.HasPrefix(string(file), "0000|22222222000191|") || !strings.Contains(string(file), "\r\n0350|") || !strings.Contains(string(file), "\r\n9999|1|50,00|") {
 		fail("decripto:\n%s", file)
 	}
-	ok("sanctioned address refused; DeCripto written (%d lines)", strings.Count(string(file), "\r\n"))
+	ok("sanctioned address refused; a sanctioned sender's payment held for compliance; DeCripto written (%d lines)", strings.Count(string(file), "\r\n"))
 
 	resp, err = http.Get("http://" + metricsAddr + "/metrics")
 	if err != nil {

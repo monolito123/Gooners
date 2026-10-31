@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 )
 
 // Environments.
@@ -116,6 +118,20 @@ type Config struct {
 	ScreeningURL, ScreeningToken string
 	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
 	ReportingName, ReportingURL string
+	// SenderLookups find who sent each crypto deposit, per network (docs/09 §6.5): an
+	// Esplora URL for bitcoin, JSON-RPC nodes for ethereum and polygon, a full node's HTTP
+	// API for tron. SenderLookupURL is a provider's adapter for the networks left (and
+	// solana). Without a lookup for a network, its deposits are held for compliance.
+	SenderLookups                      map[string]string
+	TronAPIKey                         string
+	SenderLookupURL, SenderLookupToken string
+	// TravelRuleURL is the travel-rule network's adapter (docs/09 §6.6); TravelRuleSecret
+	// ("whsec_…") verifies the messages it posts in. TravelRuleThreshold (centavos; 0 = every
+	// withdrawal) and TravelRuleReview (deposits without originator data) set the values.
+	TravelRuleURL, TravelRuleToken, TravelRuleSecret string
+	TravelRuleThreshold, TravelRuleReview            int64
+	// PlatformLEI is the platform's Legal Entity Identifier, when it has one.
+	PlatformLEI string
 	// RiskMode is how the fraud shield acts (docs/07 §3): enforce, shadow or off.
 	RiskMode  string
 	Relays    []string
@@ -238,6 +254,24 @@ func Load() (*Config, error) {
 	}
 	c.ScreeningURL, c.ScreeningToken = os.Getenv("SCREENING_URL"), os.Getenv("SCREENING_TOKEN")
 	c.ReportingName, c.ReportingURL = env("REPORTING_NAME", "goonersPAY"), os.Getenv("REPORTING_URL")
+	c.SenderLookups = map[string]string{}
+	for network, k := range map[string]string{"bitcoin": "BITCOIN_ESPLORA_URL", "ethereum": "ETHEREUM_RPC_URL", "polygon": "POLYGON_RPC_URL", "tron": "TRON_API_URL"} {
+		if v := os.Getenv(k); v != "" {
+			c.SenderLookups[network] = v
+		}
+	}
+	c.TronAPIKey, c.SenderLookupURL, c.SenderLookupToken = os.Getenv("TRON_API_KEY"), os.Getenv("SENDER_LOOKUP_URL"), os.Getenv("SENDER_LOOKUP_TOKEN")
+	c.TravelRuleURL, c.TravelRuleToken, c.TravelRuleSecret = os.Getenv("TRAVEL_RULE_URL"), os.Getenv("TRAVEL_RULE_TOKEN"), os.Getenv("TRAVEL_RULE_INBOUND_SECRET")
+	c.PlatformLEI = os.Getenv("PLATFORM_LEI")
+	for name, dst := range map[string]*int64{"TRAVEL_RULE_THRESHOLD_BRL": &c.TravelRuleThreshold, "TRAVEL_RULE_REVIEW_BRL": &c.TravelRuleReview} {
+		if v := os.Getenv(name); v != "" {
+			n, err := strconv.ParseFloat(v, 64)
+			if err != nil || n < 0 || n > 1e9 {
+				return nil, fmt.Errorf("config: %s is an amount in reais", name)
+			}
+			*dst = int64(n*100 + 0.5)
+		}
+	}
 	for name, dst := range map[string]*int{"CRYPTO_FEE_BPS": &c.CryptoFeeBps, "CRYPTO_SPREAD_BPS": &c.CryptoSpreadBps, "FX_FEE_BPS": &c.FXFeeBps,
 		"FX_SPREAD_BPS": &c.FXSpreadBps, "IOF_FX_OUT_BPS": &c.IOFOutBps, "IOF_FX_IN_BPS": &c.IOFInBps} {
 		if v := os.Getenv(name); v != "" {
@@ -345,6 +379,12 @@ func (c *Config) Validate() error {
 			return errors.New("config: crypto in production screens withdrawal addresses: set SANCTIONS_LISTS (OFAC's SDN.CSV or address lists) and/or SCREENING_URL")
 		case len(c.Exchanges) > 0 && (c.PlatformDocument == "" || c.ReportingURL == ""):
 			return errors.New("config: crypto in production files the DeCripto: set PLATFORM_DOCUMENT (the CNPJ) and REPORTING_URL")
+		case len(c.Exchanges) > 0 && c.SenderLookupURL == "" && len(c.SenderLookups) < 4:
+			return errors.New("config: crypto in production screens who sends each deposit: set BITCOIN_ESPLORA_URL, ETHEREUM_RPC_URL, POLYGON_RPC_URL and TRON_API_URL, or SENDER_LOOKUP_URL (which also covers solana)")
+		case len(c.Exchanges) > 0 && (c.TravelRuleURL == "" || c.TravelRuleSecret == ""):
+			return errors.New("config: crypto in production carries the travel rule (Res. BCB 520/2025): set TRAVEL_RULE_URL and TRAVEL_RULE_INBOUND_SECRET")
+		case c.PlatformLEI != "" && !travelrule.ValidLEI(c.PlatformLEI):
+			return errors.New("config: PLATFORM_LEI is not a valid LEI")
 		case c.FXProvider != "" && c.FXAuthorization == "":
 			return errors.New("config: foreign exchange in production needs FX_AUTHORIZATION: the institution authorized for câmbio that carries the operations")
 		case c.RiskMode == "off":

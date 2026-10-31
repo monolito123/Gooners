@@ -2,9 +2,7 @@ package payments
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
@@ -15,7 +13,7 @@ type AddressScreener interface {
 	Screen(ctx context.Context, network, address string) (screening.Result, error)
 }
 
-var mScreenings = metrics.Default.Counter("goonerspay_address_screenings_total", "Withdrawal addresses screened, by result (clear, hit, error).", "result")
+var mScreenings = metrics.Default.Counter("goonerspay_address_screenings_total", "Addresses screened (withdrawal destinations and deposit senders), by result (clear, hit, error).", "result")
 
 // screenAddress screens a destination before anything is sent to it, and records the result
 // either way: the record is the evidence the check was made. A hit refuses the operation
@@ -25,23 +23,10 @@ func (s *Service) screenAddress(ctx context.Context, tenantID, merchantID, netwo
 		return fmt.Errorf("%w: no sanctions screening is configured; nothing was sent", ErrDisabled)
 	}
 	res, err := s.screener.Screen(ctx, network, address)
-	result := "clear"
-	switch {
-	case err != nil:
-		result = "error"
-	case res.Hit:
-		result = "hit"
-	}
-	detail := map[string]any{"matches": res.Matches}
-	if err != nil {
-		detail["error"] = err.Error()
-	}
-	d, _ := json.Marshal(detail)
-	if _, dbErr := s.pool.Exec(ctx, `INSERT INTO address_screenings (tenant_id, merchant_id, network, address, result, sources, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		tenantID, merchantID, network, address, result, strings.Join(res.Sources, ","), d); dbErr != nil {
+	result, dbErr := s.recordScreening(ctx, tenantID, merchantID, "withdrawal", "", network, address, res, err)
+	if dbErr != nil {
 		return dbErr
 	}
-	mScreenings.Inc(result)
 	switch result {
 	case "error":
 		s.log.Error("sanctions screening unavailable", "merchant", merchantID, "network", network, "err", err)

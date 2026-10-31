@@ -66,6 +66,12 @@ func BrokerSettlement(broker string) string { return "liability.broker_settlemen
 // AssetClearing carries an asset between its arrival and its sale (a crypto payment).
 func AssetClearing(asset string) string { return "liability.asset_clearing." + strings.ToLower(asset) }
 
+// ComplianceHold holds a crypto deposit compliance has not cleared: its sender is on a
+// sanctions list or could not be screened. A block keeps it here, frozen.
+func ComplianceHold(asset string) string {
+	return "liability.compliance_hold." + strings.ToLower(asset)
+}
+
 // Accounts of conversions between reais and other assets.
 const (
 	AccRevenueConversionFees = "revenue.conversion_fees"

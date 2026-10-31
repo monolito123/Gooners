@@ -78,18 +78,21 @@ public enum CheckoutState: Sendable, Equatable {
     /// The outcome of "Cancelar venda"; when it failed, sale is the sale to try again.
     case cancelled(Money, done: Bool, message: String, sale: Sale?)
     case declined(Money, message: String)
+    /// A crypto payment arrived and the platform is checking who sent it (docs/09 §6.5): the
+    /// sale is neither done nor lost. The cashier goes on; it shows in Vendas once cleared.
+    case reviewing(Money, message: String)
 
     public var amount: Money {
         switch self {
         case let .entering(m, _), let .choosingMethod(m, _), let .waitingForCard(m, _), let .authorizing(m), let .pixQR(m, _, _),
-             let .cryptoQR(m, _), let .undoing(m), let .cancelled(m, _, _, _), let .declined(m, _): m
+             let .cryptoQR(m, _), let .undoing(m), let .cancelled(m, _, _, _), let .declined(m, _), let .reviewing(m, _): m
         case let .approved(s): s.amount
         }
     }
 
     public var isFinal: Bool {
         switch self {
-        case .approved, .declined, .cancelled: true
+        case .approved, .declined, .cancelled, .reviewing: true
         default: false
         }
     }
@@ -214,7 +217,7 @@ public final class CheckoutController {
             if let authed = try? api() { Task { _ = try? await authed.cancel(id) } }
         }
         switch state {
-        case .approved, .undoing, .cancelled: state = entering()
+        case .approved, .undoing, .cancelled, .reviewing: state = entering()
         default: state = entering(state.amount)
         }
     }
@@ -404,6 +407,10 @@ public final class CheckoutController {
             case "canceled", "failed":
                 log("auth_result", id, amount, ["result": "canceled"])
                 return fail(amount, expired)
+            case "processing" where method == .crypto:
+                log("auth_result", id, amount, ["result": "under_review"])
+                if !Task.isCancelled { state = .reviewing(amount, message: Self.cryptoReview) }
+                return
             default:
                 continue
             }
@@ -413,6 +420,9 @@ public final class CheckoutController {
     private func fail(_ amount: Money, _ message: String) {
         if !Task.isCancelled { state = .declined(amount, message: message) }
     }
+
+    public nonisolated static let cryptoReview =
+        "O pagamento chegou e passa por uma verificação de segurança. A venda entra no saldo assim que ela terminar; acompanhe em Vendas. Pode seguir atendendo."
 
     public nonisolated static let cryptoReturn =
         "Venda em cripto não se desfaz pelo app. A venda continua valendo: para devolver, peça o endereço da carteira do cliente e envie pelo console (Cripto › Enviar)."

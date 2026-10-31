@@ -66,6 +66,7 @@ function explain(e) {
     case 409: return ['Não foi possível agora.', d];
     case 410: return ['Expirou.', 'Peça uma nova cotação; o preço anterior não vale mais.'];
     case 422:
+      if (e.body && e.body.code === 'travel_rule_rejected') return ['A instituição de destino recusou a transferência.', 'Nada foi enviado. Confira com o destinatário o nome e a conta informados. ' + d];
       if (/insufficient funds|holds less than/.test(d)) return ['Saldo insuficiente.', 'Nada foi cobrado. Use um valor menor ou receba antes.'];
       if (/suitability|profile/.test(d)) return ['Falta o perfil de investidor.', 'Responda o questionário de perfil antes de investir.'];
       return ['Algo no pedido não confere.', d];
@@ -190,7 +191,7 @@ const views = {};
 const nav = [
   ['Dinheiro', [['overview', 'Visão geral'], ['charge', 'Cobrar'], ['payments', 'Pagamentos e estornos'], ['payouts', 'Sacar por Pix'], ['statements', 'Extratos verificados']]],
   ['Ativos', [['crypto', 'Cripto'], ['international', 'Contas internacionais'], ['investments', 'Investimentos B3']]],
-  ['Operação', [['merchants', 'Lojistas'], ['devices', 'Terminais e aparelhos'], ['disputes', 'Contestações'], ['risk', 'Análise de risco'], ['webhooks', 'Webhooks'], ['transparency', 'Raiz pública']]],
+  ['Operação', [['merchants', 'Lojistas'], ['devices', 'Terminais e aparelhos'], ['disputes', 'Contestações'], ['risk', 'Análise de risco'], ['compliance', 'Compliance'], ['webhooks', 'Webhooks'], ['transparency', 'Raiz pública']]],
 ];
 
 views.overview = async () => {
@@ -329,10 +330,15 @@ views.charge = async () => {
   if (!S.merchant) return needMerchant();
   const amount = input({ inputmode: 'decimal', placeholder: '129,90', autofocus: true });
   const method = select([['pix', 'Pix'], ['USDT/tron', 'USDT (Tron)'], ['USDT/ethereum', 'USDT (Ethereum)'], ['USDC/polygon', 'USDC (Polygon)'], ['BTC/bitcoin', 'Bitcoin'], ['ETH/ethereum', 'Ether']]);
+  // Cripto: who pays, when the customer agrees to say (the travel rule's originator; docs/09 §6.6).
+  const payerName = input({ placeholder: 'opcional', autocomplete: 'off' });
+  const payerDoc = input({ inputmode: 'numeric', placeholder: 'opcional', autocomplete: 'off' });
+  const payerRow = h('div', { class: 'row', hidden: true }, field('Nome do cliente', payerName), field('CPF ou CNPJ do cliente', payerDoc));
+  method.addEventListener('change', () => { payerRow.hidden = method.value === 'pix'; });
   const out = h('div', { class: 'stack' });
   const cents = () => Math.round(parseFloat(amount.value.replace(/\./g, '').replace(',', '.')) * 100);
   return [card('Nova cobrança',
-    h('div', { class: 'row' }, field('Valor (R$)', amount), field('Forma', method)),
+    h('div', { class: 'row' }, field('Valor (R$)', amount), field('Forma', method)), payerRow,
     h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
       const n = cents();
       if (!(n > 0)) return flash('error', 'Valor inválido.', 'Digite o valor em reais, por exemplo 129,90.');
@@ -340,7 +346,10 @@ views.charge = async () => {
       const [asset, network] = method.value.split('/');
       const pi = await act(ev.target, async () => {
         const created = await api('POST', '/v1/payment-intents', { merchant_id: S.merchant.id, amount: n, channel: isPix ? 'pix' : 'crypto' });
-        return api('POST', `/v1/payment-intents/${created.id}/confirm`, isPix ? { payment_method_type: 'pix' } : { payment_method_type: 'crypto', asset, network });
+        const confirm = isPix ? { payment_method_type: 'pix' } : { payment_method_type: 'crypto', asset, network };
+        const doc = payerDoc.value.replace(/\D/g, '');
+        if (!isPix && payerName.value.trim() && doc) confirm.payer = { type: doc.length === 14 ? 'legal' : 'natural', name: payerName.value.trim(), document: doc, country: 'BR' };
+        return api('POST', `/v1/payment-intents/${created.id}/confirm`, confirm);
       });
       if (pi) {
         save('gp.did.charge', true);
@@ -360,7 +369,9 @@ function showCharge(out, pi) {
     body.push(qr(a.uri || a.address), kv([['Envie exatamente', `${a.amount} ${a.asset}`], ['Rede', a.network], ['Endereço', a.address], ['Memo', a.memo], ['Cotação', `${price(a.price)} por ${a.asset}`]]),
       h('p', {}, timer), copyButton(a.address, 'Copiar endereço'));
     if (S.env !== 'production') {
-      body.push(h('div', { class: 'actions' }, h('button', { type: 'button', onclick: (ev) => act(ev.target, () => api('POST', `/v1/sandbox/crypto/payments/${pi.id}`)) }, 'Simular pagamento (sandbox)')));
+      body.push(h('div', { class: 'actions' }, h('button', { type: 'button', onclick: (ev) => act(ev.target, () => api('POST', `/v1/sandbox/crypto/payments/${pi.id}`)) }, 'Simular pagamento (sandbox)'),
+        h('button', { type: 'button', onclick: (ev) => act(ev.target, () => api('POST', `/v1/sandbox/crypto/payments/${pi.id}`, { from: a.network === 'ethereum' || a.network === 'polygon' ? '0x0000000000000000000000000000000000000bad' : 'TSanctionedTestAddressForSandbox12' })) },
+          'Simular remetente sancionado')));
     }
   }
   out.replaceChildren(card(null, ...body));
@@ -373,6 +384,8 @@ function showCharge(out, pi) {
       } else if (now.status === 'canceled' || now.status === 'failed') {
         clearInterval(poll);
         status.replaceChildren(badge('Não concluído', 'bad'), ' A cobrança expirou ou foi cancelada; nenhum valor entrou.');
+      } else if (now.status === 'processing' && pi.channel === 'crypto') {
+        status.replaceChildren(badge('Em verificação', 'warn'), ' O pagamento chegou e passa por uma verificação de segurança. O valor entra assim que ela terminar; acompanhe em Pagamentos.');
       }
     } catch {
       /* keep polling */
@@ -545,7 +558,23 @@ views.crypto = async () => {
   const [markets, holdings] = await Promise.all([api('GET', '/v1/crypto/markets'), api('GET', `/v1/holdings?merchant_id=${S.merchant.id}`)]);
   const w = { asset: select([['BTC', 'BTC'], ['ETH', 'ETH'], ['USDT', 'USDT'], ['USDC', 'USDC']]), network: select([['bitcoin', 'bitcoin'], ['ethereum', 'ethereum'], ['tron', 'tron'], ['polygon', 'polygon'], ['solana', 'solana']]),
     address: input({}), memo: input({ placeholder: 'opcional' }), amount: input({ inputmode: 'decimal' }),
-    kind: select([['wallet', 'Carteira própria (sem corretora)'], ['exchange', 'Conta em outra corretora']]) };
+    kind: select([['wallet', 'Carteira sem corretora (autocustódia)'], ['exchange', 'Conta em outra corretora']]),
+    owner: select([['self', 'O próprio lojista'], ['third', 'Outra pessoa ou empresa']]), ownerName: input({}), ownerDoc: input({ inputmode: 'numeric', placeholder: 'CPF ou CNPJ' }),
+    vaspName: input({ placeholder: 'razão social da corretora' }), vaspLEI: input({ placeholder: 'opcional, 20 caracteres' }), vaspCountry: input({ value: 'BR', maxlength: 2 }) };
+  const ownerRow = h('div', { class: 'row', hidden: true }, field('Nome do titular', w.ownerName), field('Documento do titular', w.ownerDoc));
+  const vaspRow = h('div', { class: 'row', hidden: true }, field('Corretora de destino', w.vaspName), field('LEI da corretora', w.vaspLEI), field('País', w.vaspCountry));
+  w.owner.addEventListener('change', () => { ownerRow.hidden = w.owner.value === 'self'; });
+  w.kind.addEventListener('change', () => { vaspRow.hidden = w.kind.value !== 'exchange'; });
+  const withdrawal = () => {
+    const body = { merchant_id: S.merchant.id, asset: w.asset.value, network: w.network.value, address: w.address.value.trim(), memo: w.memo.value.trim(),
+      amount: w.amount.value.replace(',', '.'), destination_type: w.kind.value };
+    if (w.owner.value === 'third') {
+      const doc = w.ownerDoc.value.replace(/\D/g, '');
+      body.beneficiary = { type: doc.length === 14 ? 'legal' : 'natural', name: w.ownerName.value.trim(), document: doc || undefined, country: 'BR' };
+    }
+    if (w.kind.value === 'exchange') body.beneficiary_vasp = { name: w.vaspName.value.trim(), lei: w.vaspLEI.value.trim() || undefined, country: w.vaspCountry.value.trim().toUpperCase() };
+    return api('POST', '/v1/crypto/withdrawals', body);
+  };
   return [
     card('Mercados', h('p', { class: 'muted' }, 'O melhor preço entre as corretoras conectadas, em reais.'), h('div', { class: 'table-wrap' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Ativo'), h('th', { class: 'num' }, 'Vender a'), h('th', { class: 'num' }, 'Comprar a'), h('th', {}, 'Redes'))),
@@ -554,10 +583,13 @@ views.crypto = async () => {
     card('Saldos', holdings.data.filter((x) => x.kind === 'crypto').length ? h('ul', {}, holdings.data.filter((x) => x.kind === 'crypto').map((x) => h('li', {}, `${x.amount} ${x.asset}`, x.value_brl != null ? h('span', { class: 'muted' }, ` ≈ ${brl(x.value_brl)}`) : '')))
       : h('p', { class: 'muted' }, 'Sem cripto ainda.')),
     conversionForm(['BTC', 'ETH', 'USDT', 'USDC'], 'Comprar ou vender cripto', 'Preço firme por 30 segundos; se o mercado andar mais de 1% antes da confirmação, a operação é recusada e nada é cobrado.'),
-    card('Enviar cripto', h('p', { class: 'muted' }, 'Envio para fora da plataforma é definitivo. Confira a rede e o endereço; a taxa da rede é descontada do seu saldo. Todo endereço passa pela verificação de sanções antes do envio.'),
+    card('Enviar cripto', h('p', { class: 'muted' }, 'Envio para fora da plataforma é definitivo. Confira a rede e o endereço; a taxa da rede é descontada do seu saldo. Todo endereço passa pela verificação de sanções, e a identificação de quem envia e de quem recebe segue com a transferência (regra de viagem).'),
       h('div', { class: 'row' }, field('Ativo', w.asset), field('Rede', w.network), field('Quantia', w.amount)), h('div', { class: 'row' }, field('Endereço', w.address), field('Memo/tag', w.memo), field('Destino', w.kind)),
-      h('div', { class: 'actions' }, h('button', { class: 'danger', type: 'button', onclick: (ev) => act(ev.target, () => api('POST', '/v1/crypto/withdrawals', { merchant_id: S.merchant.id, asset: w.asset.value, network: w.network.value,
-        address: w.address.value.trim(), memo: w.memo.value.trim(), amount: w.amount.value.replace(',', '.'), destination_type: w.kind.value }), 'Envio solicitado.') }, 'Enviar'))),
+      vaspRow, h('div', { class: 'row' }, field('Titular do destino', w.owner)), ownerRow,
+      h('div', { class: 'actions' }, h('button', { class: 'danger', type: 'button', onclick: async (ev) => {
+        const r = await act(ev.target, withdrawal);
+        if (r) flash('success', 'Envio solicitado.', r.travel_rule ? (r.travel_rule.status === 'accepted' ? 'A corretora de destino aceitou os dados da regra de viagem.' : 'A declaração do titular ficou registrada.') : '');
+      } }, 'Enviar'))),
   ];
 };
 
@@ -618,6 +650,82 @@ views.investments = async () => {
       : h('p', { class: 'muted' }, 'Sem posições.'),
       pf.orders.length ? [h('h3', {}, 'Ordens'), h('div', { class: 'table-wrap' }, h('table', {}, h('tbody', {}, pf.orders.map((x) => h('tr', {}, h('td', {}, `${x.side === 'buy' ? 'Compra' : 'Venda'} ${x.quantity} ${x.ticker}`),
         h('td', { class: 'num' }, brl(x.total)), h('td', {}, x.status === 'settled' ? badge('liquidada', 'ok') : badge(`liquida ${relDay(x.settles_on)}`, 'warn')))))))] : null),
+  ];
+};
+
+// ---- compliance: held deposits, travel-rule reviews, the travel-rule record, screenings (docs/09 §6)
+
+const caseReason = {
+  sanctions_hit: 'Remetente em lista de sanções', screening_failed: 'Verificação de sanções não concluída',
+  originator_missing: 'Depósito sem dados de quem enviou', beneficiary_mismatch: 'Beneficiário informado não é o lojista',
+};
+const caseHint = {
+  sanctions_hit: 'Confira a correspondência. Se confirmada, bloqueie: o valor fica indisponível, não é devolvido, e a comunicação ao MJSP e ao COAF segue o runbook §4.12.',
+  screening_failed: 'A verificação não respondeu. A plataforma tenta de novo sozinha a cada 10 minutos; libere à mão só depois de verificar os remetentes.',
+  originator_missing: 'Nenhuma instituição enviou os dados de quem pagou e o cliente não se identificou. Pergunte ao lojista quem pagou, ou registre por que não é preciso.',
+  beneficiary_mismatch: 'A instituição de origem informou um beneficiário com documento diferente do lojista. Confirme com o lojista antes de encerrar.',
+};
+const caseStatus = { open: ['Aberto', 'warn'], released: ['Liberado', 'ok'], blocked: ['Bloqueado', 'bad'], closed: ['Encerrado', ''] };
+const travelStatus = { accepted: 'Aceita', rejected: 'Recusada', unreachable: 'Sem resposta', self_declared: 'Declaração do titular', received: 'Recebida, aguardando o depósito', matched: 'Recebida e ligada ao depósito', refused: 'Recusada por nós' };
+
+views.compliance = async () => {
+  const status = select([['open', 'Abertos'], ['released', 'Liberados'], ['blocked', 'Bloqueados'], ['closed', 'Encerrados'], ['all', 'Todos']]);
+  const cases = h('div');
+  const loadCases = async () => {
+    const l = await api('GET', `/v1/compliance/cases?status=${status.value}`);
+    cases.replaceChildren(l.data.length ? h('div', { class: 'stack' }, l.data.map((c) => {
+      const note = input({ placeholder: 'o que você verificou e por quê (obrigatório)' });
+      const decide = (action, ok) => async (ev) => (await act(ev.target, () => api('POST', `/v1/compliance/cases/${c.id}/decision`, { action, note: note.value }), ok)) && loadCases();
+      const [label, tone] = caseStatus[c.status] || [c.status, ''];
+      const d = c.detail || {};
+      return card(`${caseReason[c.reason] || c.reason}${c.amount ? ' · ' + amountFmt(c.amount, c.asset) : ''}`,
+        h('p', {}, badge(label, tone), ' ', c.holds_funds ? 'Valor retido até a decisão.' : 'Revisão: nada foi retido.'),
+        c.status === 'open' && caseHint[c.reason] ? h('p', { class: 'muted' }, caseHint[c.reason]) : null,
+        kv([['Caso', c.id], ['Lojista', c.merchant_id], ['Pagamento', c.payment_intent_id], ['Transação', d.txid], ['Rede', d.network],
+          ['Remetentes', (d.senders || []).join(', ')], ['Correspondências', (d.matches || []).join('; ')], ['Erros', (d.errors || []).join('; ')],
+          ['Aberto em', new Date(c.created_at).toLocaleString('pt-BR')]]),
+        c.status === 'open' ? [field('Nota', note), h('div', { class: 'actions' }, c.holds_funds ? [
+          h('button', { class: 'primary', type: 'button', onclick: decide('release', 'Liberado: o pagamento segue.') }, 'Liberar (falso positivo ou verificado)'),
+          h('button', { class: 'danger', type: 'button', onclick: decide('block', 'Bloqueado: o valor fica indisponível. Comunique o MJSP e o COAF (runbook §4.12).') }, 'Bloquear (manter indisponível)'),
+        ] : h('button', { class: 'primary', type: 'button', onclick: decide('close', 'Revisão encerrada.') }, 'Encerrar revisão'))]
+          : kv([['Decisão', label], ['Por', c.decided_by], ['Nota', c.decision_note], ['Em', c.decided_at && new Date(c.decided_at).toLocaleString('pt-BR')]]));
+    })) : h('p', { class: 'muted' }, 'Nenhum caso aqui.'));
+  };
+  status.addEventListener('change', loadCases);
+
+  const direction = select([['', 'Enviadas e recebidas'], ['outbound', 'Enviadas (saques)'], ['inbound', 'Recebidas (depósitos)']]);
+  const travel = h('div');
+  const loadTravel = async () => {
+    const l = await api('GET', `/v1/travel-rule/messages${direction.value ? '?direction=' + direction.value : ''}`);
+    travel.replaceChildren(l.data.length ? h('div', { class: 'table-wrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Quando'), h('th', {}, 'Sentido'), h('th', {}, 'Situação'), h('th', { class: 'num' }, 'Quantia'), h('th', {}, 'Contraparte'))),
+      h('tbody', {}, l.data.map((m) => h('tr', {}, h('td', {}, new Date(m.created_at).toLocaleString('pt-BR')), h('td', {}, m.direction === 'outbound' ? 'Enviada' : 'Recebida'),
+        h('td', {}, travelStatus[m.status] || m.status, m.reason ? h('br') : null, m.reason ? h('span', { class: 'muted small' }, m.reason) : null),
+        h('td', { class: 'num' }, amountFmt(m.amount, m.asset)),
+        h('td', {}, m.counterparty && m.counterparty.vasp ? m.counterparty.vasp.name : 'Carteira sem corretora'))))))
+      : h('p', { class: 'muted' }, 'Nenhuma mensagem ainda.'));
+  };
+  direction.addEventListener('change', loadTravel);
+
+  const result = select([['', 'Todas'], ['hit', 'Correspondências'], ['error', 'Não concluídas'], ['clear', 'Sem correspondência']]);
+  const screenings = h('div');
+  const loadScreenings = async () => {
+    const l = await api('GET', `/v1/compliance/screenings?limit=50${result.value ? '&result=' + result.value : ''}`);
+    screenings.replaceChildren(l.data.length ? h('div', { class: 'table-wrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Quando'), h('th', {}, 'Para'), h('th', {}, 'Resultado'), h('th', {}, 'Endereço'))),
+      h('tbody', {}, l.data.map((x) => h('tr', {}, h('td', {}, new Date(x.created_at).toLocaleString('pt-BR')), h('td', {}, x.purpose === 'withdrawal' ? 'Saque' : 'Remetente de depósito'),
+        h('td', {}, badge({ clear: 'Sem correspondência', hit: 'Correspondência', error: 'Não concluída' }[x.result], { clear: 'ok', hit: 'bad', error: 'warn' }[x.result])),
+        h('td', { class: 'mono small' }, `${x.network}: ${x.address}`))))))
+      : h('p', { class: 'muted' }, 'Nenhuma verificação ainda.'));
+  };
+  result.addEventListener('change', loadScreenings);
+  await Promise.all([loadCases(), loadTravel(), loadScreenings()]);
+  return [
+    card('Casos de compliance', h('p', { class: 'muted' }, 'Depósitos retidos porque quem enviou está em lista de sanções ou não pôde ser verificado, e revisões da regra de viagem. Cada decisão pede uma nota e fica registrada. Não informe o cliente do motivo.'),
+      field('Mostrar', status), cases),
+    card('Regra de viagem', h('p', { class: 'muted' }, 'A identificação de quem envia e de quem recebe que acompanhou cada saque, e a que outras instituições enviaram com depósitos.'),
+      field('Mostrar', direction), travel),
+    card('Verificações de sanções', h('p', { class: 'muted' }, 'Todo endereço de saque e todo remetente de depósito, verificados contra as listas.'), field('Mostrar', result), screenings),
   ];
 };
 

@@ -100,6 +100,18 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 		"REPORTING_URL": func(c *Config) {
 			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists = []string{"binance"}, "SPSAV", []string{"/etc/platform/sdn.csv"}
 		},
+		"SENDER_LOOKUP_URL": func(c *Config) {
+			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists, c.ReportingURL = []string{"binance"}, "SPSAV", []string{"/etc/platform/sdn.csv"}, "https://x.example"
+			c.SenderLookups = map[string]string{"bitcoin": "https://esplora.internal"}
+		},
+		"TRAVEL_RULE_INBOUND_SECRET": func(c *Config) {
+			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists, c.ReportingURL = []string{"binance"}, "SPSAV", []string{"/etc/platform/sdn.csv"}, "https://x.example"
+			c.SenderLookupURL, c.TravelRuleURL = "https://chain-analytics.internal/v1/senders", "https://travel-rule.internal"
+		},
+		"PLATFORM_LEI": func(c *Config) {
+			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists, c.ReportingURL = []string{"binance"}, "SPSAV", []string{"/etc/platform/sdn.csv"}, "https://x.example"
+			c.SenderLookupURL, c.TravelRuleURL, c.TravelRuleSecret, c.PlatformLEI = "https://a.internal", "https://b.internal", "whsec_x", "506700GE1G29325QX364"
+		},
 	} {
 		c := prod()
 		mod(c)
@@ -110,6 +122,8 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 	c := prod()
 	c.Exchanges, c.CryptoAuthorization, c.FXProvider, c.FXAuthorization = []string{"binance"}, "SPSAV autorizada pelo BCB", "wise", "Banco parceiro de câmbio"
 	c.ScreeningURL, c.ReportingURL = "https://screening.internal/v1/screen", "https://goonerspay.example"
+	c.SenderLookups = map[string]string{"bitcoin": "https://esplora.internal", "ethereum": "https://eth.internal", "polygon": "https://polygon.internal", "tron": "https://tron.internal"}
+	c.TravelRuleURL, c.TravelRuleSecret, c.PlatformLEI = "https://travel-rule.internal", "whsec_x", "506700GE1G29325QX363"
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
 		t.Errorf("with authorizations the remaining check is the HSM adapters: %v", err)
 	}

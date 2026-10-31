@@ -28,11 +28,12 @@ type Memory struct {
 	deposits []Deposit
 	sent     map[string]string // withdrawals by client ID
 	balances map[string]int64  // what the platform holds here, as a real account would show
+	senders  map[string]string // who sent each simulated deposit, by txid
 }
 
 // NewMemory returns an exchange with the sandbox's reference prices.
 func NewMemory(name string) *Memory {
-	return &Memory{ExchangeName: name, SpreadBps: 40, FeeBps: 10, fills: map[string]Fill{}, sent: map[string]string{}, balances: map[string]int64{}, mids: map[string]string{
+	return &Memory{ExchangeName: name, SpreadBps: 40, FeeBps: 10, fills: map[string]Fill{}, sent: map[string]string{}, balances: map[string]int64{}, senders: map[string]string{}, mids: map[string]string{
 		"BTC/BRL": "350000", "ETH/BRL": "12000", "USDT/BRL": "5.40", "USDC/BRL": "5.40",
 		"BTC/USD": "65000", "ETH/USD": "2200", "USDT/USD": "1", "USDC/USD": "1",
 		"BTC/EUR": "60000", "ETH/EUR": "2030",
@@ -135,8 +136,22 @@ func (m *Memory) DepositAddress(_ context.Context, code, network string) (string
 	}
 }
 
-// SimulateDeposit records an incoming, confirmed transfer (the sandbox's "the customer paid").
+// SandboxSenders are the wallets simulated deposits come from unless the test names another:
+// synthetic addresses on no sanctions list.
+var SandboxSenders = map[string]string{
+	"bitcoin": "bc1qsandboxcustomerwallet", "ethereum": "0x00000000000000000000000000000000000c0ffe",
+	"polygon": "0x00000000000000000000000000000000000c0ffe", "tron": "TSandboxCustomerWalletAddress0001", "solana": "SandboxCustomerWa11et",
+}
+
+// SimulateDeposit records an incoming, confirmed transfer (the sandbox's "the customer paid")
+// from the network's sandbox customer wallet.
 func (m *Memory) SimulateDeposit(code, network, address, memo string, units int64) Deposit {
+	return m.SimulateDepositFrom(SandboxSenders[network], code, network, address, memo, units)
+}
+
+// SimulateDepositFrom records a deposit sent from a given address, so the sandbox can show
+// what screening does with a sanctioned sender.
+func (m *Memory) SimulateDepositFrom(sender, code, network, address, memo string, units int64) Deposit {
 	tx := make([]byte, 32)
 	_, _ = rand.Read(tx)
 	d := Deposit{ID: ids.New("dep"), Asset: code, Network: network, Address: address, Memo: memo, Units: units,
@@ -144,8 +159,21 @@ func (m *Memory) SimulateDeposit(code, network, address, memo string, units int6
 	m.mu.Lock()
 	m.deposits = append(m.deposits, d)
 	m.balances[code] += units
+	m.senders[d.TxID] = sender
 	m.mu.Unlock()
 	return d
+}
+
+// Senders answers who sent a simulated deposit: the sandbox's stand-in for reading the
+// blockchain (chain.Lookup).
+func (m *Memory) Senders(_ context.Context, _, _, txid, _ string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.senders[txid]
+	if !ok || s == "" {
+		return nil, fmt.Errorf("sandbox: no simulated deposit has transaction %s", txid)
+	}
+	return []string{s}, nil
 }
 
 // Fund adds to the platform's balance here, as a treasury transfer to the venue would.

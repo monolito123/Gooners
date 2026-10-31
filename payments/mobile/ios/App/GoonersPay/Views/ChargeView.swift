@@ -76,6 +76,13 @@ struct ChargeView: View {
             if done { Button("Nova venda") { co.nextSale() }.buttonStyle(.primary) } else { Button("Voltar ao teclado") { co.nextSale() }.frame(minHeight: Theme.touchMin) }
         case let .declined(amount, message):
             DeclinedView(amount: amount, message: message, retry: co.back, next: co.nextSale)
+        case let .reviewing(amount, message):
+            // Neither approved nor declined: no tone, no red, one calm next step.
+            Text("Pagamento em verificação").font(.largeTitle.bold()).foregroundStyle(Theme.textPrimary)
+            AmountText(amount: amount)
+            Text(message).multilineTextAlignment(.center)
+            Spacer()
+            Button("Nova venda") { co.nextSale() }.buttonStyle(.primary)
         }
     }
 
@@ -84,6 +91,7 @@ struct ChargeView: View {
         case let .approved(sale): AccessibilityNotification.Announcement("Aprovado, \(sale.amount.spoken())").post()
         case let .declined(_, message): AccessibilityNotification.Announcement("Não aprovado. \(message)").post()
         case let .cancelled(_, _, message, _): AccessibilityNotification.Announcement(message).post()
+        case let .reviewing(_, message): AccessibilityNotification.Announcement("Pagamento em verificação. \(message)").post()
         default: break
         }
     }

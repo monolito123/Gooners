@@ -5,6 +5,7 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 )
 
 // merchantFor is the merchant a call acts for: an app session's own, or the merchant_id a
@@ -100,6 +101,10 @@ func (s *Server) cryptoWithdrawal(w http.ResponseWriter, r *http.Request) {
 		Amount     string `json:"amount"`
 		// DestinationType is wallet (a self-hosted wallet, the default) or exchange.
 		DestinationType string `json:"destination_type"`
+		// Beneficiary owns the destination (the merchant itself when absent);
+		// BeneficiaryVASP is the provider holding it (destination_type exchange).
+		Beneficiary     *travelrule.Party `json:"beneficiary"`
+		BeneficiaryVASP *travelrule.VASP  `json:"beneficiary_vasp"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -108,14 +113,19 @@ func (s *Server) cryptoWithdrawal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cw, err := s.svc.WithdrawCrypto(r.Context(), from(r.Context()).tenantID, m, in.Asset, in.Network, in.Address, in.Memo, in.Amount, in.DestinationType)
+	cw, err := s.svc.WithdrawCrypto(r.Context(), from(r.Context()).tenantID, payments.CryptoWithdrawalRequest{MerchantID: m, Asset: in.Asset, Network: in.Network,
+		Address: in.Address, Memo: in.Memo, Amount: in.Amount, DestinationType: in.DestinationType, Beneficiary: in.Beneficiary, BeneficiaryVASP: in.BeneficiaryVASP})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	var tr any
+	if cw.TravelRule != nil {
+		tr = map[string]any{"id": cw.TravelRule.ID, "status": cw.TravelRule.Status, "reference": cw.TravelRule.Reference}
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": cw.ID, "object": "crypto_withdrawal", "merchant_id": m, "asset": cw.Asset, "network": cw.Network,
 		"address": cw.Address, "amount": cw.Amount, "network_fee_units": cw.FeeUnits, "venue": cw.Venue, "status": cw.Status,
-		"destination_type": cw.DestinationType, "value_brl": cw.ValueBRL})
+		"destination_type": cw.DestinationType, "value_brl": cw.ValueBRL, "travel_rule": tr})
 }
 
 func (s *Server) internationalAccounts(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +248,14 @@ func (s *Server) sandboxCryptoPayment(w http.ResponseWriter, r *http.Request) {
 	if !s.ownIntent(w, r, r.PathValue("id")) {
 		return
 	}
-	pi, err := s.svc.SimulateCryptoPayment(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	var in struct {
+		// From is the wallet the simulated payment comes from (a clean one when absent).
+		From string `json:"from"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	pi, err := s.svc.SimulateCryptoPayment(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in.From)
 	if err != nil {
 		s.fail(w, r, err)
 		return

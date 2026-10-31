@@ -12,7 +12,9 @@ Everything here is built and tested against simulators that behave like the venu
 |------------|----------|-------------|------|------------------------|
 | Crypto payment, settled in reais | Unique-amount charges, deposit polling, sale at once, fee | Charge with QR and countdown | Checkout method (opt-in) | An exchange account and a VASP authorization (§6.1) |
 | Crypto prices, holdings, buy and sell | Router across Binance, Kraken and Coinbase | Markets, holdings, quote and confirm | Ativos: holdings, quote and confirm | Same |
-| Crypto withdrawal | Address checks per network, sanctions screening before anything moves, fees | Enviar cripto | Not in the apps (final once sent) | Same, plus withdrawal allow-lists at the venue and the lists or provider of §6.1 |
+| Crypto withdrawal | Address checks per network, sanctions screening and the travel rule before anything moves, fees | Enviar cripto (with the destination's owner and provider) | Not in the apps (final once sent) | Same, plus withdrawal allow-lists at the venue and the lists or provider of §6.1 |
+| Screening of deposit senders | Who sent each deposit, read from the chain; screened before the deposit settles; held for compliance on a hit or when it cannot be screened | Compliance: cases, release or block | The terminal shows "Pagamento em verificação" | A node or an analytics provider per network (§6.5) |
+| Travel rule | IVMS101.2023 with every withdrawal, accepted by the receiving provider before the coins move; the owner's declaration for self-hosted wallets; other providers' messages matched to deposits | Compliance: the messages; Cobrar: the payer's CPF (optional) | | A travel-rule network behind the adapter (§6.6) |
 | Custody reconciliation | Each venue's balances against the ledger, every night; unapplied deposits | | | The venues' read-only keys |
 | DeCripto (monthly report to the Receita) | The file in the layout of ADE COPES 2/2025, written on the first days of each month | | | Filing at the Coleta Nacional with the company's e-CNPJ certificate |
 | Accounts abroad (USD, EUR, GBP) | Balances, bank details, references, credits | Accounts, details, simulated credit | Ativos: balances and details to copy | A câmbio institution and a Wise Platform contract (§6.2) |
@@ -46,6 +48,7 @@ ETH is kept in gwei, not wei, so every amount fits a signed 64-bit integer; a wi
 | `revenue.conversion_fees` | The visible fee on conversions and crypto payments |
 | `revenue.conversion_result` | The difference between the price promised and the price obtained (may be negative) |
 | `expense.venue_fees.<asset>` | What the exchange charged |
+| `liability.compliance_hold.<asset>` | A deposit compliance has not cleared (§6.5): held until a decision, frozen for good once blocked |
 
 Three invariants are checked by `ledger.Verify` after every test run and by the nightly job:
 
@@ -204,6 +207,52 @@ Record 0000 names the platform (`PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTIN
 
 Orders reach B3 only through a broker authorized by the CVM and accepted as a B3 participant; goonersPAY is the merchant's interface and keeps the record. CVM Resolution 30 makes the distributor verify that a product suits the client's profile ([CVM study, Capital Aberto](https://capitalaberto.com.br/regulamentacao/estudo-sobre-cvm-30-aponta-melhorias-para-a-norma/)); the platform records the answers and the profile, refuses orders without one, and refuses variable income to a conservative profile. The broker remains responsible for its own suitability process and may replace the questionnaire with its own.
 
+
+### 6.5 Screening who sends each deposit
+
+Withdrawal addresses are screened before anything is sent (§6.1); deposits are screened before anything is credited. An exchange reports the address a deposit arrived at, not where it came from, so the platform reads the transaction on its own network (`internal/chain`) and screens every address that funded it against the same sources as withdrawals:
+
+| Network | Lookup | Senders |
+|---------|--------|---------|
+| bitcoin | An Esplora server, `GET /tx/:txid` ([Esplora HTTP API](https://github.com/Blockstream/esplora/blob/master/API.md)), Blockstream's or the platform's own | The address of every input's previous output |
+| ethereum, polygon | A JSON-RPC node, `eth_getTransactionByHash` and `eth_getTransactionReceipt` ([Ethereum JSON-RPC](https://ethereum.org/en/developers/docs/apis/json-rpc/)) | The transaction's signer and, for a token, the `from` of each ERC-20 `Transfer` log that paid the deposit address (a contract wallet or a router may move tokens for someone else); a transaction that paid the address nothing is refused |
+| tron | A full node's HTTP API, `POST /wallet/gettransactionbyid` with `visible: true` ([TRON documentation](https://tronprotocol.github.io/documentation-en/api/http/block-and-tx-query/gettransactionbyid/)), TronGrid or the platform's own | The `owner_address` of the transaction's contract, who signed it (for TRC-20, the holder calling `transfer`) |
+| any (and solana) | A provider through a small contract, `GET {SENDER_LOOKUP_URL}?network=…&asset=…&txid=…&address=…` answering `{"senders": […]}`, which an adapter translates to a blockchain-analytics vendor's API | What the provider answers |
+
+Each sender's screening is recorded in `address_screenings` with the purpose `deposit_sender` and the deposit it was for. Then:
+
+- **Clear**: the deposit goes on as before (a charge paid in time settles; one paid late, or a deposit no charge matches, waits for operations).
+- **A hit**: the coins are booked to `liability.compliance_hold.<asset>` (custody against the hold), the charge waits (`held`; the intent shows `processing`, and the terminal says the payment is being checked, never why), and a compliance case opens (§6.7). A deposit no charge matches is held the same way, under the platform tenant. Funds from a person a sanctions list names are frozen, not returned: Law 13.810/2019 has the obliged entities of Law 9.613/1998 comply with UN Security Council sanctions without delay and without prior notice to the sanctioned, and report the assets to the Ministry of Justice and Public Security ([Lei 13.810/2019](https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2019/lei/l13810.htm), [Resolução BCB 44/2020](https://www.ancord.org.br/wp-content/uploads/2020/11/Resolucao-BCB-n-44-de-24_11_2020.pdf)).
+- **Cannot be screened** (no lookup for the network, the node down, a list stale): the deposit is held exactly as for a hit, with the reason `screening_failed`. The job re-screens such deposits every ten minutes; one that comes back clear is released by the system and settles, one that hits becomes a sanctions case. An error is never a pass.
+
+The custody reconciliation counts held and blocked deposits as booked (they are in custody through the hold), not as unapplied; a deposit whose screening never finished (a crash between recording and deciding) is reported as unapplied with that reason. In the sandbox the in-memory exchange knows who sent each simulated deposit; `POST /v1/sandbox/crypto/payments/{id}` with `{"from": "TSanctionedTestAddressForSandbox12"}` shows a held payment.
+
+### 6.6 The travel rule
+
+FATF Recommendation 16 has the provider sending a virtual-asset transfer pass the identification of who sends and who receives it to the provider receiving it. Resolution BCB 520/2025 (art. 44) brings it to Brazil in two stages: between authorized providers in Brazil by February 2027, and in operations with the exterior by February 2028; the resolution sets no minimum value, and providers may rely on clients' documented self-declarations during both stages ([CSMV](https://www.csmv.com.br/boletins/o-novo-marco-regulatorio-do-banco-central-para-ativos-virtuais-analise-das-resolucoes-bcb-no-519-520-e-521-2025/), [Chambers](https://chambers.com/articles/o-novo-marco-regulatório-do-banco-central-para-ativos-virtuais-análise-das-resoluções), [Notabene](https://notabene.id/post/brazils-central-bank-regulates-virtual-asset-service-providers-what-bcb-resolutions-mean-for-crypto-compliance)). Resolution 521 requires identifying the owner of a self-custodied wallet a client transfers to or from.
+
+The data travels in the interVASP Messaging Standard, IVMS101.2023 ([the standard](https://cdn.jsdelivr.net/npm/ivms101@2.0.0/specs/ivms101-2023.md), [21 Analytics](https://21analytics.ch/blog/what-is-the-intervasp-messaging-standard-ivms-and-why-it-should-be-the-basics-of-your-fatf-travel-rule-implementation)): `originator.originatorPerson`, `beneficiary.beneficiaryPerson`, `originatingVASP`, `beneficiaryVASP` and `payloadMetadata.payloadVersion` `101.2023`. `internal/travelrule` builds and validates it against the standard's constraints: C1 and C4 (what identifies an originator), C2 (a birth date in the past), C3 (ISO 3166 countries), C5 and C6 (a legal name), C7 and C9 (a legal person's identifier type, registration authority, no country of issue), C8 (a usable address), C10 (the form of a GLEIF registration authority code) and C11 (the LEI's ISO 17442 check digits). A merchant with a CNPJ is a legal person whose identifier is a `RAID` of the CNPJ registry (`RA000681` in GLEIF's list of registration authorities, as LEI records show it; confirm against GLEIF's current list), identified at the platform by its merchant id; one with a CPF (an MEI) is a natural person with a `TXID` issued by Brazil. The platform is the originating provider, by its LEI (`PLATFORM_LEI`) or its CNPJ.
+
+**Withdrawals.** Every withdrawal carries the data (above `TRAVEL_RULE_THRESHOLD_BRL` when set; by default every one). The beneficiary is the merchant itself unless the request names another (`beneficiary`: type, name, document, country, address). Then:
+
+- To an account at another provider (`destination_type` `exchange`), `beneficiary_vasp` (name, LEI, country, the network's id for it) is required, and the message goes through the travel-rule network before anything moves: `POST {TRAVEL_RULE_URL}/transfers` with the payload, answering `accepted` or `rejected` once the receiving provider has. A rejection refuses the withdrawal (`422 travel_rule_rejected`, with the provider's reason), no answer refuses it too (`503`), and so does a missing network: the coins never leave without an acceptance.
+- To a self-hosted wallet, there is nobody to send it to: the request is the merchant's declaration of who owns the wallet (itself by default), recorded as `self_declared`.
+
+Every attempt, accepted or not, is kept in `travel_rule_messages` with the payload as sent; the withdrawal's response carries its id and status.
+
+**Deposits.** The travel-rule adapter posts what other providers send to `POST /v1/travel-rule/inbound`, signed like the platform's own webhooks (the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers, HMAC-SHA256 with `TRAVEL_RULE_INBOUND_SECRET`, five minutes of tolerance). The platform answers `accepted`, or `rejected` with the reason when the payload breaks the standard or the address is not one of its own; both are recorded, and the same reference twice answers the first result. An accepted message is matched to its deposit by transaction id, or by asset, network, address, memo and amount, whichever arrives first. A message naming a beneficiary whose document is not the merchant's opens a review. At the counter, the checkout may ask the customer's name and CPF (the console's Cobrar does; `payer` on the confirmation); that declaration is recorded as the deposit's originator. A deposit worth `TRAVEL_RULE_REVIEW_BRL` or more (default R$ 5.000,00) that arrives with neither opens a review; it is not held, since paying from a self-hosted wallet is the ordinary case at a counter, and a message that arrives later closes the review by itself.
+
+### 6.7 Compliance cases
+
+Held deposits and travel-rule reviews are compliance cases (`compliance_cases`), one per deposit and kind, read and decided through `GET /v1/compliance/cases`, `POST /v1/compliance/cases/{id}/decision` (scopes `compliance:read` and `compliance:write`; a partner's `*` key reads cases but cannot decide them, since `compliance:write` is granted by name to the platform's compliance officers), the console's Compliance screen, or `platform compliance-cases` and `platform compliance-decide` for the platform tenant's (deposits no charge matches). A decision needs a note and is kept with who made it:
+
+| Case | Decisions |
+|------|-----------|
+| A deposit held, `sanctions_hit` or `screening_failed` | **release**: the hold is undone; a charge that waited settles for the intent's amount (the wait was the platform's, so the result account absorbs the market's move); a deposit no charge matches becomes an ordinary unapplied deposit. **block**: the coins stay in `liability.compliance_hold`, the charge is canceled (`payment_intent.canceled`, reason `compliance`), and operations reports it ([runbook §4.12](../integration/operations-runbook.md#412-a-held-crypto-deposit)) |
+| A review, `originator_missing` or `beneficiary_mismatch` | **close**: nothing was held |
+
+Neither the merchant's apps nor the payment's webhooks say why a payment is being checked: the tenant receives `compliance.case_opened` and `compliance.case_decided`, and the payment `payment_intent.processing` with the reason `under_review` (Law 9.613/1998, art. 11, forbids telling the client about a report to the COAF). `GET /v1/compliance/screenings` lists every screening, and `GET /v1/travel-rule/messages` every message, sent and received.
+
 ---
 
 ## 7. Configuration
@@ -224,7 +273,13 @@ Orders reach B3 only through a broker authorized by the CVM and accepted as a B3
 | `BRAPI_TOKEN` | Display prices from brapi.dev |
 | `SANCTIONS_LISTS` | Lists of sanctioned addresses, comma-separated paths or https URLs: OFAC's `SDN.CSV`, or one address per line (§6.1) |
 | `SCREENING_URL`, `SCREENING_TOKEN` | A screening provider's adapter (§6.1). With the lists, production needs at least one source |
-| `PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTING_URL` | The platform's CNPJ, name and URL in the DeCripto (record 0000); production needs the CNPJ and the URL with crypto on |
+| `PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTING_URL` | The platform's CNPJ, name and URL in the DeCripto (record 0000) and the travel rule; production needs the CNPJ and the URL with crypto on |
+| `BITCOIN_ESPLORA_URL`, `ETHEREUM_RPC_URL`, `POLYGON_RPC_URL`, `TRON_API_URL`, `TRON_API_KEY` | Where the senders of deposits are read on each network (§6.5) |
+| `SENDER_LOOKUP_URL`, `SENDER_LOOKUP_TOKEN` | A provider's adapter for the networks without their own lookup, and solana. Production needs every network covered |
+| `TRAVEL_RULE_URL`, `TRAVEL_RULE_TOKEN` | The travel-rule network's adapter (§6.6); the sandbox uses an in-memory network |
+| `TRAVEL_RULE_INBOUND_SECRET` | The `whsec_…` secret the adapter signs inbound messages with; required in production with crypto |
+| `TRAVEL_RULE_THRESHOLD_BRL`, `TRAVEL_RULE_REVIEW_BRL` | From what value a withdrawal carries the data (default: every one) and a deposit without originator data opens a review (default 5000) |
+| `PLATFORM_LEI` | The platform's LEI, sent as the originating provider's identifier when set |
 
 Every basis-point setting accepts 0 to 2000. Production refuses the sandbox venue, the sandbox FX provider, and either line without its authorization.
 
@@ -232,7 +287,7 @@ Every basis-point setting accepts 0 to 2000. Production refuses the sandbox venu
 
 ## 8. Operations and what is left
 
-The periodic jobs run every minute under a lease, so one replica runs them: crypto deposits are polled and matched (a deposit that matches nothing is recorded in `crypto_deposits` for operations); expired crypto charges are canceled; credits into the accounts abroad are polled and applied by reference (a credit without a known reference is kept in `fx_credits` without a merchant, for operations); B3 trades are settled after D+2; last month's DeCripto is written on the first days of the month. Operations procedures are in the [operations runbook](../integration/operations-runbook.md).
+The periodic jobs run every minute under a lease, so one replica runs them: crypto deposits are polled and matched (a deposit that matches nothing is recorded in `crypto_deposits` for operations); expired crypto charges are canceled; credits into the accounts abroad are polled and applied by reference (a credit without a known reference is kept in `fx_credits` without a merchant, for operations); B3 trades are settled after D+2; deposits held because their senders could not be screened are screened again every ten minutes (§6.5); last month's DeCripto is written on the first days of the month. Operations procedures are in the [operations runbook](../integration/operations-runbook.md).
 
 **Custody reconciliation, every night after 02:00 Brasília.** For each venue the platform reads the account's balances (Binance `GET /api/v3/account`, Kraken `Balance`, Coinbase `GET /api/v3/brokerage/accounts`, every page; available plus held) and compares each asset with the sum of `asset.custody.<venue>.<asset>` across every tenant, plus the deposits the venue credited that the ledger has not applied. Before comparing, it records the venue's last week of deposits for every asset, so a transfer that arrived when no charge was waiting is found too. Each difference is a `custody_mismatch` exception (expected, actual, and the gap) and each unapplied deposit an `unapplied_crypto_deposit`, in the reconciliation queue under the platform tenant (`00000000-0000-0000-0000-000000000000`); `platform recon-custody` runs it on demand. A venue that cannot be read is an exception too (`custody_unreadable`), never a pass. In the sandbox the in-memory venue keeps balances as a real account would, so the end-to-end test proves the books and the venue agree after payments, conversions and withdrawals, and catches a coin that leaves without a journal.
 
@@ -240,6 +295,6 @@ Before production, in order:
 
 1. The authorizations of §6 (or the partners that hold them), and contracts with the exchanges, the FX institution, the broker and a screening provider (or the lists' sources).
 2. The câmbio reporting the FX institution requires; the first DeCripto filings reviewed with the accountants before transmission.
-3. Travel-rule data for withdrawals above the thresholds the Central Bank sets, and screening of the senders of deposits.
+3. A contract with a travel-rule network (TRP, TRISA or a vendor) and its adapter to the contract of §6.6; nodes or an analytics provider for the senders of deposits on every network; the Central Bank's detailed requirements for the travel rule as they are published, and the reports of difficulties with counterparties the resolution asks for; screening the names in travel-rule messages against the lists (today the addresses are screened, the names are kept); the retention of the personal data in `travel_rule_messages` under the LGPD and the record-keeping rules.
 4. Read-only keys at each venue for the custody reconciliation, separate from the trading keys.
 5. Classification by counsel of each flow under Resolution BCB 521 (domestic payment, câmbio, or international transfer).

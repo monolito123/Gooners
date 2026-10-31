@@ -164,6 +164,7 @@ Implemented in both cores (`CheckoutController` in Kotlin and Swift) and unit-te
 | Card detected | Status lights advance (EMV contactless indicator pattern) | Short click | Light tick |
 | Approved | Check draws in 400 ms (`motion.approve`), amount scales 1.0 → 1.04 → 1.0 | Two rising notes | Success pattern |
 | Declined | Card shakes 2 px horizontally, once | One low note | Double pulse |
+| Under review (a crypto payment held while compliance checks who sent it) | None: plain text, neither the approval's mint nor the decline's coral | None | None. The screen says the payment arrived, is being checked and will reach the balance once cleared, and offers one action, Nova venda; it never says why ([09 §6.5](09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit)) |
 | Warning banner | Slides in 200 ms | None | None |
 
 With "reduce motion" on, the motions become cross-fades. Sounds follow the device's ring mode, except the approval tone, which the merchant can force on in settings because a busy counter often needs it.

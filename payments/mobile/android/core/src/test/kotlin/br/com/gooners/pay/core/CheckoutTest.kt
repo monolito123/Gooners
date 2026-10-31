@@ -35,6 +35,7 @@ class CheckoutTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val seen = CopyOnWriteArrayList<String>()
     @Volatile private var cancelFails = false
+    @Volatile private var paidStatus = "captured"
 
     @After
     fun stop() {
@@ -54,7 +55,7 @@ class CheckoutTest {
                     "POST /v1/payment-intents" -> intent("requires_payment_method")
                     "POST /v1/payment-intents/pi_1/confirm" -> intent("requires_action",
                         ""","next_action":{"type":"crypto_transfer","asset":"USDT","network":"tron","address":"TQ1","amount":"24.054000","uri":"tron:TQ1?amount=24.054","expires_at":"2026-10-31T12:15:00Z"}""")
-                    "GET /v1/payment-intents/pi_1" -> intent("captured", ""","receipt":{"claim_url":"https://r.example/c#k=1"}""")
+                    "GET /v1/payment-intents/pi_1" -> intent(paidStatus, ""","receipt":{"claim_url":"https://r.example/c#k=1"}""")
                     "POST /v1/terminal/authorizations" ->
                         """{"status":"approved","payment_intent_id":"pi_1","card":{"brand":"visa","last4":"1111"},"settlement":{"mode":"instant","net_available":12576}}"""
                     "POST /v1/payment-intents/pi_1/cancel" -> if (cancelFails) return MockResponse.Builder().code(503).body("{}").build() else intent("canceled")
@@ -126,6 +127,22 @@ class CheckoutTest {
         c.cancelSale()
         assertEquals(CheckoutState.Cancelled(again.amount, false, CheckoutController.CRYPTO_RETURN), c.state.value)
         assertTrue(seen.toString(), seen.none { it.startsWith("POST /v1/refunds") || it.endsWith("/cancel") })
+    }
+
+    @Test
+    fun aCryptoPaymentUnderReviewIsNeitherApprovedNorDeclined() = runBlocking {
+        paidStatus = "processing" // the platform holds it while compliance checks the sender
+        val authed = platform()
+        val c = controller({ authed })
+        listOf(8, 0, 0, 0).forEach(c::digit)
+        c.charge()
+        c.choose(PayMethod.CRYPTO)
+        val review = withTimeout(5_000) { c.state.first { it is CheckoutState.Reviewing } } as CheckoutState.Reviewing
+        assertEquals(CheckoutState.Reviewing(Money(8_000), CheckoutController.CRYPTO_REVIEW), review)
+        delay(200) // the checkout stops polling and stays put until the cashier moves on
+        assertEquals(review, c.state.value)
+        c.nextSale()
+        assertEquals(CheckoutState.Entering(Money.zero(), PayMethod.CRYPTO), c.state.value)
     }
 
     @Test

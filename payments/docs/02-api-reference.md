@@ -139,7 +139,7 @@ grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20ac
 }
 ```
 
-Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`.
+Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`, `compliance:read`, `compliance:write`. A key with `*` holds every scope except `compliance:write`, which the platform grants by name to its compliance officers' keys: releasing or blocking funds a sanctions screening held is its decision, not a partner's.
 
 ### 3.2 `POST /v1/auth/nostr` (merchant apps)
 
@@ -937,6 +937,9 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `payment_intent.med_returned` | A Pix was returned to the payer under the MED; the merchant was debited |
 | `device.revoked` | A device key was removed from the authorization list |
 | `account.reserve.changed` | Risk changed the merchant's reserve |
+| `payment_intent.processing` | A crypto payment arrived and is held while compliance checks who sent it (`reason: "under_review"`); it ends `captured` or `canceled` (§11.6) |
+| `compliance.address_refused` | Sanctions screening refused a withdrawal address |
+| `compliance.case_opened` / `.case_decided` | A deposit was held or a travel-rule review opened; compliance released, blocked or closed it (§11.6) |
 
 ---
 
@@ -997,7 +1000,20 @@ A payment intent with `channel: "crypto"` is confirmed with the asset and networ
 }
 ```
 
-A transfer on another network, or of another amount, is not matched; the charge expires after 15 minutes and is canceled. In the sandbox, `POST /v1/sandbox/crypto/payments/{id}` makes the customer's transfer arrive.
+A transfer on another network, or of another amount, is not matched; the charge expires after 15 minutes and is canceled. In the sandbox, `POST /v1/sandbox/crypto/payments/{id}` makes the customer's transfer arrive; `{"from": "TSanctionedTestAddressForSandbox12"}` makes it come from the sandbox's sanctioned wallet.
+
+Before a deposit settles, the platform reads who sent it on the chain and screens every sender ([09 §6.5](09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit)). A sender on a sanctions list, or one that cannot be screened, holds the payment: the intent goes to `processing` (`latest_attempt.status: "held"`) until compliance releases it (`captured`) or blocks it (`canceled`). The reason is never shown to the merchant.
+
+The confirmation may carry who the customer says they are, when the checkout asks (a CPF, as for an invoice): it is recorded as the originator of the deposit for the travel rule. It must identify the payer beyond a name (a document, an address or a date and place of birth):
+
+```json
+{
+  "payment_method_type": "crypto",
+  "asset": "USDT",
+  "network": "tron",
+  "payer": { "type": "natural", "name": "Ana Souza", "document": "52998224725", "country": "BR" }
+}
+```
 
 ### 11.2 Markets, holdings and conversions
 
@@ -1058,6 +1074,8 @@ A conversion is quoted first and executed only on request, within 30 seconds. A 
 
 Sends crypto the merchant holds to an outside address. The address is checked against the network's format and **screened against sanctions lists before anything moves** ([09 §6.1](09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)): a listed address is refused with `403 address_refused`, and a screening that cannot be completed with `503`; nothing is sent either way, and every screening is recorded. The network fee is taken from the holding. `destination_type` says whether the coins go to a wallet no provider keeps (`wallet`, the default) or to an account at another provider (`exchange`); the DeCripto reports them apart. Sending is final, so it needs `payouts:write` like a Pix payout.
 
+Every withdrawal carries the **travel rule** ([09 §6.6](09-digital-assets-international-b3.md#66-the-travel-rule)): the originator (the merchant) and the beneficiary in IVMS101.2023. `beneficiary` names who owns the destination; without it, the merchant itself. To another provider, `beneficiary_vasp` is required and the receiving provider must accept the data before anything moves: a refusal answers `422 travel_rule_rejected` with its reason, no answer `503`. To a self-hosted wallet the request is the merchant's declaration of the owner. A document that is not a CPF or a CNPJ needs `document_type` (an IVMS101 national identifier type) and, for a company, `registration_authority`.
+
 ```json
 {
   "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
@@ -1065,7 +1083,9 @@ Sends crypto the merchant holds to an outside address. The address is checked ag
   "network": "bitcoin",
   "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
   "amount": "0.0001",
-  "destination_type": "wallet"
+  "destination_type": "exchange",
+  "beneficiary": { "type": "natural", "name": "João Pereira", "document": "12345678909", "country": "BR" },
+  "beneficiary_vasp": { "name": "Exchange Exemplo S.A.", "lei": "506700GE1G29325QX363", "country": "BR" }
 }
 ```
 
@@ -1081,8 +1101,9 @@ Sends crypto the merchant holds to an outside address. The address is checked ag
   "object": "crypto_withdrawal",
   "status": "sent",
   "venue": "simex",
-  "destination_type": "wallet",
-  "value_brl": 3493
+  "destination_type": "exchange",
+  "value_brl": 3493,
+  "travel_rule": { "id": "tr_01M685GPEE7Q5X5Z0R8B2Q4T0N", "status": "accepted", "reference": "trp-7f3a" }
 }
 ```
 
@@ -1210,6 +1231,62 @@ Sends crypto the merchant holds to an outside address. The address is checked ag
 
 `GET /v1/investments/positions` returns the positions, each valued at the last price (`result` = `value` − `cost`, in centavos), and the recent orders.
 
+### 11.6 Compliance and the travel rule
+
+Held deposits and travel-rule reviews are cases ([09 §6.7](09-digital-assets-international-b3.md#67-compliance-cases)). `GET /v1/compliance/cases?status=open|released|blocked|closed|all` lists them newest first (scope `compliance:read`):
+
+```json
+{
+  "id": "cc_01M68ZT7GTR3WAHDDZF05WFGNW",
+  "object": "compliance_case",
+  "kind": "deposit_screening",
+  "reason": "sanctions_hit",
+  "subject": "deposit:simex/dep_01M68ZT7GS3WQ6PJ2Y7R9C1KQB",
+  "merchant_id": "mer_01M68ZT2DMNAK5SQ7RNAG7T6HF",
+  "payment_intent_id": "pi_01M68ZT7EARV2P539BX2SP25AP",
+  "holds_funds": true,
+  "asset": "USDT",
+  "units": 14919173,
+  "amount": "14.919173",
+  "status": "open",
+  "detail": { "network": "tron", "txid": "2465…1ba", "senders": ["TSanctionedTestAddressForSandbox12"], "matches": ["static: sandbox test list"] },
+  "decided_at": null,
+  "created_at": "2026-10-31T12:44:07Z"
+}
+```
+
+`POST /v1/compliance/cases/{id}/decision` (scope `compliance:write`, granted by name, never through `*`) takes `{"action": "release" | "block" | "close", "note": "…"}`; the note is required and kept with who decided. A case holding funds is released (the payment settles) or blocked (the coins stay frozen, the payment is canceled); a review is closed. A case already decided answers `409`.
+
+`GET /v1/compliance/screenings?purpose=withdrawal|deposit_sender&result=clear|hit|error` lists every address screening; `GET /v1/travel-rule/messages?direction=outbound|inbound` and `/{id}` every travel-rule message with its IVMS101 payload, the counterparty and the outcome (`accepted`, `rejected`, `unreachable`, `self_declared`, `received`, `matched`, `refused`).
+
+`POST /v1/travel-rule/inbound` is for the travel-rule adapter, not partners: it posts what other providers send, signed with the shared secret (`webhook-id`, `webhook-timestamp`, `webhook-signature`, as in §10.1), and receives the platform's answer for the sender:
+
+```json
+{
+  "reference": "trp-91c2",
+  "asset": "USDT",
+  "network": "tron",
+  "address": "T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM",
+  "amount": "27.966350",
+  "txid": "91078c1e…767c",
+  "originator_vasp": { "name": "Outra Exchange S.A.", "lei": "506700GE1G29325QX363" },
+  "ivms101": {
+    "originator": { "originatorPerson": [ { "naturalPerson": {
+      "name": { "nameIdentifier": [ { "primaryIdentifier": "Souza", "secondaryIdentifier": "Ana", "naturalPersonNameIdentifierType": "LEGL" } ] },
+      "customerIdentification": "cust-778" }, "accountNumber": [ "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy" ] } ] },
+    "beneficiary": { "beneficiaryPerson": [ { "legalPerson": {
+      "name": { "nameIdentifier": [ { "legalPersonName": "Mercado Bom Preço Ltda", "legalPersonNameIdentifierType": "LEGL" } ] } } } ] },
+    "payloadMetadata": { "payloadVersion": "101.2023" }
+  }
+}
+```
+
+```json
+{ "status": "accepted", "reference": "tr_01M68ZT4S222Y4KJ3X047N8T99", "reason": "" }
+```
+
+An invalid payload or an address that is not the platform's answers `{"status": "rejected", "reason": "…"}`; a bad signature `401`.
+
 ## 12. ISO 8583 mapping summary
 
 | API field | ISO 8583 | Notes |
@@ -1268,7 +1345,12 @@ Sends crypto the merchant holds to an outside address. The address is checked ag
 | GET | `/v1/holdings` | api | `assets:read` | Yes | Crypto and foreign balances, valued in reais |
 | POST | `/v1/conversions` | api | `assets:write` | Key | A 30-second quote |
 | GET · POST | `/v1/conversions/{id}` · `/{id}/execute` | api | `assets:read` · `assets:write` | Yes | Execute is idempotent |
-| POST | `/v1/crypto/withdrawals` | api | `payouts:write` | Key | Final once sent |
+| POST | `/v1/crypto/withdrawals` | api | `payouts:write` | Key | Final once sent; screening and the travel rule first |
+| GET | `/v1/compliance/cases` · `/{id}` | api | `compliance:read` | Yes | Held deposits and travel-rule reviews |
+| POST | `/v1/compliance/cases/{id}/decision` | api | `compliance:write` | Key | Release, block or close, with a note |
+| GET | `/v1/compliance/screenings` | api | `compliance:read` | Yes | Every withdrawal address and deposit sender screened |
+| GET | `/v1/travel-rule/messages` · `/{id}` | api | `compliance:read` | Yes | IVMS101 sent and received |
+| POST | `/v1/travel-rule/inbound` | api | the adapter's signature | Reference | Messages from other providers |
 | GET | `/v1/international/accounts` | api | `assets:read` | Yes | Balances and details to receive from abroad |
 | POST | `/v1/international/payouts` | api | `payouts:write` | Key | Reversed in full if the transfer fails |
 | GET | `/v1/investments/quotes/{ticker}` | api | `assets:read` | Yes | Shares, units and BDRs |

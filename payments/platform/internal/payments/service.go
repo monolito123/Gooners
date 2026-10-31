@@ -63,6 +63,16 @@ type Config struct {
 	FXFeeBps, FXSpreadBps         int
 	// IOF on foreign exchange, in basis points: reais going abroad, currency coming in.
 	IOFOutBps, IOFInBps int
+	// PlatformLEI is the platform's Legal Entity Identifier, sent as the originating
+	// provider's in travel-rule messages when it has one (its CNPJ goes otherwise).
+	PlatformLEI string
+	// TravelRuleThreshold is the value (centavos) from which a withdrawal carries
+	// travel-rule data. Zero, the default, is every withdrawal: Resolução BCB 520/2025 sets
+	// no minimum.
+	TravelRuleThreshold int64
+	// TravelRuleReview is the value (centavos) from which a deposit that arrived with no
+	// identification of its originator opens a compliance review. Default R$ 5.000,00.
+	TravelRuleReview int64
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -90,6 +100,8 @@ type Service struct {
 	fx           fx.Provider
 	broker       brokerage.Broker
 	screener     AddressScreener
+	senders      SenderLookup
+	travelRule   TravelRuleProvider
 	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
@@ -120,7 +132,13 @@ type Deps struct {
 	// Screener checks withdrawal addresses against sanctions lists before anything is sent
 	// (docs/09 §6.1). Without one, withdrawals are refused.
 	Screener AddressScreener
-	Logger   *slog.Logger
+	// Senders finds who sent each crypto deposit, so screening can clear them before the
+	// deposit settles (docs/09 §6.5). Without one, every deposit is held for compliance.
+	Senders SenderLookup
+	// TravelRule sends travel-rule data to the provider receiving a withdrawal (docs/09
+	// §6.6). Without one, withdrawals to other providers are refused.
+	TravelRule TravelRuleProvider
+	Logger     *slog.Logger
 }
 
 // New returns the service.
@@ -146,9 +164,12 @@ func New(cfg Config, d Deps) *Service {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
+	if cfg.TravelRuleReview <= 0 {
+		cfg.TravelRuleReview = 500_000
+	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
-		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener}
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule}
 }
 
 // Errors surfaced to the API as problem details.
@@ -165,6 +186,9 @@ var (
 	ErrSandboxed   = errors.New("not allowed outside the sandbox")
 	// ErrScreened is a destination sanctions screening refused.
 	ErrScreened = errors.New("refused by sanctions screening")
+	// ErrTravelRuleRejected is a withdrawal the receiving provider refused on its travel-rule
+	// data (an unknown account, a beneficiary that does not match).
+	ErrTravelRuleRejected = errors.New("refused by the receiving provider")
 )
 
 func invalid(format string, a ...any) error {

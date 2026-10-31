@@ -19,21 +19,23 @@ import (
 
 // opsCommands are the operator commands (see the package comment and the runbook).
 var opsCommands = map[string]func(context.Context, []string) error{
-	"merchant-status":  merchantStatus,
-	"terminal-revoke":  terminalRevoke,
-	"apikey-list":      apikeyList,
-	"apikey-revoke":    apikeyRevoke,
-	"disputes-import":  disputesImport,
-	"disputes-list":    disputesList,
-	"write-off":        writeOff,
-	"recon-card":       reconCard,
-	"recon-pix":        reconPix,
-	"recon-exceptions": reconExceptions,
-	"recon-resolve":    reconResolve,
-	"recon-allocate":   reconAllocate,
-	"recon-custody":    reconCustody,
-	"decripto":         deCripto,
-	"decripto-filed":   deCriptoFiled,
+	"merchant-status":   merchantStatus,
+	"terminal-revoke":   terminalRevoke,
+	"apikey-list":       apikeyList,
+	"apikey-revoke":     apikeyRevoke,
+	"disputes-import":   disputesImport,
+	"disputes-list":     disputesList,
+	"write-off":         writeOff,
+	"recon-card":        reconCard,
+	"recon-pix":         reconPix,
+	"recon-exceptions":  reconExceptions,
+	"recon-resolve":     reconResolve,
+	"recon-allocate":    reconAllocate,
+	"recon-custody":     reconCustody,
+	"decripto":          deCripto,
+	"decripto-filed":    deCriptoFiled,
+	"compliance-cases":  complianceCases,
+	"compliance-decide": complianceDecide,
 }
 
 type opsFlags struct {
@@ -418,5 +420,45 @@ func deCriptoFiled(ctx context.Context, args []string) error {
 	m = time.Date(m.Year(), m.Month(), 15, 12, 0, 0, 0, time.FixedZone("BRT", -3*3600))
 	return withPlatform(ctx, func(svc *payments.Service) error {
 		return svc.MarkDeCriptoFiled(ctx, m, *sha, *receipt, *actor)
+	})
+}
+
+// complianceCases lists a tenant's compliance cases: held deposits and travel-rule reviews.
+// Deposits no charge matches are the platform's: -tenant 00000000-0000-0000-0000-000000000000.
+func complianceCases(ctx context.Context, args []string) error {
+	var status *string
+	o, err := newOps("compliance-cases", args, func(fs *flag.FlagSet) { status = fs.String("status", "open", "open, released, blocked, closed or all") })
+	if err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		cs, _, err := svc.ListCases(ctx, *o.tenant, *status, "", 100)
+		if err != nil {
+			return err
+		}
+		return printJSON(cs)
+	})
+}
+
+// complianceDecide releases or blocks a held deposit, or closes a review (runbook §4.12).
+// A release sells a deposit whose charge waited, so it needs the venues: it builds the
+// service from the environment as serve does.
+func complianceDecide(ctx context.Context, args []string) error {
+	var id, action *string
+	o, err := newOps("compliance-decide", args, func(fs *flag.FlagSet) {
+		id, action = fs.String("case", "", "the case id (cc_…)"), fs.String("action", "", "release, block or close")
+	})
+	if err != nil {
+		return err
+	}
+	if err := o.requireActor(); err != nil {
+		return err
+	}
+	return withPlatform(ctx, func(svc *payments.Service) error {
+		c, err := svc.DecideCase(ctx, *o.tenant, *id, *action, *o.reason, "ops:"+*o.actor)
+		if err != nil {
+			return err
+		}
+		return printJSON(c)
 	})
 }

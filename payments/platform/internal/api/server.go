@@ -46,6 +46,9 @@ type Config struct {
 	// and DPoP proofs sign the exact URL, so it must be what clients call. Empty in the
 	// sandbox: derived from the request.
 	PublicURL string
+	// TravelRuleSecret ("whsec_…") verifies the messages the travel-rule adapter posts to
+	// POST /v1/travel-rule/inbound. Empty: the route answers 503.
+	TravelRuleSecret string
 }
 
 // MaxBody is the largest request body accepted.
@@ -175,6 +178,13 @@ func (s *Server) Handler() http.Handler {
 		route("POST /v1/sandbox/crypto/payments/{id}", "payments:write", false, s.sandboxCryptoPayment)
 		route("POST /v1/sandbox/international/credits", "payments:write", false, s.sandboxInternationalCredit)
 	}
+	route("GET /v1/compliance/cases", "compliance:read", false, s.listCases)
+	route("GET /v1/compliance/cases/{id}", "compliance:read", false, s.getCase)
+	route("POST /v1/compliance/cases/{id}/decision", "compliance:write", true, s.decideCase)
+	route("GET /v1/compliance/screenings", "compliance:read", false, s.listScreenings)
+	route("GET /v1/travel-rule/messages", "compliance:read", false, s.listTravelRule)
+	route("GET /v1/travel-rule/messages/{id}", "compliance:read", false, s.getTravelRule)
+	open("POST /v1/travel-rule/inbound", s.travelRuleInbound) // signed by the travel-rule adapter
 	route("GET /v1/risk/reviews", "risk:read", false, s.listRiskReviews)
 	route("GET /v1/risk/reviews/{id}", "risk:read", false, s.getRiskReview)
 	route("POST /v1/risk/reviews/{id}/resolve", "risk:write", true, s.resolveRiskReview)
@@ -187,6 +197,9 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
 	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
 }
+
+// explicitOnly are the scopes "*" does not include.
+var explicitOnly = map[string]bool{"compliance:write": true}
 
 // sessionRoutes are the only routes a merchant app session may call. Each handler also
 // holds the session to its own merchant (ownership checks in handlers.go).
@@ -448,7 +461,9 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			}
 			scope = "payments:write"
 		}
-		if !p.scopes[scope] && !p.scopes["*"] {
+		// "*" grants every scope but compliance:write: releasing or blocking funds a sanctions
+		// screening held is the platform's compliance officers' decision, on keys granted it by name.
+		if !p.scopes[scope] && !(p.scopes["*"] && !explicitOnly[scope]) {
 			problem(w, r, http.StatusForbidden, "forbidden", "Missing scope", scope)
 			return
 		}
@@ -617,6 +632,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusGone, "expired", "Expired", err.Error())
 	case errors.Is(err, payments.ErrScreened):
 		problem(w, r, http.StatusForbidden, "address-refused", "The destination was refused by sanctions screening", err.Error())
+	case errors.Is(err, payments.ErrTravelRuleRejected):
+		problem(w, r, http.StatusUnprocessableEntity, "travel-rule-rejected", "The receiving provider refused the transfer", err.Error())
 	case errors.Is(err, payments.ErrUnavailable):
 		problem(w, r, http.StatusServiceUnavailable, "upstream-unavailable", "A required upstream is unavailable; retry later", err.Error())
 	case errors.Is(err, payments.ErrDisabled):

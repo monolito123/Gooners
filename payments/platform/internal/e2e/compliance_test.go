@@ -47,8 +47,11 @@ func TestComplianceForDigitalAssets(t *testing.T) {
 
 	// ---- screening ----
 	withdraw := func(address, network, asset, amount, kind string, want int) map[string]any {
-		_, out := st.call("POST", "/v1/crypto/withdrawals", map[string]any{"merchant_id": merchant, "asset": asset, "network": network,
-			"address": address, "amount": amount, "destination_type": kind}, want)
+		body := map[string]any{"merchant_id": merchant, "asset": asset, "network": network, "address": address, "amount": amount, "destination_type": kind}
+		if kind == "exchange" {
+			body["beneficiary_vasp"] = map[string]any{"name": "Exchange Exemplo S.A.", "country": "BR"}
+		}
+		_, out := st.call("POST", "/v1/crypto/withdrawals", body, want)
 		return out
 	}
 	refused := withdraw("0x0000000000000000000000000000000000000BAD", "ethereum", "BTC", "0.0001", "", 422) // BTC does not move on ethereum
@@ -69,7 +72,7 @@ func TestComplianceForDigitalAssets(t *testing.T) {
 		t.Fatal("a refused withdrawal moved money")
 	}
 	var hits, clears int
-	_ = st.pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE result = 'hit'), count(*) FILTER (WHERE result = 'clear') FROM address_screenings WHERE merchant_id = $1`, merchant).Scan(&hits, &clears)
+	_ = st.pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE result = 'hit'), count(*) FILTER (WHERE result = 'clear') FROM address_screenings WHERE merchant_id = $1 AND purpose = 'withdrawal'`, merchant).Scan(&hits, &clears)
 	if hits != 1 || clears != 2 {
 		t.Fatalf("screenings recorded: %d hits, %d clear", hits, clears)
 	}
@@ -168,7 +171,8 @@ func TestComplianceForDigitalAssets(t *testing.T) {
 	}
 }
 
-// Without screening, or when it cannot answer, nothing is sent (fail closed).
+// Without screening, or when it cannot answer, nothing is sent and no deposit settles until
+// compliance decides (fail closed).
 func TestWithdrawalsWaitForScreening(t *testing.T) {
 	for _, c := range []struct {
 		screener payments.AddressScreener
@@ -181,7 +185,22 @@ func TestWithdrawalsWaitForScreening(t *testing.T) {
 		}, 201)
 		_, cp := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 400_00, "channel": "crypto"}, 201)
 		st.call("POST", "/v1/payment-intents/"+cp["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
-		st.call("POST", "/v1/sandbox/crypto/payments/"+cp["id"].(string), nil, 200)
+		if _, pi := st.call("POST", "/v1/sandbox/crypto/payments/"+cp["id"].(string), nil, 200); pi["status"] != "processing" {
+			t.Fatalf("a deposit nobody could screen settled: %v", pi)
+		}
+		_, cases := st.call("GET", "/v1/compliance/cases", nil, 200)
+		data := cases["data"].([]any)
+		if len(data) != 1 || data[0].(map[string]any)["reason"] != "screening_failed" {
+			t.Fatalf("the held deposit's case: %v", cases)
+		}
+		_, decided := st.callAs(st.complianceKey(), "POST", "/v1/compliance/cases/"+data[0].(map[string]any)["id"].(string)+"/decision",
+			map[string]any{"action": "release", "note": "screened by hand against the OFAC list: clear"}, 200)
+		if decided["status"] != "released" {
+			t.Fatalf("%v", decided)
+		}
+		if _, pi := st.call("GET", "/v1/payment-intents/"+cp["id"].(string), nil, 200); pi["status"] != "captured" {
+			t.Fatalf("released, the payment settles: %v", pi)
+		}
 		_, q := st.call("POST", "/v1/conversions", map[string]any{"merchant_id": m["id"], "side": "buy", "asset": "USDT", "brl_amount": 54_00}, 201)
 		st.call("POST", "/v1/conversions/"+q["id"].(string)+"/execute", nil, 200)
 		st.call("POST", "/v1/crypto/withdrawals", map[string]any{"merchant_id": m["id"], "asset": "USDT", "network": "tron",

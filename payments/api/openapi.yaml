@@ -47,6 +47,8 @@ tags:
     description: Webhook endpoints
   - name: assets
     description: Crypto, accounts abroad and B3 investments (docs/09)
+  - name: compliance
+    description: Held crypto deposits, travel-rule reviews and messages, address screenings (docs/09 §6.5 to §6.7)
 
 paths:
   /oauth2/token:
@@ -1362,6 +1364,10 @@ paths:
         against sanctions lists before anything moves: a listed address is refused with 403
         address_refused, and a screening that cannot be completed with 503 (nothing is sent
         either way; every screening is recorded). The network fee is taken from the holding.
+        The travel rule goes first (docs/09 §6.6): to another provider (destination_type
+        exchange, beneficiary_vasp required) the receiving provider must accept the IVMS101
+        data before anything moves (422 travel_rule_rejected, or 503 without an answer); to a
+        self-hosted wallet the request records the owner's declaration.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1378,6 +1384,229 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CryptoWithdrawal"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/compliance/cases:
+    get:
+      tags: [compliance]
+      operationId: listComplianceCases
+      summary: List compliance cases (compliance:read)
+      description: >
+        Deposits held because a sender is on a sanctions list or could not be screened, and
+        travel-rule reviews, newest first.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StartingAfter"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, released, blocked, closed, all]
+            default: open
+      responses:
+        "200":
+          description: A page of cases
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ComplianceCase"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/compliance/cases/{id}:
+    get:
+      tags: [compliance]
+      operationId: getComplianceCase
+      summary: Retrieve a case (compliance:read)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The case
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceCase"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/compliance/cases/{id}/decision:
+    post:
+      tags: [compliance]
+      operationId: decideComplianceCase
+      summary: Release, block or close a case (compliance:write)
+      description: >
+        release: the hold is undone and a payment that waited settles. block: the coins stay
+        frozen in liability.compliance_hold and the payment is canceled; operations reports it
+        (runbook §4.12). close: a review, nothing was held. The note is required and kept with
+        who decided; a case already decided answers 409.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, note]
+              properties:
+                action:
+                  type: string
+                  enum: [release, block, close]
+                note:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: The decided case
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceCase"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/compliance/screenings:
+    get:
+      tags: [compliance]
+      operationId: listAddressScreenings
+      summary: List address screenings (compliance:read)
+      description: Every withdrawal address and deposit sender screened, clear or not, newest first.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - name: starting_after
+          in: query
+          schema:
+            type: string
+          description: The id of the last screening of the previous page.
+        - name: purpose
+          in: query
+          schema:
+            type: string
+            enum: [withdrawal, deposit_sender]
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum: [clear, hit, error]
+      responses:
+        "200":
+          description: A page of screenings
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AddressScreening"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/travel-rule/messages:
+    get:
+      tags: [compliance]
+      operationId: listTravelRuleMessages
+      summary: List travel-rule messages (compliance:read)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StartingAfter"
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [outbound, inbound]
+      responses:
+        "200":
+          description: A page of messages
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TravelRuleMessage"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/travel-rule/messages/{id}:
+    get:
+      tags: [compliance]
+      operationId: getTravelRuleMessage
+      summary: Retrieve a travel-rule message (compliance:read)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The message, with its IVMS101 payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRuleMessage"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/travel-rule/inbound:
+    post:
+      tags: [compliance]
+      operationId: receiveTravelRule
+      summary: A message another provider sent (the travel-rule adapter only)
+      description: >
+        Signed with the adapter's shared secret in the webhook-id, webhook-timestamp and
+        webhook-signature headers (HMAC-SHA256, as the platform's own webhooks). The answer
+        is the platform's to the sender; the same reference twice answers the first result.
+      security: []
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TravelRuleInbound"
+      responses:
+        "200":
+          description: Accepted, or rejected with the reason
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TravelRuleAnswer"
         "4XX":
           $ref: "#/components/responses/Problem"
 
@@ -1659,9 +1888,22 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  type: string
+                  description: >
+                    The wallet the transfer comes from. Absent, a clean sandbox wallet;
+                    TSanctionedTestAddressForSandbox12 or 0x0000000000000000000000000000000000000bad
+                    hold the payment for compliance.
       responses:
         "200":
-          description: The captured payment intent
+          description: The payment intent, captured (or processing when the sender was held)
           content:
             application/json:
               schema:
@@ -2024,6 +2266,8 @@ components:
           type: string
           description: For crypto, the network the transfer must use; another network is not recognized.
           enum: [tron, ethereum, polygon, solana, bitcoin]
+        payer:
+          $ref: "#/components/schemas/TravelRuleParty"
         three_ds:
           type: object
           properties:
@@ -3192,6 +3436,10 @@ components:
           type: string
         amount:
           $ref: "#/components/schemas/DecimalString"
+        beneficiary:
+          $ref: "#/components/schemas/TravelRuleParty"
+        beneficiary_vasp:
+          $ref: "#/components/schemas/VASP"
     CryptoWithdrawal:
       type: object
       required: [id, object, asset, network, address, amount, network_fee_units, status]
@@ -3225,6 +3473,274 @@ components:
           oneOf:
             - $ref: "#/components/schemas/MinorUnits"
             - type: "null"
+        travel_rule:
+          description: The identification sent (to a provider) or declared (for a wallet); null below the threshold.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, status]
+              properties:
+                id:
+                  $ref: "#/components/schemas/Id"
+                status:
+                  type: string
+                  enum: [accepted, self_declared]
+                reference:
+                  type: string
+    TravelRuleParty:
+      type: object
+      required: [type, name]
+      description: >
+        A person as the API takes it; the platform writes the IVMS101.2023 form. A CPF (11
+        digits) or CNPJ (14) needs no document_type; any other document needs one of
+        IVMS101's national identifier types, and a company's a registration_authority (GLEIF
+        code) unless it is an LEI.
+      properties:
+        type:
+          type: string
+          enum: [natural, legal]
+        name:
+          type: string
+        document:
+          type: string
+        document_type:
+          type: string
+          enum: [ARNU, CCPT, RAID, DRLC, FIIN, TXID, SOCS, IDCD, LEIX, MISC]
+        registration_authority:
+          type: string
+          pattern: "^RA[0-9]{6}$"
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+        address:
+          type: object
+          required: [line, town, country]
+          properties:
+            line:
+              type: string
+            town:
+              type: string
+            country:
+              type: string
+              pattern: "^[A-Z]{2}$"
+        date_of_birth:
+          type: string
+          format: date
+        place_of_birth:
+          type: string
+        customer_id:
+          type: string
+    VASP:
+      type: object
+      required: [name]
+      description: A virtual-asset service provider at the other end of a transfer.
+      properties:
+        name:
+          type: string
+        lei:
+          type: string
+          pattern: "^[0-9A-Z]{18}[0-9]{2}$"
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+        id:
+          type: string
+          description: How the travel-rule network knows it (a directory id, a DID, a domain).
+    ComplianceCase:
+      type: object
+      required: [id, object, kind, reason, subject, holds_funds, status, detail, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: compliance_case
+        kind:
+          type: string
+          enum: [deposit_screening, travel_rule]
+        reason:
+          type: string
+          enum: [sanctions_hit, screening_failed, originator_missing, beneficiary_mismatch]
+        subject:
+          type: string
+          description: '"deposit:<venue>/<deposit id>"'
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        payment_intent_id:
+          $ref: "#/components/schemas/Id"
+        holds_funds:
+          type: boolean
+        asset:
+          type: string
+        units:
+          type: integer
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        status:
+          type: string
+          enum: [open, released, blocked, closed]
+        detail:
+          type: object
+          additionalProperties: true
+          description: The network, transaction, senders, matches and errors, or the review's note.
+        decided_by:
+          type: string
+        decision_note:
+          type: string
+        decided_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    AddressScreening:
+      type: object
+      required: [id, object, purpose, network, address, result, sources, created_at]
+      properties:
+        id:
+          type: integer
+        object:
+          const: address_screening
+        purpose:
+          type: string
+          enum: [withdrawal, deposit_sender]
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        network:
+          type: string
+        address:
+          type: string
+        result:
+          type: string
+          enum: [clear, hit, error]
+        sources:
+          type: array
+          items:
+            type: string
+        reference:
+          type: string
+          description: For a deposit sender, the deposit (venue/id).
+        detail:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+    TravelRuleMessage:
+      type: object
+      required: [id, object, direction, asset, network, address, amount, units, counterparty, ivms101, status, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: travel_rule_message
+        direction:
+          type: string
+          enum: [outbound, inbound]
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        transfer_id:
+          $ref: "#/components/schemas/Id"
+        deposit:
+          type: string
+        asset:
+          type: string
+        network:
+          type: string
+        address:
+          type: string
+        memo:
+          type: string
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        units:
+          type: integer
+        txid:
+          type: string
+        counterparty:
+          type: object
+          additionalProperties: true
+          description: '{"vasp": VASP, "owner": …} or {"self_hosted": true, …}'
+        ivms101:
+          $ref: "#/components/schemas/IVMS101"
+        status:
+          type: string
+          enum: [accepted, rejected, unreachable, self_declared, received, matched, refused]
+        reference:
+          type: string
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    IVMS101:
+      type: object
+      description: >
+        An interVASP Messaging Standard payload, IVMS101.2023 (originator.originatorPerson,
+        beneficiary.beneficiaryPerson, originatingVASP, beneficiaryVASP, payloadMetadata). The
+        platform validates the standard's constraints C1 to C11.
+      required: [originator, beneficiary]
+      properties:
+        originator:
+          type: object
+          required: [originatorPerson]
+          properties:
+            originatorPerson:
+              type: array
+              minItems: 1
+              items:
+                type: object
+        beneficiary:
+          type: object
+          required: [beneficiaryPerson]
+          properties:
+            beneficiaryPerson:
+              type: array
+              minItems: 1
+              items:
+                type: object
+        originatingVASP:
+          type: object
+        beneficiaryVASP:
+          type: object
+        payloadMetadata:
+          type: object
+          properties:
+            payloadVersion:
+              type: string
+              enum: ["101", "101.2023"]
+    TravelRuleInbound:
+      type: object
+      required: [reference, asset, network, address, amount, originator_vasp, ivms101]
+      properties:
+        reference:
+          type: string
+        asset:
+          type: string
+        network:
+          type: string
+        address:
+          type: string
+        memo:
+          type: string
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        txid:
+          type: string
+        originator_vasp:
+          $ref: "#/components/schemas/VASP"
+        ivms101:
+          $ref: "#/components/schemas/IVMS101"
+    TravelRuleAnswer:
+      type: object
+      required: [status, reference]
+      properties:
+        status:
+          type: string
+          enum: [accepted, rejected]
+        reference:
+          type: string
+        reason:
+          type: string
     ReceiveDetails:
       type: object
       required: [holder, bank, reference]

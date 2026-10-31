@@ -117,9 +117,10 @@ func (s *Service) custodyBooks(ctx context.Context, venue string) (map[string]in
 // unappliedDeposits is what the venue has credited for deposits the ledger has not applied
 // (unmatched transfers, charges paid too late), per asset, and an exception for each.
 func (s *Service) unappliedDeposits(ctx context.Context, venue string) (map[string]int64, []ReconItem, error) {
-	rows, err := s.pool.Query(ctx, `SELECT d.deposit_id, d.asset, d.units, COALESCE(d.matched_to, '') FROM crypto_deposits d
+	// A deposit compliance holds or blocked is in the books already (the compliance hold).
+	rows, err := s.pool.Query(ctx, `SELECT d.deposit_id, d.asset, d.units, COALESCE(d.matched_to, ''), d.screening FROM crypto_deposits d
 		LEFT JOIN crypto_charges c ON c.payment_intent_id = d.matched_to
-		WHERE d.exchange = $1 AND (d.matched_to IS NULL OR c.status IS DISTINCT FROM 'paid') ORDER BY d.deposit_id`, venue)
+		WHERE d.exchange = $1 AND d.screening NOT IN ('held', 'blocked') AND (d.matched_to IS NULL OR c.status IS DISTINCT FROM 'paid') ORDER BY d.deposit_id`, venue)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -127,15 +128,19 @@ func (s *Service) unappliedDeposits(ctx context.Context, venue string) (map[stri
 	sums := map[string]int64{}
 	var items []ReconItem
 	for rows.Next() {
-		var id, code, charge string
+		var id, code, charge, screened string
 		var n int64
-		if err := rows.Scan(&id, &code, &n, &charge); err != nil {
+		if err := rows.Scan(&id, &code, &n, &charge, &screened); err != nil {
 			return nil, nil, err
 		}
+		code = strings.TrimSpace(code)
 		sums[code] += n
 		a, _ := assets.Get(code)
 		detail := "a deposit that matches no charge: return it to the sender or apply it by hand"
-		if charge != "" {
+		switch {
+		case screened == "pending":
+			detail = "its senders' screening never finished: nothing may be done with it until compliance screens it (runbook §4.12)"
+		case charge != "":
 			detail = "paid after charge " + charge + " expired: return it, or settle at the market with the customer's agreement"
 		}
 		items = append(items, ReconItem{Kind: "unapplied_crypto_deposit", Reference: venue + "/" + id, Actual: i64(n),

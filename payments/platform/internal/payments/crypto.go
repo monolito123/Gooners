@@ -3,6 +3,7 @@ package payments
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -16,6 +17,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 )
 
 // Crypto defaults (Config overrides them).
@@ -121,10 +123,22 @@ type CryptoCharge struct {
 
 // ConfirmCrypto quotes a crypto payment: the asset amount for the intent's reais at the best
 // venue's bid less the spread, made unique among pending charges on the same address, and the
-// address to send it to. The quote holds for 15 minutes.
-func (s *Service) ConfirmCrypto(ctx context.Context, tenantID, id, code, network string) (*Intent, error) {
+// address to send it to. The quote holds for 15 minutes. Payer, when the checkout asked, is
+// who the customer declared they are: the originator of the deposit for the travel rule.
+func (s *Service) ConfirmCrypto(ctx context.Context, tenantID, id, code, network string, payer *travelrule.Party) (*Intent, error) {
 	if s.exchanges == nil {
 		return nil, ErrCryptoDisabled
+	}
+	var payerJSON []byte
+	if payer != nil {
+		p, err := payer.Person("")
+		if err == nil {
+			err = travelrule.ValidateOriginator(p, s.cfg.Now())
+		}
+		if err != nil {
+			return nil, invalid("payer: %v", err)
+		}
+		payerJSON, _ = json.Marshal(payer)
 	}
 	a, err := cryptoAsset(code)
 	if err != nil {
@@ -169,8 +183,8 @@ func (s *Service) ConfirmCrypto(ctx context.Context, tenantID, id, code, network
 	expires := s.cfg.Now().Add(cryptoChargeTTL)
 	for attempt := 0; ; attempt++ {
 		u := units + uniqueTail(a) // tells this payment's deposit apart from others to the same address
-		_, err = s.pool.Exec(ctx, `INSERT INTO crypto_charges (payment_intent_id, tenant_id, merchant_id, exchange, asset, network, address, memo, units, price, status, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)`, id, tenantID, pi.MerchantID, venue.Name(), a.Code, network, address, memo, u, price, expires)
+		_, err = s.pool.Exec(ctx, `INSERT INTO crypto_charges (payment_intent_id, tenant_id, merchant_id, exchange, asset, network, address, memo, units, price, status, expires_at, payer)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12)`, id, tenantID, pi.MerchantID, venue.Name(), a.Code, network, address, memo, u, price, expires, payerJSON)
 		if err == nil || attempt == 4 || !strings.Contains(err.Error(), "crypto_charges_match") {
 			break
 		}
@@ -313,6 +327,10 @@ func (s *Service) PollCryptoDeposits(ctx context.Context) (int, error) {
 	return settled, nil
 }
 
+// settleDeposit records a deposit once and decides what happens to it. Its senders are
+// screened first (docs/09 §6.5): a deposit screening does not clear is held for compliance,
+// matched or not, and nothing more happens until a decision. A cleared deposit that matches
+// a charge paid in time settles; one paid late, or matching nothing, waits for operations.
 func (s *Service) settleDeposit(ctx context.Context, venue exchange.Exchange, d exchange.Deposit) (bool, error) {
 	var piID, tenantID, merchantID, status string
 	var expires time.Time
@@ -325,17 +343,60 @@ func (s *Service) settleDeposit(ctx context.Context, venue exchange.Exchange, d 
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
 	}
-	tag, err := s.pool.Exec(ctx, `INSERT INTO crypto_deposits (exchange, deposit_id, asset, units, matched_to) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-		venue.Name(), d.ID, d.Asset, d.Units, match)
-	if err != nil || tag.RowsAffected() == 0 || match == nil {
-		return false, err // seen before, or an exception for operations
+	if match == nil {
+		tenantID = PlatformTenant // a deposit nobody can match belongs to the platform's operations
+	} else if s.cfg.Now().After(expires) {
+		status = "expired"
 	}
-	if status == "expired" || s.cfg.Now().After(expires) {
+	var value *int64
+	if a, err := assets.Get(d.Asset); err == nil {
+		if price, ok := s.sellPrice(ctx, a); ok {
+			brl, _ := assets.Get(assets.Base)
+			if v, err := assets.Convert(d.Units, a, brl, price); err == nil {
+				value = &v
+			}
+		}
+	}
+	tag, err := s.pool.Exec(ctx, `INSERT INTO crypto_deposits (exchange, deposit_id, asset, units, matched_to, tenant_id, network, address, memo, txid, value_brl)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11) ON CONFLICT DO NOTHING`,
+		venue.Name(), d.ID, d.Asset, d.Units, match, tenantID, d.Network, d.Address, d.Memo, d.TxID, value)
+	if err != nil || tag.RowsAffected() == 0 {
+		return false, err // seen before
+	}
+	v, err := s.screenDeposit(ctx, tenantID, merchantID, venue.Name(), d)
+	if err != nil {
+		return false, err
+	}
+	screened := "clear"
+	if v.reason != "" {
+		screened = "pending" // holdDeposit marks it held once the hold is booked
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE crypto_deposits SET senders = $3, screening = $4 WHERE exchange = $1 AND deposit_id = $2`,
+		venue.Name(), d.ID, v.senders, screened); err != nil {
+		return false, err
+	}
+	// The travel rule: link the data another provider sent with this deposit, if any.
+	if err := s.depositTravelRule(ctx, venue.Name(), d, tenantID, merchantID, piID, value); err != nil {
+		s.log.Error("travel rule for a deposit", "venue", venue.Name(), "deposit", d.ID, "err", err)
+	}
+	if v.reason != "" {
+		return false, s.holdDeposit(ctx, venue.Name(), d, tenantID, merchantID, piID, status, v)
+	}
+	if match == nil {
+		return false, nil // an exception for operations
+	}
+	if status == "expired" {
 		// Paid after the quote ran out: the price is no longer honoured. Operations returns
 		// the coins or settles at the market with the customer's agreement.
 		_, err := s.pool.Exec(ctx, `UPDATE crypto_charges SET status = 'late', deposit_id = $2, txid = $3 WHERE payment_intent_id = $1`, piID, d.ID, d.TxID)
 		return false, err
 	}
+	return s.settleCharge(ctx, venue, d, piID, tenantID, merchantID)
+}
+
+// settleCharge sells a deposit that paid a charge and credits the merchant the intent's
+// amount less the fee.
+func (s *Service) settleCharge(ctx context.Context, venue exchange.Exchange, d exchange.Deposit, piID, tenantID, merchantID string) (bool, error) {
 	pi, err := s.GetIntent(ctx, tenantID, piID)
 	if err != nil {
 		return false, err
@@ -422,8 +483,10 @@ func (s *Service) ExpireCryptoCharges(ctx context.Context, now time.Time) (int, 
 }
 
 // SimulateCryptoPayment pays a pending crypto charge from the sandbox's exchange, as the
-// customer's wallet would, then polls. Sandbox only.
-func (s *Service) SimulateCryptoPayment(ctx context.Context, tenantID, id string) (*Intent, error) {
+// customer's wallet would, then polls. From is the wallet it comes from (the sandbox's clean
+// customer wallet when empty; a sandbox sanctioned address shows a held deposit). Sandbox
+// only.
+func (s *Service) SimulateCryptoPayment(ctx context.Context, tenantID, id, from string) (*Intent, error) {
 	mem, ok := s.sandboxExchange()
 	if !ok {
 		return nil, fmt.Errorf("%w: the sandbox exchange is not running", ErrDisabled)
@@ -433,7 +496,10 @@ func (s *Service) SimulateCryptoPayment(ctx context.Context, tenantID, id string
 		tenantID, id).Scan(&c.Asset, &c.Network, &c.Address, &c.Memo, &c.Units); err != nil {
 		return nil, fmt.Errorf("%w: no pending crypto charge", ErrNotFound)
 	}
-	mem.SimulateDeposit(c.Asset, c.Network, c.Address, c.Memo, c.Units)
+	if from == "" {
+		from = exchange.SandboxSenders[c.Network]
+	}
+	mem.SimulateDepositFrom(from, c.Asset, c.Network, c.Address, c.Memo, c.Units)
 	if _, err := s.PollCryptoDeposits(ctx); err != nil {
 		return nil, err
 	}
@@ -860,11 +926,25 @@ type CryptoWithdrawal struct {
 	// apart (records 0650 and 0450).
 	DestinationType string
 	ValueBRL        *int64 // at the best price to sell when sent
+	// TravelRule is the identification sent (to a provider) or declared (for a wallet).
+	TravelRule *TravelRuleMessage
+}
+
+// CryptoWithdrawalRequest asks to send a merchant's crypto out. Beneficiary is who owns the
+// destination (the merchant itself when nil); BeneficiaryVASP is the provider that holds it,
+// required for destination_type exchange.
+type CryptoWithdrawalRequest struct {
+	MerchantID, Asset, Network, Address, Memo, Amount, DestinationType string
+	Beneficiary                                                        *travelrule.Party
+	BeneficiaryVASP                                                    *travelrule.VASP
 }
 
 // WithdrawCrypto sends units of an asset from the merchant's holding to an address outside
 // the platform, from a venue whose custody covers it. The network fee is the merchant's.
-func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code, network, address, memo, amount, destinationType string) (*CryptoWithdrawal, error) {
+// Before anything moves, the address is screened and the travel-rule data is sent or
+// recorded (docs/09 §6.1 and §6.6).
+func (s *Service) WithdrawCrypto(ctx context.Context, tenantID string, r CryptoWithdrawalRequest) (*CryptoWithdrawal, error) {
+	merchantID, code, network, address, memo, amount, destinationType := r.MerchantID, r.Asset, r.Network, r.Address, r.Memo, r.Amount, r.DestinationType
 	if s.exchanges == nil {
 		return nil, ErrCryptoDisabled
 	}
@@ -874,6 +954,13 @@ func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code
 	case "wallet", "exchange":
 	default:
 		return nil, invalid("destination_type is wallet or exchange")
+	}
+	if destinationType == "exchange" && r.BeneficiaryVASP == nil {
+		return nil, invalid("beneficiary_vasp is required for a transfer to another provider (destination_type exchange)")
+	}
+	m, err := s.GetMerchant(ctx, tenantID, merchantID)
+	if err != nil {
+		return nil, err
 	}
 	a, err := cryptoAsset(code)
 	if err != nil {
@@ -916,6 +1003,10 @@ func (s *Service) WithdrawCrypto(ctx context.Context, tenantID, merchantID, code
 		if v, err := assets.Convert(units, a, brl, price); err == nil {
 			w.ValueBRL = &v
 		}
+	}
+	// Travel rule: to another provider the data goes first and the coins only if it accepts.
+	if w.TravelRule, err = s.travelRuleOut(ctx, tenantID, m, w, r.Beneficiary, r.BeneficiaryVASP); err != nil {
+		return nil, err
 	}
 	// The journal first: if the venue then fails, the reversal puts the balance back.
 	custody := ledger.Custody(venue.Name(), a.Code)

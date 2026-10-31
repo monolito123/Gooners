@@ -71,6 +71,11 @@ sealed interface CheckoutState {
     /** The outcome of "Cancelar venda"; when it failed, sale is the sale to try again. */
     data class Cancelled(val amount: Money, val done: Boolean, val message: String, val sale: Approved? = null) : CheckoutState
     data class Declined(val amount: Money, val message: String) : CheckoutState
+    /**
+     * A crypto payment arrived and the platform is checking who sent it (docs/09 §6.5): the
+     * sale is neither done nor lost. The cashier goes on; the sale shows in Vendas once cleared.
+     */
+    data class Reviewing(val amount: Money, val message: String) : CheckoutState
 }
 
 /** Issues the terminal's trace numbers, 000001..999999; the app persists the counter. */
@@ -365,6 +370,11 @@ class CheckoutController(
                     log("auth_result", id, amount, "result" to "canceled")
                     return fail(amount, expired)
                 }
+                "processing" -> if (method == PayMethod.CRYPTO) {
+                    log("auth_result", id, amount, "result" to "under_review")
+                    _state.value = CheckoutState.Reviewing(amount, CRYPTO_REVIEW)
+                    return
+                }
             }
         }
     }
@@ -374,6 +384,7 @@ class CheckoutController(
     }
 
     companion object {
+        const val CRYPTO_REVIEW = "O pagamento chegou e passa por uma verificação de segurança. A venda entra no saldo assim que ela terminar; acompanhe em Vendas. Pode seguir atendendo."
         const val CRYPTO_RETURN = "Venda em cripto não se desfaz pelo app. A venda continua valendo: para devolver, peça o endereço da carteira do cliente e envie pelo console (Cripto › Enviar)."
 
         /** The journal's result values (nostr/schemas/kind-7714). */
@@ -402,6 +413,7 @@ class CheckoutController(
             is CheckoutState.Undoing -> Money.zero()
             is CheckoutState.Cancelled -> Money.zero()
             is CheckoutState.Declined -> s.amount
+            is CheckoutState.Reviewing -> Money.zero()
         }
     }
 }

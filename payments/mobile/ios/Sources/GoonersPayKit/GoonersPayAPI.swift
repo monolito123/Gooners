@@ -215,7 +215,12 @@ public final class GoonersPayAPI: Sendable {
         }
 
         /// The sandbox only: the customer's transfer arrives.
-        public func simulateCryptoPayment(_ id: String) async throws -> PaymentIntent { try await call("POST", "/v1/sandbox/crypto/payments/\(id)") }
+        /// Pays a sandbox crypto charge; from is the wallet it comes from (the sandbox's sanctioned
+        /// test address shows a payment held for compliance).
+        public func simulateCryptoPayment(_ id: String, from: String? = nil) async throws -> PaymentIntent {
+            let body = try from.map { try JSONSerialization.data(withJSONObject: ["from": $0]) }
+            return try await call("POST", "/v1/sandbox/crypto/payments/\(id)", body: body)
+        }
 
         public func holdings() async throws -> Holdings { try await call("GET", "/v1/holdings") }
 

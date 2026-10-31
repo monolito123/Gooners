@@ -256,6 +256,7 @@ const schemaFor = (v) => {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
     transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
     conversion: 'Conversion', crypto_withdrawal: 'CryptoWithdrawal', international_payout: 'InternationalPayout', investment_order: 'InvestmentOrder', portfolio: 'Portfolio',
+    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';
@@ -269,9 +270,11 @@ const schemaFor = (v) => {
   if (v.type === 'card' && v.card?.number) return 'PaymentMethodCreate';
   if ('payment_method_types' in v && !('id' in v)) return 'PaymentIntentCreate';
   if (('three_ds' in v || v.payment_method_type === 'crypto') && !('id' in v)) return 'PaymentIntentConfirm';
+  if ('ivms101' in v && 'originator_vasp' in v) return 'TravelRuleInbound';
+  if ('address' in v && 'network' in v && !('id' in v)) return 'CryptoWithdrawalCreate';
   if ('beneficiary' in v && !('id' in v)) return 'InternationalPayoutCreate';
   if ('side' in v && 'asset' in v && !('id' in v) && !('address' in v)) return 'ConversionCreate';
-  if ('address' in v && 'network' in v && !('id' in v)) return 'CryptoWithdrawalCreate';
+  if (('accepted' === v.status || 'rejected' === v.status) && 'reference' in v && !('object' in v)) return 'TravelRuleAnswer';
   if ('profile' in v && 'answers' in v) return 'InvestorProfile';
   if ('ticker' in v && 'lot' in v && 'market_open' in v) return 'InstrumentQuote';
   if ('receive' in v && 'currency' in v) return 'InternationalAccount';

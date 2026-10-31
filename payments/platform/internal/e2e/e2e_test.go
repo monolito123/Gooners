@@ -40,6 +40,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
 	"github.com/monolito123/Gooners/payments/platform/internal/testpg"
 	"github.com/monolito123/Gooners/payments/platform/internal/testpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -70,6 +71,9 @@ type stack struct {
 	pool     *pgxpool.Pool
 	vault    *vault.Vault
 	logs     *syncBuffer // everything every component logged, at debug level
+	// travelSecret signs what the travel-rule adapter posts to /v1/travel-rule/inbound.
+	travelSecret string
+	compKey      string // see complianceKey
 
 	receiptsKey, transparencyKey nostr.Keys
 }
@@ -152,7 +156,7 @@ func newStack(t *testing.T, opts ...any) *stack {
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
 		Exchanges: &exchange.Router{Venues: []exchange.Exchange{exchange.NewMemory("simex")}}, FX: fx.NewMemory(), Broker: brokerage.NewMemory(),
-		Screener: screening.Set{screening.SandboxAddresses},
+		Screener: screening.Set{screening.SandboxAddresses}, TravelRule: travelrule.Sandbox{},
 	}
 	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
 	for _, o := range opts {
@@ -165,6 +169,15 @@ func newStack(t *testing.T, opts ...any) *stack {
 			t.Fatalf("newStack: option %T", o)
 		}
 	}
+	if deps.Senders == nil && deps.Exchanges != nil {
+		// The sandbox exchange knows who sent its simulated deposits.
+		for _, v := range deps.Exchanges.Venues {
+			if m, ok := v.(*exchange.Memory); ok {
+				deps.Senders = m
+				break
+			}
+		}
+	}
 	svc := payments.New(cfg, deps)
 	st.receiptsKey = signer
 	st.ledger = ledger.New(pool, log)
@@ -172,7 +185,8 @@ func newStack(t *testing.T, opts ...any) *stack {
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {
 		t.Fatal(err)
 	}
-	srv := api.New(api.Config{Env: "sandbox"}, svc, pool, log)
+	st.travelSecret = webhooks.NewSecret()
+	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret}, svc, pool, log)
 	apiServer := httptest.NewServer(srv.Handler())
 	t.Cleanup(apiServer.Close)
 	st.api = apiServer.URL
@@ -201,6 +215,19 @@ func newStack(t *testing.T, opts ...any) *stack {
 	st.hookSec = we["secret"].(string)
 	st.dispatch = &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	return st
+}
+
+// complianceKey is a key holding compliance:write, which "*" does not include; made on first use.
+func (st *stack) complianceKey() string {
+	st.t.Helper()
+	if st.compKey == "" {
+		k, err := api.NewAPIKey(context.Background(), st.pool, tenant, "compliance", []string{"compliance:read", "compliance:write"}, false)
+		if err != nil {
+			st.t.Fatal(err)
+		}
+		st.compKey = k
+	}
+	return st.compKey
 }
 
 func (st *stack) call(method, path string, body any, want int) (int, map[string]any) {

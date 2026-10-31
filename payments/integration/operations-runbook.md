@@ -20,6 +20,7 @@ Every command that changes access or money needs `-actor` (the operator's SSO id
 | First days of the month | Last month's DeCripto written for review (§4.10) | Automatic; `platform decripto -month YYYY-MM` writes the file |
 | By the last business day of the month | File last month's DeCripto at the Coleta Nacional (§4.10) | e-CAC with the company's e-CNPJ; then `platform decripto-filed` |
 | 09:00 | Work the exception queue (§5), the platform tenant's included | `platform recon-exceptions -tenant …` |
+| Every minute; decided the same day | Deposits held by the screening of their senders, travel-rule reviews (§4.12) | Console › Compliance, or `platform compliance-cases -tenant …`; held deposits whose screening failed are re-screened every ten minutes by the job |
 | 10:00 | File the day's representments with the sponsor (§4.6) | `platform disputes-list -tenant … -status represented` |
 | Daily | Safeguarding: reserve vs the CCME statement and Selic custody ([04 §3.6](../docs/04-serverless-backend.md#36-safeguarding-reconciliation)) | Treasury |
 | Daily, and after any manual posting | Ledger invariants L1–L5 | `platform verify-ledger` (exit 1 on a violation) |
@@ -80,7 +81,10 @@ The platform serves Prometheus metrics on `METRICS_ADDR` (internal network only)
 | `goonerspay_disputes_open{status="represented"}` | Any representment older than one business day | File it with the sponsor (§4.6) |
 | `goonerspay_pix_med_returns_total` | Any | Risk review of the merchant (§4.7) |
 | `goonerspay_risk_reviews_open`, `goonerspay_terminals_frozen` | A review older than one business day; any frozen terminal | Work the review (§4.9): the merchant's money or till waits on it |
-| `goonerspay_address_screenings_total{result="error"}`, `goonerspay_address_screening_hits_24h` | Any error for 5 minutes (withdrawals are refused meanwhile); any hit | A stale list or a provider down: check the lists' refresh in the logs (§4.11). A hit: §4.11 |
+| `goonerspay_address_screenings_total{result="error"}`, `goonerspay_address_screening_hits_24h` | Any error for 5 minutes (withdrawals are refused and deposits held meanwhile); any hit | A stale list or a provider down: check the lists' refresh in the logs (§4.11). A hit on a withdrawal: §4.11; on a deposit sender (`purpose="deposit_sender"`): §4.12 |
+| `goonerspay_compliance_held_deposits`, `goonerspay_compliance_cases_open` | Any held deposit for 4 hours; any open case at the end of the day | §4.12 |
+| `goonerspay_deposit_screenings_total{verdict="screening_failed"}`, `goonerspay_deposits_unscreened` | Any for 15 minutes | A sender lookup is down (the node, Esplora, the provider): the logs name it. Deposits wait meanwhile and are re-screened once it is back |
+| `goonerspay_travel_rule_refusals_24h{status="unreachable"}` | Above 3 in an hour | The travel-rule network or its adapter is down: withdrawals to other providers are refused meanwhile (§4.13) |
 | `goonerspay_decripto_unfiled` | Above 0 five business days before the deadline | File it (§4.10) |
 | `goonerspay_risk_assessments_total` by `action` | Declines or holds above their weekly baseline | A new attack, or a rule misfiring on honest sales: read `goonerspay_risk_signals_total` by `signal`, and move a misfiring rule to shadow (`RISK_MODE=shadow`) while it is fixed |
 
@@ -178,6 +182,24 @@ A hit refuses the withdrawal before anything moves and records it in `address_sc
 
 When screening errors (`result = 'error'`), withdrawals are refused with `503`: a list older than 72 hours, a list source that cannot be read, or the provider down. Fix the source (the logs say which); the next refresh, every six hours, or a restart reloads the lists.
 
+### 4.12 A held crypto deposit
+
+A deposit whose sender is on a sanctions list (`sanctions_hit`), or whose senders could not be screened (`screening_failed`), is held: the coins are booked to `liability.compliance_hold.<asset>`, the charge waits and the merchant's terminal says the payment is being checked. Nothing tells the merchant or the customer why, and nobody may (Law 9.613/1998, art. 11).
+
+1. Open the case: Console › Compliance, or `platform compliance-cases -tenant T` (the platform tenant `00000000-0000-0000-0000-000000000000` holds the deposits no charge matches). The case lists the transaction, the senders, the matches and any errors.
+2. `screening_failed`: the job screens it again every ten minutes once the lookup or the list is back, and releases it if every sender is clear. Release it by hand only after screening the senders yourself, and say how in the note.
+3. `sanctions_hit`: compare the match with the list's entry (the address, the asset, the program). A false positive (the list's own error, or an entry since removed): release, with the evidence in the note; the charge settles for the intent's amount.
+4. A real match: block. The coins stay frozen in `liability.compliance_hold`; they are never returned to the sender, and the charge is canceled. The same day, report the frozen assets to the Ministry of Justice and Public Security as Law 13.810/2019 and Resolution BCB 44/2020 require, and file the communication to the COAF (Siscoaf); record both protocol numbers in the case's note trail (the decision note says what was done; add the protocols to the ticket).
+5. Every decision is `platform compliance-decide -tenant T -case cc_… -action release|block -reason "…" -actor you@goonerspay.example`, or the console's buttons; the decision, its author and the note are kept.
+
+A blocked deposit is released only by a court order or the Ministry's instruction: the case's decision is final in the platform; the release is a manual journal with the order's reference, approved by two people.
+
+Travel-rule reviews (`originator_missing`, `beneficiary_mismatch`) hold nothing. Ask the merchant who paid (or why the beneficiary named by the other provider is not them), record the answer, and close the case. A review closes by itself when the other provider's message arrives.
+
+### 4.13 Travel-rule refusals
+
+A withdrawal to another provider goes only after that provider accepts the travel-rule message. `422 travel_rule_rejected` carries its reason (an unknown account, a name that does not match its customer): the merchant corrects the beneficiary or the provider, nothing moved. `503` means the network or the receiving provider did not answer: retry later; if a provider never answers, it may not be on any travel-rule network yet, and the merchant must send to a wallet they own instead. Report recurring difficulties with a counterparty to the Central Bank as Resolution BCB 520/2025 asks. Every attempt is in `travel_rule_messages` (Console › Compliance › Regra de viagem).
+
 ## 5. Reconciliation exceptions
 
 `platform recon-exceptions` lists the open ones. Close each with what was done:
@@ -204,7 +226,7 @@ platform recon-resolve -tenant T -id 17 -resolution "allocated to the merchant, 
 | `not_at_psp` | The ledger credited a Pix the PSP does not list for the day | Check the `horario` at the PSP (a different day near midnight); otherwise a P1 with the PSP |
 | `replay_failed` | Replaying a Pix through the normal path failed | Read the detail; fix and re-run `recon-pix` |
 | `custody_mismatch` | An exchange holds a different amount of an asset than the ledger's custody plus unapplied deposits (platform tenant) | Find the movement: the venue's history against the journals of that asset. A fee the venue charged differently: book it to `expense.venue_fees.<asset>`. A transfer treasury made without a journal: post it. Anything unexplained is a security incident |
-| `unapplied_crypto_deposit` | Crypto arrived that matches no charge, or after its charge expired (platform tenant) | Return it to the sender at the same network, or with the customer's agreement settle it at the market and credit the merchant by hand |
+| `unapplied_crypto_deposit` | Crypto arrived that matches no charge, or after its charge expired (platform tenant); its senders were screened clear | Return it to the sender at the same network, or with the customer's agreement settle it at the market and credit the merchant by hand. If the detail says its screening never finished, screen its senders first (§4.12): nothing may be returned unscreened |
 | `custody_unreadable` | The venue's balances could not be read | The read-only key or the venue's API; re-run `platform recon-custody` once fixed |
 
 ## 6. Audit trail

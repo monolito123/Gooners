@@ -95,6 +95,27 @@ final class SandboxIntegrationTests: XCTestCase {
         XCTAssertTrue(decoded.dynamic && decoded.url != nil && (decoded.amount == nil || decoded.amount == "23.90"))
         checkout.nextSale()
 
+        // Crypto paid from a sanctioned wallet: held for compliance, neither approved nor declined.
+        let crypto = CheckoutController(api: { authed }, reader: { reader }, stan: Counter(), pixPoll: .milliseconds(200), journal: { journal },
+                                        cryptoOffer: { CryptoChoice(asset: "USDT", network: "tron") })
+        for d in [4, 5, 0, 0] { crypto.digit(d) }
+        crypto.charge()
+        crypto.crypto()
+        var charge: CryptoCharge?
+        for _ in 0..<100 where charge == nil {
+            if case let .cryptoQR(_, c) = crypto.state { charge = c } else { try await Task.sleep(for: .milliseconds(100)) }
+        }
+        let held = try await authed.simulateCryptoPayment(try XCTUnwrap(charge).intentID, from: "TSanctionedTestAddressForSandbox12")
+        XCTAssertEqual(held.status, "processing")
+        var reviewed = crypto.state
+        for _ in 0..<100 {
+            reviewed = crypto.state
+            if reviewed.isFinal { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(reviewed, .reviewing(Money(4500), message: CheckoutController.cryptoReview))
+        crypto.nextSale()
+
         // The journal: signed with the key unwrapped for login, uploaded in order, linked from the sale.
         try journal.signPending(device)
         let sent = journal.toUpload()
