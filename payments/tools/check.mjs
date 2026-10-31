@@ -434,6 +434,29 @@ if (existsSync(vecFile)) {
   check(Object.keys(dr.weights).every((s) => signalDocs.includes('`' + s + '`')), 'every device signal code is documented in 07 §3.3');
 }
 
+// ---------------------------------------------------------------- 6c. Web console verifier
+// The console verifies statements in the browser with its own BIP-340 and RFC 6962 code
+// (platform/internal/console/static/verify.js); it is held to the signed examples here.
+const consoleVerify = join(root, 'platform', 'internal', 'console', 'static', 'verify.js');
+if (existsSync(consoleVerify)) {
+  section('6c. Web console verifier (browser code, run in Node)');
+  const cv = await import(consoleVerify);
+  const st = examples['7713-settlement-statement.json'];
+  const rt = examples['7715-transparency-root.json'];
+  const mid = JSON.parse(st.content).merchant_id;
+  const keys = [K['platform-receipts'], K['platform-transparency']];
+  const good = await cv.verifyStatement(st, rt, mid, keys);
+  check(good.check.ok, 'the console verifies the example statement against the published root and keys');
+  const forged = { ...st, content: st.content.replace(/"gross":\d+/, '"gross":1') };
+  check(!(await cv.verifyStatement(forged, rt, mid, keys)).check.ok, 'the console rejects a statement with altered totals');
+  check(!(await cv.verifyStatement(st, rt, mid, [K['platform-receipts']])).check.ok, 'the console rejects a root signed by a key not on the list');
+  check(!(await cv.verifyStatement(st, rt, 'mer_someone_else', keys)).check.ok, "the console rejects another merchant's statement");
+  check(await cv.receiptIncluded(good.statement, examples['proof-receipt-0.json']), 'the console proves a receipt is in the statement');
+  const events = Object.values(examples).filter((e) => e && typeof e.sig === 'string');
+  const verified = await Promise.all(events.map((e) => cv.verifyEvent(e)));
+  check(verified.every(Boolean), `the console's BIP-340 code verifies all ${events.length} example events`);
+}
+
 // ---------------------------------------------------------------- 7. External tools
 if (!fast) {
   section('7. OpenAPI lint, Mermaid rendering, ledger SQL');

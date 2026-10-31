@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/console"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
@@ -118,6 +119,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", s.ready)
+	// The web console (internal/console): static files on this origin, under their own CSP.
+	mux.Handle("GET /console/", console.Handler())
+	mux.Handle("GET /console", http.RedirectHandler("/console/", http.StatusMovedPermanently))
 
 	route := func(pattern, scope string, idem bool, h http.HandlerFunc) {
 		if idem {
