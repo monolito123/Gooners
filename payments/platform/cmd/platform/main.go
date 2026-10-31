@@ -303,7 +303,7 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("receipts signer", "npub", npub)
 	}
-	if deps.Attestor, err = attestor(c); err != nil {
+	if deps.Attestor, err = attestor(ctx, c); err != nil {
 		return err
 	}
 	switch {
@@ -464,7 +464,7 @@ func settle(ctx context.Context, args []string) error {
 
 // attestor builds the device attestation verifier from the configured roots; nil keeps the
 // sandbox behaviour (evidence recorded, not verified).
-func attestor(c *config.Config) (payments.Attestor, error) {
+func attestor(ctx context.Context, c *config.Config) (payments.Attestor, error) {
 	if c.AppAttestRoots == "" && c.AndroidAttestationRoots == "" {
 		return nil, nil
 	}
@@ -493,8 +493,32 @@ func attestor(c *config.Config) (payments.Attestor, error) {
 			return nil, err
 		}
 		a.KeyAttestation = &attest.KeyAttestationConfig{Roots: roots, PackageName: c.AndroidPackage, SigningDigests: c.AndroidSigningDigests}
+		if c.AndroidAttestationStatus != "off" {
+			// Google's certificate status list, refreshed hourly; attestations are refused
+			// while it is missing or older than three days.
+			src := &attest.RevocationSource{Location: c.AndroidAttestationStatus}
+			if err := src.Refresh(ctx); err != nil {
+				log.Error("attestation status list", "location", src.Location, "err", err)
+			}
+			go func() {
+				t := time.NewTicker(time.Hour)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						if err := src.Refresh(ctx); err != nil {
+							log.Error("attestation status list", "location", src.Location, "err", err)
+						}
+					}
+				}
+			}()
+			a.KeyAttestation.Revocations = src.Current
+		}
 	}
-	log.Info("device attestation", "app_attest", a.AppAttest != nil, "android_key_attestation", a.KeyAttestation != nil)
+	log.Info("device attestation", "app_attest", a.AppAttest != nil, "android_key_attestation", a.KeyAttestation != nil,
+		"android_status_list", a.KeyAttestation != nil && a.KeyAttestation.Revocations != nil)
 	return a, nil
 }
 

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -369,6 +371,17 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 		} `json:"attestation"`
 		JournalEventID string `json:"journal_event_id"`
 	}
+	// The exact bytes are kept: an iPhone's App Attest assertion signs them.
+	raw, err := io.ReadAll(r.Body)
+	if tooLarge(err) {
+		problem(w, r, http.StatusRequestEntityTooLarge, "body-too-large", "Request body too large", "the limit is 1 MiB")
+		return
+	}
+	if err != nil {
+		problem(w, r, http.StatusBadRequest, "bad-body", "Unreadable body", "")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
 	if !decode(w, r, &in) {
 		return
 	}
@@ -383,6 +396,17 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.ownIntent(w, r, in.PaymentIntentID) {
 		return
+	}
+	if p.sessionID != "" {
+		assertion, err := base64.StdEncoding.DecodeString(r.Header.Get("App-Attest-Assertion"))
+		if err != nil {
+			problem(w, r, http.StatusBadRequest, "bad-assertion", "App-Attest-Assertion must be base64", "")
+			return
+		}
+		if err := s.svc.CheckAssertion(r.Context(), p.tenantID, p.deviceID, raw, assertion); err != nil {
+			s.fail(w, r, err)
+			return
+		}
 	}
 	ct, err := base64.StdEncoding.DecodeString(in.SRED.Ciphertext)
 	if err != nil {

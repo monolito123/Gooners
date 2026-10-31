@@ -35,7 +35,10 @@ type KeyAttestationConfig struct {
 	PackageName string
 	// SigningDigests are the SHA-256 digests of the app's signing certificates (Play App Signing).
 	SigningDigests [][]byte
-	Now            func() time.Time
+	// Revocations returns the current certificate status list; nil skips the check. An error
+	// (no list, a stale list) refuses the attestation: the check fails closed.
+	Revocations func() (*RevocationList, error)
+	Now         func() time.Time
 }
 
 // KeyAttestationResult is a verified attestation of a key held in secure hardware.
@@ -119,6 +122,15 @@ func VerifyKeyAttestation(cfg KeyAttestationConfig, chain [][]byte, challenge []
 	}
 	if _, err := certs[0].Verify(x509.VerifyOptions{Roots: cfg.Roots, Intermediates: inter, CurrentTime: now(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
 		return nil, fmt.Errorf("key attestation: certificate chain: %w", err)
+	}
+	if cfg.Revocations != nil {
+		l, err := cfg.Revocations()
+		if err != nil {
+			return nil, fmt.Errorf("key attestation: certificate status unknown: %w", err)
+		}
+		if err := l.Check(certs); err != nil {
+			return nil, fmt.Errorf("key attestation: %w", err)
+		}
 	}
 
 	var ext []byte

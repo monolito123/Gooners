@@ -139,3 +139,42 @@ func VerifyAppAttest(cfg AppAttestConfig, keyID, attestation, clientData []byte)
 	receipt, _ := stmt["receipt"].([]byte)
 	return &AppAttestResult{KeyID: kid[:], PublicKey: raw, Receipt: receipt, Environment: env}, nil
 }
+
+// VerifyAppAttestAssertion follows Apple's "Validating assertions": the App ID hash, a counter
+// above the last one accepted (a replayed assertion is refused), and the signature of the
+// attested key over SHA-256(authenticator data ‖ SHA-256(client data)). publicKey is the
+// uncompressed point an attestation stored; it returns the assertion's counter, to store.
+func VerifyAppAttestAssertion(cfg AppAttestConfig, publicKey []byte, lastCounter uint32, assertion, clientData []byte) (uint32, error) {
+	if cfg.AppID == "" {
+		return 0, errors.New("app attest assertion: no App ID configured")
+	}
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), publicKey)
+	if err != nil {
+		return 0, fmt.Errorf("app attest assertion: stored key: %w", err)
+	}
+	obj, err := cborDecode(assertion)
+	if err != nil {
+		return 0, fmt.Errorf("app attest assertion: %w", err)
+	}
+	m, _ := obj.(map[string]any)
+	sig, _ := m["signature"].([]byte)
+	authData, _ := m["authenticatorData"].([]byte)
+	if len(sig) == 0 || len(authData) < 37 {
+		return 0, errors.New("app attest assertion: signature and authenticator data are required")
+	}
+	rp := sha256.Sum256([]byte(cfg.AppID))
+	if !bytes.Equal(authData[:32], rp[:]) {
+		return 0, errors.New("app attest assertion: the App ID hash does not match")
+	}
+	counter := binary.BigEndian.Uint32(authData[33:37])
+	if counter <= lastCounter {
+		return 0, fmt.Errorf("app attest assertion: counter %d is not above %d (replayed)", counter, lastCounter)
+	}
+	cdh := sha256.Sum256(clientData)
+	nonce := sha256.Sum256(append(append([]byte(nil), authData...), cdh[:]...))
+	digest := sha256.Sum256(nonce[:])
+	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+		return 0, errors.New("app attest assertion: the signature does not verify with the attested key")
+	}
+	return counter, nil
+}

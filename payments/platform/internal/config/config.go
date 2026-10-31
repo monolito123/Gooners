@@ -86,6 +86,9 @@ type Config struct {
 	AppAttestProduction                     bool
 	AndroidAttestationRoots, AndroidPackage string   // PEM file of Google's hardware attestation roots; application ID
 	AndroidSigningDigests                   [][]byte // SHA-256 of the app signing certificates
+	// AndroidAttestationStatus is where Google's certificate status list is read (URL or
+	// file); "off" skips the check (refused in production).
+	AndroidAttestationStatus string
 
 	// Receivables registrar (docs/07 §1.6): an adapter speaking internal/registrar's JSON
 	// contract. The sandbox runs an in-memory registrar when it is not set.
@@ -171,6 +174,7 @@ func Load() (*Config, error) {
 	c.AppAttestRoots, c.AppAttestAppID = os.Getenv("APPATTEST_ROOT_CA"), os.Getenv("APPATTEST_APP_ID")
 	c.AppAttestProduction = os.Getenv("APPATTEST_ENVIRONMENT") == "production"
 	c.AndroidAttestationRoots, c.AndroidPackage = os.Getenv("ANDROID_ATTESTATION_ROOTS"), env("ANDROID_PACKAGE", "br.com.gooners.pay")
+	c.AndroidAttestationStatus = env("ANDROID_ATTESTATION_STATUS", "https://android.googleapis.com/attestation/status")
 	for _, d := range strings.Split(os.Getenv("ANDROID_SIGNING_DIGESTS"), ",") {
 		if d = strings.TrimSpace(d); d == "" {
 			continue
@@ -275,6 +279,8 @@ func (c *Config) Validate() error {
 			return errors.New("config: production registers receivables before any advance: set REGISTRAR_URL and PLATFORM_DOCUMENT")
 		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":
 			return errors.New("config: production verifies device attestation: set APPATTEST_ROOT_CA/APPATTEST_APP_ID and ANDROID_ATTESTATION_ROOTS/ANDROID_SIGNING_DIGESTS")
+		case c.AndroidAttestationStatus == "off":
+			return errors.New("config: production checks Google's attestation status list: unset ANDROID_ATTESTATION_STATUS or point it at a mirror")
 		case c.RiskMode == "off":
 			return errors.New("config: production keeps the fraud shield on: RISK_MODE enforce, or shadow while a new policy is trialled")
 		}

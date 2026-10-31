@@ -186,6 +186,8 @@ type AppAttest struct {
 	Counter    uint32
 	// CredentialID overrides the credential ID in the authenticator data (nil: the key ID).
 	CredentialID []byte
+	// Key is the attested key (nil: a fresh one); keep it to sign assertions.
+	Key *ecdsa.PrivateKey
 }
 
 func cborHead(major byte, n int) []byte {
@@ -204,9 +206,11 @@ func cborText(s string) []byte  { return append(cborHead(3, len(s)), s...) }
 
 // AppAttestObject returns an attestation object, its key ID and the root that issued it.
 func AppAttestObject(a AppAttest) (attestation, keyID []byte, roots *x509.CertPool, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, err
+	key := a.Key
+	if key == nil {
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	point, _ := key.PublicKey.ECDH()
 	kid := sha256.Sum256(point.Bytes())
@@ -249,4 +253,23 @@ func AppAttestObject(a AppAttest) (attestation, keyID []byte, roots *x509.CertPo
 	obj = append(obj, cborText("authData")...)
 	obj = append(obj, cborBytes(auth)...)
 	return obj, kid[:], p.Roots, nil
+}
+
+// AppAttestAssertion is what DCAppAttestService.generateAssertion returns: the attested key's
+// signature over SHA-256(authenticator data ‖ SHA-256(client data)), counter included.
+func AppAttestAssertion(key *ecdsa.PrivateKey, appID string, counter uint32, clientData []byte) ([]byte, error) {
+	rp := sha256.Sum256([]byte(appID))
+	auth := append(append([]byte{}, rp[:]...), 0x40)
+	auth = binary.BigEndian.AppendUint32(auth, counter)
+	cdh := sha256.Sum256(clientData)
+	nonce := sha256.Sum256(append(append([]byte{}, auth...), cdh[:]...))
+	digest := sha256.Sum256(nonce[:])
+	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
+	if err != nil {
+		return nil, err
+	}
+	obj := append(cborHead(5, 2), cborText("signature")...)
+	obj = append(obj, cborBytes(sig)...)
+	obj = append(obj, cborText("authenticatorData")...)
+	return append(obj, cborBytes(auth)...), nil
 }

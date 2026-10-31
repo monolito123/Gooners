@@ -143,6 +143,7 @@ public final class GoonersPayAPI: Sendable {
         public private(set) var session: Session
         private var expiresAt: Int64
         private var renewing: Task<Session, Error>?
+        private var assertionSigner: (@Sendable (Data) async throws -> Data)?
 
         init(api: GoonersPayAPI, deviceKey: @escaping @Sendable () async throws -> NostrKeys, dpop: P256Signer, session: Session,
              now: @escaping @Sendable () -> Int64, onKey: @escaping @Sendable (NostrKeys) -> Void) {
@@ -174,10 +175,11 @@ public final class GoonersPayAPI: Sendable {
             return s
         }
 
-        private func call<T: Decodable>(_ method: String, _ path: String, body: Data? = nil) async throws -> T {
+        private func call<T: Decodable>(_ method: String, _ path: String, body: Data? = nil, headers extra: [String: String] = [:]) async throws -> T {
             func attempt(_ s: Session) async throws -> T {
                 let proof = try DPoP.proof(signer: dpop, method: method, url: api.baseURL + path, accessToken: s.sessionToken, now: now())
-                return try await api.send(method, path, body: body, headers: ["Authorization": "DPoP \(s.sessionToken)", "DPoP": proof])
+                let headers = extra.merging(["Authorization": "DPoP \(s.sessionToken)", "DPoP": proof]) { _, auth in auth }
+                return try await api.send(method, path, body: body, headers: headers)
             }
             do {
                 return try await attempt(current())
@@ -203,8 +205,19 @@ public final class GoonersPayAPI: Sendable {
 
         public func cancel(_ id: String) async throws -> PaymentIntent { try await call("POST", "/v1/payment-intents/\(id)/cancel") }
 
+        /// Signs every card authorization with the App Attest key (iOS): `signer` gets
+        /// SHA-256 of the exact request body and returns the assertion (DCAppAttestService).
+        public func signAuthorizations(with signer: @escaping @Sendable (Data) async throws -> Data) {
+            assertionSigner = signer
+        }
+
         public func authorize(_ req: TerminalAuthorization) async throws -> TerminalResult {
-            try await call("POST", "/v1/terminal/authorizations", body: encode(req))
+            let body = try encode(req)
+            var headers: [String: String] = [:]
+            if let sign = assertionSigner {
+                headers["App-Attest-Assertion"] = try await sign(sha256(body)).base64EncodedString()
+            }
+            return try await call("POST", "/v1/terminal/authorizations", body: body, headers: headers)
         }
 
         public func balance() async throws -> Balance { try await call("GET", "/v1/accounts/\(session.accountId)/balance") }

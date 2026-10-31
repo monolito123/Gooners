@@ -3,6 +3,8 @@ package payments
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/attest"
@@ -70,6 +72,64 @@ func (a VerifyingAttestor) Verify(_ context.Context, platform, devicePubHex stri
 	default:
 		return nil, nil, fmt.Errorf("unsupported attestation %q for %s", typ, platform)
 	}
+}
+
+// AssertionVerifier checks App Attest assertions against the key a device attested.
+type AssertionVerifier interface {
+	VerifyAssertion(publicKey []byte, lastCounter uint32, assertion, clientData []byte) (uint32, error)
+}
+
+// VerifyAssertion implements AssertionVerifier.
+func (a VerifyingAttestor) VerifyAssertion(publicKey []byte, lastCounter uint32, assertion, clientData []byte) (uint32, error) {
+	if a.AppAttest == nil {
+		return 0, errors.New("app attest is not configured")
+	}
+	return attest.VerifyAppAttestAssertion(*a.AppAttest, publicKey, lastCounter, assertion, clientData)
+}
+
+// ErrAssertion is a card authorization from an App Attest device without a valid assertion.
+var ErrAssertion = errors.New("app attest assertion")
+
+// CheckAssertion verifies the App Attest assertion over a card authorization's exact request
+// body, for a device whose attestation was App Attest: every sale is signed by the Secure
+// Enclave key Apple attested, so a device key copied to another phone, or a captured
+// attestation replayed, cannot sell; the counter only goes up, so a request cannot be
+// replayed either. Devices attested otherwise (Android's DPoP key is the attested key) pass.
+func (s *Service) CheckAssertion(ctx context.Context, tenantID, deviceID string, body, assertion []byte) error {
+	var integrityJSON []byte
+	var last int64
+	if err := s.pool.QueryRow(ctx, `SELECT integrity, COALESCE(app_attest_counter, 0) FROM devices WHERE tenant_id = $1 AND id = $2`, tenantID, deviceID).
+		Scan(&integrityJSON, &last); err != nil {
+		return fmt.Errorf("%w: device", ErrNotFound)
+	}
+	var stored struct {
+		Verdict map[string]any `json:"verdict"`
+	}
+	_ = json.Unmarshal(integrityJSON, &stored)
+	key, _ := stored.Verdict["app_attest_key"].(string)
+	av, ok := s.attest.(AssertionVerifier)
+	if stored.Verdict["method"] != "app_attest" || key == "" || !ok {
+		return nil
+	}
+	if len(assertion) == 0 {
+		return fmt.Errorf("%w: required: sign the request body with the App Attest key", ErrAssertion)
+	}
+	pub, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return err
+	}
+	n, err := av.VerifyAssertion(pub, uint32(last), assertion, body) // #nosec G115 -- the column only holds uint32 counters
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrAssertion, err)
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE devices SET app_attest_counter = $3 WHERE tenant_id = $1 AND id = $2 AND COALESCE(app_attest_counter, 0) < $3`, tenantID, deviceID, int64(n))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: counter %d already used (replayed)", ErrAssertion, n)
+	}
+	return nil
 }
 
 func (s *Service) strictAttestation() bool {

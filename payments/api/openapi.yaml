@@ -407,12 +407,24 @@ paths:
       tags: [payments]
       operationId: authorizeCardPresent
       summary: Card-present authorization from an MPoC terminal (terminal host, CDE)
+      description: >
+        An iPhone attested with App Attest sends App-Attest-Assertion: the assertion its
+        attested key makes over SHA-256 of this exact request body (DCAppAttestService
+        generateAssertion). Without it, with another key, over another body or with a counter
+        already used, the request is refused with 403 assertion-invalid before it reaches the
+        card network.
       servers:
         - url: https://terminal.goonerspay.example
       security:
         - terminalCert: []
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
+        - name: App-Attest-Assertion
+          in: header
+          required: false
+          schema:
+            type: string
+            contentEncoding: base64
       requestBody:
         required: true
         content:

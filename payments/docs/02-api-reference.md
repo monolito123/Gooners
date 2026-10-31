@@ -416,6 +416,8 @@ Sent by the MPoC SDK inside the merchant app to `terminal.goonerspay.example` ov
 
 `status` is `approved`, `declined` (with `decline_code`), `pin_required` (re-present with PIN on glass), or `timeout` (the platform has already queued a reversal; the app asks for another tap).
 
+**App Attest assertion.** An iPhone attested with App Attest sends `App-Attest-Assertion`, the assertion its attested Secure Enclave key makes over SHA-256 of the exact request body, with a counter that only goes up. Without it, from another key, over another body, or with a counter already used, the request gets `403` (`assertion-invalid`) before anything reaches the card network. Android needs no assertion: its sessions are pinned to the hardware key it attested, which signs every DPoP proof.
+
 **Fraud shield** ([07 §3](07-enhancements.md#3-autonomous-fraud-shield)). Before the issuer sees a tap, the platform scores it from its own history and weighs `device_risk`, the phone's score from model `gp-device-1` with at most five signal codes ([07 §3.9](07-enhancements.md#39-what-the-reference-implementation-builds)); unknown codes are dropped and the score is recomputed from the codes. The decision can be `declined` with `decline_code: "risk_declined"` (nothing reached the issuer), `pin_required` with `decline_code: "authentication_required"` (the card needs its PIN), or `approved` with `settlement.held: true`: the sale stands, but its money waits for a review (§5.1) instead of being released or advanced. A frozen terminal answers `409` until its review is resolved.
 
 ### 4.6 Capture, cancel, refund

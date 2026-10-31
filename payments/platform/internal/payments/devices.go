@@ -185,7 +185,7 @@ func (s *Service) RegisterDevice(ctx context.Context, tenantID, merchantID strin
 		err = tx.QueryRow(ctx, `INSERT INTO devices (id, tenant_id, merchant_id, pubkey, platform, label, model, integrity, attestation)
 			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, $9)
 			ON CONFLICT (merchant_id, pubkey) DO UPDATE SET status = 'active', revoked_at = NULL, platform = EXCLUDED.platform, label = EXCLUDED.label,
-				model = EXCLUDED.model, integrity = EXCLUDED.integrity, attestation = EXCLUDED.attestation
+				model = EXCLUDED.model, integrity = EXCLUDED.integrity, attestation = EXCLUDED.attestation, app_attest_counter = NULL
 			RETURNING id`, ids.New("dev"), tenantID, m.ID, pub, tag.Platform, tag.Label, in.Model, integrityJSON, attJSON).Scan(&deviceID)
 		if err != nil {
 			return err
@@ -417,7 +417,7 @@ func (s *Service) Login(ctx context.Context, ev *nostr.Event, deviceID string, j
 		}
 		b, _ := json.Marshal(map[string]any{"verdict": verdict, "capabilities": caps})
 		ab, _ := json.Marshal(evidence)
-		if _, err := s.pool.Exec(ctx, `UPDATE devices SET integrity = $2, attestation = $3 WHERE id = $1`, deviceID, b, ab); err != nil {
+		if _, err := s.pool.Exec(ctx, `UPDATE devices SET integrity = $2, attestation = $3, app_attest_counter = NULL WHERE id = $1`, deviceID, b, ab); err != nil {
 			return nil, err
 		}
 		stored.Verdict = verdict

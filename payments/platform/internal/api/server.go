@@ -567,6 +567,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", err.Error())
 	case errors.Is(err, mobileauth.ErrUnauthorized):
 		problem(w, r, http.StatusUnauthorized, "unauthorized", "Unauthorized", err.Error())
+	case errors.Is(err, payments.ErrAssertion):
+		problem(w, r, http.StatusForbidden, "assertion-invalid", "The request needs a valid App Attest assertion", err.Error())
 	case errors.Is(err, payments.ErrMerchantInactive):
 		problem(w, r, http.StatusConflict, "merchant-not-active", "The merchant is not active", err.Error())
 	case errors.Is(err, payments.ErrConflict):

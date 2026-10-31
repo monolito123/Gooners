@@ -218,6 +218,7 @@ final class AppModel {
         let vault = vault
         let a = api.authed(deviceKey: { try await Task.detached { try vault.load(.device) }.value }, dpop: dpop, session: session,
                            onKey: { _ = try? ref.journal?.signPending($0) })
+        if let signer = AppAttestIntegrity.assertionSigner() { await a.signAuthorizations(with: signer) }
         box.authed = a
         settings.deviceID = session.deviceId
         settings.merchantID = session.merchantId

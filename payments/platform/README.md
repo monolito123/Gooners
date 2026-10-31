@@ -94,6 +94,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page |
 | `TRANSPARENCY_SECRET_HEX`, `TRANSPARENCY_PAD_TO` | Signs the daily public roots (enclave in production); log padding (default 4096 leaves). With the receipts key, turns on daily statements |
 | `APPATTEST_ROOT_CA`, `APPATTEST_APP_ID`, `APPATTEST_ENVIRONMENT` | Apple App Attestation Root CA (PEM file), `TEAMID.bundle`, `production` or development |
+| `ANDROID_ATTESTATION_STATUS` | Google's attestation certificate status list (default its URL; a file or a mirror also work), refreshed hourly; attestations are refused while it is missing or older than three days. `off` skips it, outside production only |
 | `ANDROID_ATTESTATION_ROOTS`, `ANDROID_PACKAGE`, `ANDROID_SIGNING_DIGESTS` | Google's hardware attestation roots (PEM file), application ID, SHA-256 of the signing certificates (comma-separated). Either set of roots makes attestation strict |
 | `REGISTRAR_URL`, `PLATFORM_DOCUMENT` | Receivables registrar adapter and the platform's CNPJ (the beneficiary of its assignments). The sandbox uses an in-memory registrar without them |
 | `RISK_MODE` | The fraud shield: `enforce` (default), `shadow` (assess and record, act on nothing) or `off` (refused in production) |
@@ -123,7 +124,7 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 | Card-not-present (`confirm` with a card) | `501` | EMVCo-certified 3DS server, network tokens ([01 §4–§5](../docs/01-acquiring-engine.md#4-emv-3-d-secure-card-not-present)) |
 | Split payments | `422 splits_not_supported` | Multi-recipient capture journals |
 | `/oauth2/token` (mTLS-bound partner tokens) | API keys with scopes | Token service at the edge |
-| Play Integrity verdicts | App Attest and Android key attestation are verified; Play Integrity is not | Google's `decodeIntegrityToken` API with a service account |
+| Play Integrity verdicts | App Attest (with an assertion over every card authorization) and Android key attestation (checked against Google's revocation list) are verified; Play Integrity is not | Google's `decodeIntegrityToken` API with a service account |
 | RFC 3161 and OpenTimestamps anchoring of the daily roots ([03 §6.6](../docs/03-nostr-layer.md#66-anchoring)) | Roots are signed, chained and published | An ICP-Brasil TSA contract |
 | Pre-dispute alerts (Visa RDR, Ethoca), arbitration | Handled by operations at the sponsor | Alert feeds through the sponsor |
 | `/v1/payment-methods`, `/v1/accounts` (sub-ledgers), `/v1/transfers` | Not routed (`404`) | See [08](../docs/08-roadmap-risks.md) |
