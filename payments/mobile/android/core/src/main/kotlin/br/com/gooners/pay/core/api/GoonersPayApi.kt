@@ -51,7 +51,9 @@ class GoonersPayApi(
     private suspend fun <T> send(
         method: String, path: String, body: String?, headers: Map<String, String>, out: KSerializer<T>,
     ): T = withContext(Dispatchers.IO) {
-        val rb = Request.Builder().url(baseUrl + path).method(method, body?.toRequestBody(JSON))
+        // OkHttp refuses a POST without a body: a bodiless call (cancel, enrollment code) sends an empty one.
+        val payload = body?.toRequestBody(JSON) ?: if (method == "POST" || method == "PUT") ByteArray(0).toRequestBody(null) else null
+        val rb = Request.Builder().url(baseUrl + path).method(method, payload)
         headers.forEach { (k, v) -> rb.header(k, v) }
         if (method == "POST") rb.header("Idempotency-Key", UUID.randomUUID().toString())
         http.newCall(rb.build()).execute().use { resp ->

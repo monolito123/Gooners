@@ -265,6 +265,11 @@ public final class CheckoutController {
         default: return
         }
         autoTask?.cancel()
+        if sale.paidWith == .crypto {
+            // Crypto goes back only to an address the customer gives, and its price has moved.
+            state = .cancelled(sale.amount, done: false, message: Self.cryptoReturn, sale: nil)
+            return
+        }
         state = .undoing(sale.amount)
         task = Task {
             do {
@@ -278,8 +283,7 @@ public final class CheckoutController {
                     _ = try await a.refund(sale.intentID, amount: sale.amount.centavos)
                     message = "Venda cancelada. O valor volta ao cliente por Pix."
                 case .crypto:
-                    _ = try await a.refund(sale.intentID, amount: sale.amount.centavos)
-                    message = "Venda cancelada. O valor volta ao cliente."
+                    message = Self.cryptoReturn
                 }
                 state = .cancelled(sale.amount, done: true, message: message, sale: nil)
             } catch is CancellationError {
@@ -409,6 +413,9 @@ public final class CheckoutController {
     private func fail(_ amount: Money, _ message: String) {
         if !Task.isCancelled { state = .declined(amount, message: message) }
     }
+
+    public nonisolated static let cryptoReturn =
+        "Venda em cripto não se desfaz pelo app. A venda continua valendo: para devolver, peça o endereço da carteira do cliente e envie pelo console (Cripto › Enviar)."
 
     nonisolated static func utcNow() -> String {
         let f = ISO8601DateFormatter()

@@ -36,6 +36,7 @@ Seven premises of the original brief would fail regulation, certification or phy
 | [docs/06-design-system.md](docs/06-design-system.md) | **Module 6**: colour psychology in proportion, verified contrast, colour-vision simulation, themes (sunlight mode), two-tap checkout, dashboard |
 | [docs/07-enhancements.md](docs/07-enhancements.md) | **Module 7**: Instant Liquidity Engine, Zero-Knowledge Compliance, Autonomous Fraud Shield |
 | [docs/08-roadmap-risks.md](docs/08-roadmap-risks.md) | Phases, certification path, risk register, questions for counsel |
+| [docs/09-digital-assets-international-b3.md](docs/09-digital-assets-international-b3.md) | **Module 9**: crypto payments and holdings (Binance, Kraken, Coinbase), accounts abroad (USD, EUR, GBP through Wise), IOF, B3 shares through a broker, and the rules (BCB 519/520/521, DeCripto, CVM 30) |
 | [api/openapi.yaml](api/openapi.yaml) | OpenAPI 3.1 contract |
 | [nostr/schemas/](nostr/schemas) | JSON Schema for each custom event kind |
 | [nostr/examples/](nostr/examples) | Real signed events, gift wraps, a settlement statement and Merkle proofs, from public test keys |

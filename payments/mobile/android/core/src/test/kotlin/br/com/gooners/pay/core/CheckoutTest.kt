@@ -34,7 +34,7 @@ class CheckoutTest {
     private val server = MockWebServer()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val seen = CopyOnWriteArrayList<String>()
-    @Volatile private var refundFails = false
+    @Volatile private var cancelFails = false
 
     @After
     fun stop() {
@@ -55,8 +55,9 @@ class CheckoutTest {
                     "POST /v1/payment-intents/pi_1/confirm" -> intent("requires_action",
                         ""","next_action":{"type":"crypto_transfer","asset":"USDT","network":"tron","address":"TQ1","amount":"24.054000","uri":"tron:TQ1?amount=24.054","expires_at":"2026-10-31T12:15:00Z"}""")
                     "GET /v1/payment-intents/pi_1" -> intent("captured", ""","receipt":{"claim_url":"https://r.example/c#k=1"}""")
-                    "POST /v1/refunds" -> if (refundFails) return MockResponse.Builder().code(503).body("{}").build()
-                    else """{"id":"re_1","status":"pending","amount":12990}"""
+                    "POST /v1/terminal/authorizations" ->
+                        """{"status":"approved","payment_intent_id":"pi_1","card":{"brand":"visa","last4":"1111"},"settlement":{"mode":"instant","net_available":12576}}"""
+                    "POST /v1/payment-intents/pi_1/cancel" -> if (cancelFails) return MockResponse.Builder().code(503).body("{}").build() else intent("canceled")
                     else -> return MockResponse.Builder().code(404).body("{}").build()
                 }
                 return MockResponse.Builder().code(200).body(body).build()
@@ -121,28 +122,32 @@ class CheckoutTest {
         c.stay() // the cashier is about to cancel: the result stays on screen
         delay(500)
         assertEquals(again.copy(returnsInMillis = null), c.state.value)
+        // Crypto goes back only to an address the customer gives: the app says how, and asks nothing of the API.
         c.cancelSale()
-        val undone = withTimeout(5_000) { c.state.first { it is CheckoutState.Cancelled } } as CheckoutState.Cancelled
-        assertTrue(undone.message, undone.done)
-        assertTrue(seen.toString(), seen.any { it.startsWith("POST /v1/refunds") && "\"amount\":12990" in it && "\"payment_intent_id\":\"pi_1\"" in it })
+        assertEquals(CheckoutState.Cancelled(again.amount, false, CheckoutController.CRYPTO_RETURN), c.state.value)
+        assertTrue(seen.toString(), seen.none { it.startsWith("POST /v1/refunds") || it.endsWith("/cancel") })
     }
 
     @Test
-    fun aFailedCancellationKeepsTheSaleToRetry() = runBlocking {
+    fun aCardSaleIsCancelledAndAFailedCancellationIsOfferedAgain() = runBlocking {
         val authed = platform()
         val c = controller({ authed })
-        listOf(9, 9, 0).forEach(c::digit)
+        listOf(1, 2, 9, 9, 0).forEach(c::digit)
         c.charge()
-        c.choose(PayMethod.CRYPTO)
+        c.choose(PayMethod.CREDIT, installments = 3)
         val paid = withTimeout(5_000) { c.state.first { it is CheckoutState.Approved } } as CheckoutState.Approved
+        assertEquals("Visa •••• 1111 · 3×", paid.method)
+        assertEquals(PayMethod.CREDIT, paid.paidWith)
+        assertTrue(seen.toString(), seen.any { it.startsWith("POST /v1/payment-intents ") && "\"installments\":{\"count\":3,\"type\":\"merchant\"}" in it })
         c.stay()
-        refundFails = true
+        cancelFails = true
         c.cancelSale()
         val failed = withTimeout(5_000) { c.state.first { it is CheckoutState.Cancelled } } as CheckoutState.Cancelled
         assertTrue(!failed.done && failed.sale == paid.copy(returnsInMillis = null))
-        refundFails = false
+        cancelFails = false
         c.cancelSale() // "Tentar de novo"
-        val done = withTimeout(5_000) { c.state.first { it is CheckoutState.Cancelled && it.done } }
-        assertTrue("$done", done is CheckoutState.Cancelled)
+        val done = withTimeout(5_000) { c.state.first { it is CheckoutState.Cancelled && it.done } } as CheckoutState.Cancelled
+        assertEquals("Venda cancelada. O cliente não será cobrado.", done.message)
+        assertTrue(seen.toString(), seen.count { it.startsWith("POST /v1/payment-intents/pi_1/cancel") } == 2)
     }
 }

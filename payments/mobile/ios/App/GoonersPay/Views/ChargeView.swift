@@ -67,8 +67,8 @@ struct ChargeView: View {
         case let .undoing(amount):
             Waiting(amount: amount, title: "Cancelando a venda…", detail: nil)
         case let .cancelled(amount, done, message, sale):
-            Text(done ? "Venda cancelada" : "Não foi possível cancelar").font(.largeTitle.bold())
-                .foregroundStyle(done ? Theme.textPrimary : Theme.critical)
+            Text(done ? "Venda cancelada" : sale == nil ? "Venda mantida" : "Não foi possível cancelar").font(.largeTitle.bold())
+                .foregroundStyle(done || sale == nil ? Theme.textPrimary : Theme.critical)
             AmountText(amount: amount)
             Text(message).multilineTextAlignment(.center)
             Spacer()

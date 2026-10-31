@@ -13,7 +13,7 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `pkg/emv` | BER-TLV for DE 55, with the forwarded-tag allow-list (the PAN tag is never forwarded) | [01 §3.6](../docs/01-acquiring-engine.md#36-emv-data-de-55) |
 | `internal/scheme` | Persistent sessions: sign-on, idle echo, host-initiated echo, response correlation, timeouts, reconnect with backoff, route health breaker | [01 §2.2](../docs/01-acquiring-engine.md#22-session-management) |
 | `internal/authswitch` | Canonical authorization → ISO 8583; response-code policy with Visa categories and Mastercard advice codes; timeout → reversal with store-and-forward (0400, then 0420 advices); partial reversals (DE 95); idempotent replays; expected-margin routing with cascade only when nothing reached the network | [01 §3–§6](../docs/01-acquiring-engine.md#6-smart-transaction-routing) |
-| `internal/ledger` | Serializable, idempotent double-entry posting; shards for hot accounts; no-negative rule; outbox; invariant verifier L1–L5 | [04 §3](../docs/04-serverless-backend.md#3-ledger) |
+| `internal/ledger` | Serializable, idempotent double-entry posting in any asset (one currency per journal); shards for hot accounts; no-negative rule; outbox; invariant verifier L1–L6 | [04 §3](../docs/04-serverless-backend.md#3-ledger) |
 | `pkg/brcode` | Pix BR Code encoder/decoder with CRC16, checked against the Banco Central's published examples | [02 §4.4](../docs/02-api-reference.md#44-pix) |
 | `pkg/apipix` | Client for the Banco Central **API Pix** standard (v2): OAuth2 client credentials over mutual TLS, `cob`, `pix` (including the paged `GET /pix` list), `devolucao`, `webhook`; mTLS webhook handler | [integration/pix.md](../integration/pix.md) |
 | `internal/pixout` | Seam for outgoing Pix (not covered by API Pix), with a generic partner-bank adapter | [integration/pix.md](../integration/pix.md) |
@@ -31,6 +31,10 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/mobileauth` | NIP-98 login verification, DPoP proofs (RFC 9449) and JWK thumbprints, kind 17710 device lists; checked against the spec's signed examples | [02 §3.2](../docs/02-api-reference.md#32-post-v1authnostr-merchant-apps) |
 | `internal/metrics` | Prometheus text exposition: request, authorization and dispute counters; backlog, exception, safeguarding-headroom and shortfall gauges | [runbook §3](../integration/operations-runbook.md#3-alerts) |
 | `internal/webhooks` | Standard Webhooks delivery with retries; matches the spec's test vector | [02 §10](../docs/02-api-reference.md#10-webhooks) |
+| `internal/assets`, `internal/exchange`, `internal/payments` (crypto) | The asset registry (decimals, networks, exact conversions); Binance, Kraken and Coinbase adapters with a best-price router and an in-memory venue; crypto payments settled in reais, holdings, conversions with a slippage guard, withdrawals | [09 §3](../docs/09-digital-assets-international-b3.md#3-crypto) |
+| `internal/fx`, `internal/payments` (international) | Wise Platform adapter and an in-memory provider; USD, EUR and GBP balances, bank details and references, credits by reference, conversions with IOF, payments abroad (IBAN, ABA, sort code) | [09 §4](../docs/09-digital-assets-international-b3.md#4-accounts-abroad) |
+| `internal/brokerage`, `internal/payments` (investments) | B3 rules (tickers, lots and the fractional market, the session as it follows US daylight time, D+2, fees), suitability (CVM 30), a broker contract, brapi.dev prices and an in-memory broker | [09 §5](../docs/09-digital-assets-international-b3.md#5-b3) |
+| `internal/console` | The web console at `/console/`: every API function in the browser, statements checked client-side; static, embedded, strict CSP | below |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
 
 Binaries (`cmd/`): `platform` (serve, migrate, apikey, verify-ledger, release-due, settle, and the operator commands below), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator), `smoke` (runs all of them together) and `conformance` (writes the merchant apps' test vectors, [`../mobile/conformance/vectors.json`](../mobile/conformance/vectors.json)).
@@ -104,6 +108,9 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `TRUST_PROXY` | `true` behind the edge: the client address is the last `X-Forwarded-For` entry |
 | `PUBLIC_API_URL` | The API's external base URL. App logins and DPoP proofs sign the exact URL; required (https) outside the sandbox |
 | `MAX_PAYMENT_AMOUNT` | Ceiling per payment intent in centavos (default 100000000, R$ 1.000.000,00) |
+| `EXCHANGES`, `BINANCE_*`, `KRAKEN_*`, `COINBASE_*`, `CRYPTO_AUTHORIZATION`, `CRYPTO_FEE_BPS`, `CRYPTO_SPREAD_BPS` | Crypto venues and pricing ([09 §7](../docs/09-digital-assets-international-b3.md#7-configuration)) |
+| `FX_PROVIDER`, `WISE_*`, `FX_AUTHORIZATION`, `FX_FEE_BPS`, `FX_SPREAD_BPS`, `IOF_FX_OUT_BPS`, `IOF_FX_IN_BPS` | Accounts abroad, câmbio pricing and IOF |
+| `BROKER_URL`, `BROKER_TOKEN`, `BROKER_NAME`, `BRAPI_TOKEN` | The B3 broker and display prices |
 
 | Guard | sandbox | certification | production |
 |-------|:-------:|:-------------:|:----------:|
@@ -112,10 +119,12 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | Opening capital | allowed | refused | refused |
 | Software KEK, development decryptor, in-process receipts and transparency keys | allowed | allowed (test cards only) | refused |
 | No receivables registrar, no attestation roots | allowed (in-memory registrar, attestation recorded) | allowed | refused |
+| In-memory exchange, FX provider and broker | allowed (the default) | allowed | refused |
+| Crypto or câmbio without `CRYPTO_AUTHORIZATION` / `FX_AUTHORIZATION` | allowed | allowed | refused |
 
 ## Implemented API surface
 
-Implemented and covered by the end-to-end tests: the merchant app protocol (`POST /v1/merchants/{id}/enrollment-codes`, `GET/POST /v1/enrollment`, `POST /v1/merchants/{id}/devices` with the root-signed kind 17710, `POST /v1/auth/nostr` with NIP-98, and DPoP-bound sessions held to their merchant and terminal), `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, the statements and proofs (`GET /v1/settlements`, `…/{id}`, `…/{id}/statement`, `…/{id}/proofs/{receipt_event_id}`, and the public `GET /v1/transparency/{date}`), the terminal journal (`POST/GET /v1/terminal/journal`, `GET /v1/payment-intents/{id}/journal`), and the PSP webhook `POST {webhook}/pix`. `platform close-day -date` closes a business day by hand; `serve` does it every night after 01:00 in Brasília. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
+Implemented and covered by the end-to-end tests: the merchant app protocol (`POST /v1/merchants/{id}/enrollment-codes`, `GET/POST /v1/enrollment`, `POST /v1/merchants/{id}/devices` with the root-signed kind 17710, `POST /v1/auth/nostr` with NIP-98, and DPoP-bound sessions held to their merchant and terminal), `POST /v1/merchants`, `GET /v1/merchants/{id}`, `POST /v1/terminals`, `POST /v1/terminals/{id}/revoke`, `POST/GET /v1/payment-intents`, `…/confirm` (Pix), `…/capture`, `…/cancel`, `POST /v1/terminal/authorizations`, `POST/GET /v1/refunds`, `GET /v1/accounts/{id}/balance`, `GET /v1/accounts/{id}/entries`, `POST /v1/payouts/quotes`, `POST /v1/payouts`, `GET /v1/disputes`, `GET /v1/disputes/{id}`, `POST /v1/disputes/{id}/evidence`, `POST /v1/disputes/{id}/accept`, `POST /v1/webhook-endpoints`, `POST /v1/webhook-endpoints/{id}/replay`, the statements and proofs (`GET /v1/settlements`, `…/{id}`, `…/{id}/statement`, `…/{id}/proofs/{receipt_event_id}`, and the public `GET /v1/transparency/{date}`), the terminal journal (`POST/GET /v1/terminal/journal`, `GET /v1/payment-intents/{id}/journal`), crypto, accounts abroad and B3 (`/v1/crypto/*`, `/v1/holdings`, `/v1/conversions`, `/v1/international/*`, `/v1/investments/*`, [02 §11](../docs/02-api-reference.md#11-crypto-accounts-abroad-and-b3)), and the PSP webhook `POST {webhook}/pix`. The web console is served at `/console/`: sign in with an API key and every function above has a screen. `platform close-day -date` closes a business day by hand; `serve` does it every night after 01:00 in Brasília. The request examples in [02-api-reference.md](../docs/02-api-reference.md) are posted as written in `internal/e2e/spec_examples_test.go`.
 
 Specified but not built yet. The API answers these explicitly rather than half-working:
 
@@ -142,7 +151,8 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 - Nostr cross-vectors with the JavaScript implementation;
 - webhook signatures against the spec's vector;
 - configuration guards;
-- the full API flow, ending with L1–L5 and verified webhook signatures;
+- the full API flow, ending with L1–L6 and verified webhook signatures;
+- crypto, accounts abroad and B3 end to end: a USDT payment settled in reais, unique amounts, conversions both ways, a withdrawal, a credit from abroad by reference, IOF, a payment abroad, suitability, lots and the fractional market, D+2 settlement; the exchange adapters' signatures against fake venues;
 - operations: merchant lifecycle and revocations with their audit rows, a chargeback larger than the balance (booked as owed, recovered after the win), merchant acceptance and deadline expiry, a settlement report with true-ups, suspense, duplicate and replay protection, a lost Pix webhook healed by reconciliation, a MED return applied once, the jobs lease and the metrics.
 
 - security: tenant isolation on every route, scopes, input hardening, headers, rate limits, webhook SSRF and redirects, sealed webhook secrets, card data in no log or clear column, and STAN reuse ([security assessment](../integration/security-assessment.md)).
@@ -160,4 +170,4 @@ Operators run the platform with subcommands of the same binary, in the same envi
 | `disputes-import`, `disputes-list`, `write-off` | Chargeback notices from the sponsor; what a closed merchant could not repay |
 | `recon-card`, `recon-pix`, `recon-exceptions`, `recon-allocate`, `recon-resolve` | Settlement-report and daily Pix reconciliation, and the exception queue |
 
-`serve` runs the periodic jobs every minute on one replica at a time (scheduled releases, payout outcomes, dispute deadlines, shortfall recovery, and the previous day's Pix reconciliation after 06:00 Brasília time).
+`serve` runs the periodic jobs every minute on one replica at a time (scheduled releases, payout outcomes, dispute deadlines, shortfall recovery, the previous day's Pix reconciliation after 06:00 Brasília time, crypto deposits and expiries, credits from abroad, and B3 settlement).

@@ -804,7 +804,9 @@ type Refund struct {
 }
 
 // CreateRefund refunds a captured payment: an online refund authorization for cards, a
-// devolução for Pix. The merchant's wallet funds it.
+// devolução for Pix. The merchant's wallet funds it. A crypto payment has no way back to the
+// payer the platform could know (the sending address may be an exchange's), so it is refused:
+// the merchant returns crypto to the address the customer gives (docs/09 §3.2).
 func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amount int64) (*Refund, error) {
 	pi, err := s.GetIntent(ctx, tenantID, piID)
 	if err != nil {
@@ -812,6 +814,10 @@ func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amoun
 	}
 	if pi.Status != StatusCaptured && pi.Status != StatusPartiallyRefunded {
 		return nil, fmt.Errorf("%w: only captured payments can be refunded", ErrConflict)
+	}
+	if pi.Channel == "crypto" {
+		return nil, fmt.Errorf("%w: a crypto payment is returned in crypto, to the address the customer gives: "+
+			"buy the asset (POST /v1/conversions) and send it (POST /v1/crypto/withdrawals)", ErrConflict)
 	}
 	if amount <= 0 {
 		amount = pi.AmountCaptured - pi.AmountRefunded

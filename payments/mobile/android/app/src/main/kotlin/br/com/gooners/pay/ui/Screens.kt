@@ -325,8 +325,8 @@ private fun ChargeTab(vm: MainViewModel) {
             is CheckoutState.Approved -> ApprovedView(s, co, vm.feedback)
             is CheckoutState.Undoing -> Waiting(s.amount, "Cancelando a venda…", null)
             is CheckoutState.Cancelled -> {
-                Text(if (s.done) "Venda cancelada" else "Não foi possível cancelar", style = MaterialTheme.typography.headlineMedium,
-                    color = if (s.done) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.error,
+                Text(when { s.done -> "Venda cancelada"; s.sale == null -> "Venda mantida"; else -> "Não foi possível cancelar" }, style = MaterialTheme.typography.headlineMedium,
+                    color = if (s.done || s.sale == null) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.error,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
                 Amount(s.amount)
                 Text(s.message, textAlign = TextAlign.Center)

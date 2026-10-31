@@ -139,7 +139,7 @@ grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20ac
 }
 ```
 
-Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`.
+Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`.
 
 ### 3.2 `POST /v1/auth/nostr` (merchant apps)
 
@@ -940,7 +940,274 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 
 ---
 
-## 11. ISO 8583 mapping summary
+## 11. Crypto, accounts abroad and B3
+
+What each operation means for the money, the venues and the rules is in [docs/09](09-digital-assets-international-b3.md). Every route below takes `merchant_id` with a partner key; an app session always acts for its own merchant. Decimal amounts of an asset are strings, never floats; reais stay integer centavos.
+
+### 11.1 A payment in crypto
+
+A payment intent with `channel: "crypto"` is confirmed with the asset and network the customer will use. The answer asks for an exact amount: each pending charge to an address asks for a different one, which is how the deposit is matched. When the transfer arrives the platform sells it for reais at once and credits the merchant in reais, less the crypto fee (1.5% by default).
+
+`POST /v1/payment-intents/{id}/confirm`
+
+```json
+{
+  "payment_method_type": "crypto",
+  "asset": "USDT",
+  "network": "tron"
+}
+```
+
+```json
+{
+  "id": "pi_01M685GPCKTEVA6GPB1DEGGA23",
+  "object": "payment_intent",
+  "status": "requires_action",
+  "amount": 900000,
+  "amount_captured": 0,
+  "amount_refunded": 0,
+  "currency": "BRL",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "channel": "crypto",
+  "capture_method": "automatic",
+  "installments": {
+    "count": 1,
+    "type": "none"
+  },
+  "latest_attempt": {
+    "asset": "USDT",
+    "network": "tron",
+    "status": "pending",
+    "type": "crypto"
+  },
+  "next_action": {
+    "address": "T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM",
+    "amount": "1678.398739",
+    "amount_units": 1678398739,
+    "asset": "USDT",
+    "expires_at": "2026-10-31T05:19:31Z",
+    "network": "tron",
+    "price": "5.3622540000",
+    "type": "crypto_transfer",
+    "uri": "T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM"
+  },
+  "receipt": null,
+  "created_at": "2026-10-31T05:04:31Z",
+  "updated_at": "2026-10-31T05:04:31Z"
+}
+```
+
+A transfer on another network, or of another amount, is not matched; the charge expires after 15 minutes and is canceled. In the sandbox, `POST /v1/sandbox/crypto/payments/{id}` makes the customer's transfer arrive.
+
+### 11.2 Markets, holdings and conversions
+
+`GET /v1/crypto/markets` gives the best price to sell (`bid`) and to buy (`ask`) each asset in reais across the connected exchanges, and where. `GET /v1/holdings` lists what a merchant holds besides reais, valued at the best price to sell now:
+
+```json
+{
+  "data": [
+    {
+      "asset": "BTC",
+      "kind": "crypto",
+      "units": 99303,
+      "amount": "0.00099303",
+      "value_brl": 34686
+    }
+  ],
+  "object": "list"
+}
+```
+
+A conversion is quoted first and executed only on request, within 30 seconds. A buy names the reais to spend (`brl_amount`); a sale names the amount of the asset (`amount`). Foreign currency (USD, EUR, GBP) converts the same way and shows the IOF in `tax`.
+
+`POST /v1/conversions`
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "side": "buy",
+  "asset": "BTC",
+  "brl_amount": 35000
+}
+```
+
+```json
+{
+  "id": "cv_01M685GPDX3HSKP4NDQRDVQ8S7",
+  "object": "conversion",
+  "kind": "crypto",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "side": "buy",
+  "asset": "BTC",
+  "asset_units": 99303,
+  "amount": "0.00099303",
+  "brl_units": 35000,
+  "fee": 525,
+  "tax": 0,
+  "total": 35525,
+  "price": "352453.5000000000",
+  "venue": "simex",
+  "status": "quoted",
+  "expires_at": "2026-10-31T05:05:01Z"
+}
+```
+
+`POST /v1/conversions/{id}/execute` executes it (idempotently). It is refused with `410` after the quote expires and with `422` when the market moved more than 1% against the quote or a sale is larger than the holding; nothing is charged then.
+
+### 11.3 `POST /v1/crypto/withdrawals`
+
+Sends crypto the merchant holds to an outside address. The address is checked against the network's format and the network fee is taken from the holding. Sending is final, so it needs `payouts:write` like a Pix payout.
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "asset": "BTC",
+  "network": "bitcoin",
+  "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+  "amount": "0.0001"
+}
+```
+
+```json
+{
+  "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+  "amount": "0.00010000",
+  "asset": "BTC",
+  "id": "cw_01M685GPECPEX6HF42YPAE277C",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "network": "bitcoin",
+  "network_fee_units": 10000,
+  "object": "crypto_withdrawal",
+  "status": "sent",
+  "venue": "simex"
+}
+```
+
+### 11.4 Accounts abroad
+
+`GET /v1/international/accounts` gives the merchant's USD, EUR and GBP balances and the bank details a payer abroad uses. The `reference` names the merchant and must be on the payment; credits without it go to manual review.
+
+```json
+{
+  "currency": "USD",
+  "units": 11994,
+  "amount": "119.94",
+  "receive": {
+    "currency": "USD",
+    "holder": "goonerspay (sandbox)",
+    "bank": "Sandbox Bank NA",
+    "account_number": "8310004421",
+    "routing_number": "026009593",
+    "reference": "GP4B7F1E67FD"
+  }
+}
+```
+
+`POST /v1/international/payouts` pays a beneficiary abroad from a foreign balance. The fee is in the same currency (USD 5.00, EUR 4.00, GBP 4.00 by default); a failed transfer is reversed in full.
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "currency": "USD",
+  "amount": "50.00",
+  "reference": "Invoice 7",
+  "beneficiary": {
+    "name": "Acme Inc",
+    "type": "business",
+    "country": "US",
+    "routing_number": "026009593",
+    "account_number": "12345678"
+  }
+}
+```
+
+```json
+{
+  "id": "ip_01M685GPF5QNXJP7R068J42NN9",
+  "object": "international_payout",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "currency": "USD",
+  "units": 5000,
+  "amount": "50.00",
+  "fee": "5.00",
+  "beneficiary": {
+    "name": "Acme Inc",
+    "type": "business",
+    "country": "US",
+    "account_number": "12345678",
+    "routing_number": "026009593"
+  },
+  "reference": "Invoice 7",
+  "status": "sent"
+}
+```
+
+### 11.5 B3
+
+`PUT /v1/investments/profile` records the answers to the suitability questions (CVM Resolution 30); the profile follows from them. Without a profile an order is `404`; a conservative profile cannot buy variable income (`409`).
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "answers": {
+    "horizon": 2,
+    "tolerance": 2,
+    "experience": 1
+  }
+}
+```
+
+`GET /v1/investments/quotes/{ticker}`:
+
+```json
+{
+  "ticker": "PETR4",
+  "name": "PETROBRAS PN",
+  "kind": "share",
+  "lot": 100,
+  "last": "38.50",
+  "change": "0.00",
+  "at": "2026-10-31T04:51:31.835828424Z",
+  "market_open": true
+}
+```
+
+`POST /v1/investments/orders` sends the order through the broker, in standard lots of 100 and the fractional market for the rest (two legs for 150 shares). A buy is paid from the wallet now; a sale's proceeds arrive at settlement, two trading days later.
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "ticker": "PETR4",
+  "side": "buy",
+  "quantity": 150
+}
+```
+
+```json
+{
+  "id": "inv_01M685GPFF0FWD00DYZNPZ1KE4",
+  "object": "investment_order",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "ticker": "PETR4",
+  "side": "buy",
+  "quantity": 150,
+  "price": "38.5000",
+  "gross": 577500,
+  "fees": 174,
+  "total": 577674,
+  "status": "executed",
+  "trade_date": "2026-10-31",
+  "settles_on": "2026-11-04",
+  "legs": [
+    "brk_01M685GPFFAAG84VTBVNKGB2AM",
+    "brk_01M685GPFFF99JZ252M733QHTD"
+  ]
+}
+```
+
+`GET /v1/investments/positions` returns the positions, each valued at the last price (`result` = `value` − `cost`, in centavos), and the recent orders.
+
+## 12. ISO 8583 mapping summary
 
 | API field | ISO 8583 | Notes |
 |-----------|----------|-------|
@@ -958,7 +1225,7 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 
 ---
 
-## 12. Endpoint index
+## 13. Endpoint index
 
 | Method | Path | Host | Scope | Idempotent | Notes |
 |--------|------|------|-------|-----------|-------|
@@ -966,11 +1233,11 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | POST | `/v1/auth/nostr` | api | — | — | NIP-98 + DPoP |
 | POST | `/v1/payment-intents` | api | `payments:write` | Key | |
 | GET | `/v1/payment-intents/{id}` | api | `payments:read` | Yes | |
-| POST | `/v1/payment-intents/{id}/confirm` | api | `payments:write` | Key | 3DS, Pix |
+| POST | `/v1/payment-intents/{id}/confirm` | api | `payments:write` | Key | 3DS, Pix, crypto |
 | POST | `/v1/payment-intents/{id}/capture` | api | `payments:write` | Key | |
 | POST | `/v1/payment-intents/{id}/cancel` | api | `payments:write` | Key | Reversal |
 | POST | `/v1/terminal/authorizations` | terminal | terminal cert | STAN | CDE |
-| POST | `/v1/refunds` | api | `refunds:write` | Key | |
+| POST | `/v1/refunds` | api | `refunds:write` or an app session | Key | App sessions refund their own merchant's sales |
 | GET | `/v1/refunds/{id}` | api | `payments:read` | Yes | |
 | POST | `/v1/payment-methods` | vault | publishable key / mTLS | Key | CDE |
 | DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Deletes network tokens too |
@@ -994,3 +1261,15 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | POST · GET | `/v1/terminal/journal` | api | app session | Yes | The device's kind 7714 journal; answers `missing` ranges and forks |
 | GET | `/v1/payment-intents/{id}/journal` | api | `payments:read` | Yes | The devices' signed entries about a payment |
 | POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |
+| GET | `/v1/crypto/markets` | api | `assets:read` | Yes | Best bid and ask across the exchanges |
+| GET | `/v1/holdings` | api | `assets:read` | Yes | Crypto and foreign balances, valued in reais |
+| POST | `/v1/conversions` | api | `assets:write` | Key | A 30-second quote |
+| GET · POST | `/v1/conversions/{id}` · `/{id}/execute` | api | `assets:read` · `assets:write` | Yes | Execute is idempotent |
+| POST | `/v1/crypto/withdrawals` | api | `payouts:write` | Key | Final once sent |
+| GET | `/v1/international/accounts` | api | `assets:read` | Yes | Balances and details to receive from abroad |
+| POST | `/v1/international/payouts` | api | `payouts:write` | Key | Reversed in full if the transfer fails |
+| GET | `/v1/investments/quotes/{ticker}` | api | `assets:read` | Yes | Shares, units and BDRs |
+| GET · PUT | `/v1/investments/profile` | api | `assets:read` · `assets:write` | Yes | Suitability (CVM Resolution 30) |
+| POST | `/v1/investments/orders` | api | `assets:write` | Key | Through the broker; D+2 |
+| GET | `/v1/investments/positions` | api | `assets:read` | Yes | |
+| POST | `/v1/sandbox/crypto/payments/{id}` · `/v1/sandbox/international/credits` | sandbox | `payments:write` | — | Sandbox only |

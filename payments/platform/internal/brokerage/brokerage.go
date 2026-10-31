@@ -106,14 +106,28 @@ func (in Instrument) Legs(quantity int64) []Order {
 	return out
 }
 
-// Session is B3's regular equities session, in Brasília time. B3 publishes the hours, which
-// move when the United States changes clocks; the defaults are 10:00 to 17:55.
+// Session is B3's regular equities session, in Brasília time. B3 moves the close when the
+// United States changes clocks: 17:55 while New York keeps standard time (November to March),
+// 16:55 while it keeps daylight time (2026: 16:55 from 9 March, 17:55 from 3 November).
 type Session struct {
 	Open, Close time.Duration // since midnight
+	// CloseUSDaylight is the close while the United States keeps daylight time; zero keeps Close.
+	CloseUSDaylight time.Duration
 }
 
-// DefaultSession is the regular session's usual hours.
-var DefaultSession = Session{Open: 10 * time.Hour, Close: 17*time.Hour + 55*time.Minute}
+// DefaultSession is the regular session's published hours.
+var DefaultSession = Session{Open: 10 * time.Hour, Close: 17*time.Hour + 55*time.Minute, CloseUSDaylight: 16*time.Hour + 55*time.Minute}
+
+// usDaylight reports whether the United States keeps daylight time on a Brasília calendar day:
+// from the second Sunday of March to the day before the first Sunday of November.
+func usDaylight(d time.Time) bool {
+	sunday := func(month time.Month, nth int) time.Time {
+		first := time.Date(d.Year(), month, 1, 0, 0, 0, 0, brt)
+		return first.AddDate(0, 0, (7-int(first.Weekday()))%7+7*(nth-1))
+	}
+	day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, brt)
+	return !day.Before(sunday(time.March, 2)) && day.Before(sunday(time.November, 1))
+}
 
 var brt = time.FixedZone("BRT", -3*3600)
 
@@ -130,7 +144,11 @@ func TradingDay(day time.Time) bool {
 func (s Session) IsOpen(t time.Time) bool {
 	b := t.In(brt)
 	since := time.Duration(b.Hour())*time.Hour + time.Duration(b.Minute())*time.Minute
-	return TradingDay(t) && since >= s.Open && since < s.Close
+	end := s.Close
+	if s.CloseUSDaylight != 0 && usDaylight(b) {
+		end = s.CloseUSDaylight
+	}
+	return TradingDay(t) && since >= s.Open && since < end
 }
 
 // Settlement is when a trade on day settles: two trading days later (D+2), as a date.

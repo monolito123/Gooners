@@ -40,6 +40,13 @@ func TestCalendar(t *testing.T) {
 	if !DefaultSession.IsOpen(at("2026-10-30 10:00")) || DefaultSession.IsOpen(at("2026-10-30 09:59")) || DefaultSession.IsOpen(at("2026-10-30 18:00")) {
 		t.Fatal("session hours")
 	}
+	// The close follows New York's clocks: 16:55 while it keeps daylight time, 17:55 after.
+	for when, open := range map[string]bool{"2026-10-30 16:54": true, "2026-10-30 17:00": false, "2026-11-03 17:30": true, "2026-11-03 17:55": false,
+		"2026-03-06 17:30": true, "2026-03-09 17:30": false, "2026-03-09 16:54": true} {
+		if DefaultSession.IsOpen(at(when)) != open {
+			t.Errorf("open at %s: want %v", when, open)
+		}
+	}
 	if DefaultSession.IsOpen(at("2026-10-31 12:00")) || DefaultSession.IsOpen(at("2026-12-24 12:00")) || DefaultSession.IsOpen(at("2026-11-20 12:00")) {
 		t.Fatal("Saturday, 24 December and Consciência Negra are closed")
 	}

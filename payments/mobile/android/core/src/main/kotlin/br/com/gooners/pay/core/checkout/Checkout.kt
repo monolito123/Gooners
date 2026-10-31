@@ -218,6 +218,11 @@ class CheckoutController(
             else -> return
         }
         autoReturn?.cancel()
+        if (sale.paidWith == PayMethod.CRYPTO) {
+            // Crypto goes back only to an address the customer gives, and its price has moved.
+            _state.value = CheckoutState.Cancelled(sale.amount, false, CRYPTO_RETURN)
+            return
+        }
         _state.value = CheckoutState.Undoing(sale.amount)
         job = scope.launch {
             try {
@@ -231,10 +236,7 @@ class CheckoutController(
                         a.refund(sale.intentId, sale.amount.centavos)
                         "Venda cancelada. O valor volta ao cliente por Pix."
                     }
-                    PayMethod.CRYPTO -> {
-                        a.refund(sale.intentId, sale.amount.centavos)
-                        "Venda cancelada. O valor volta ao cliente."
-                    }
+                    PayMethod.CRYPTO -> CRYPTO_RETURN
                 }
                 _state.value = CheckoutState.Cancelled(sale.amount, true, message)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -372,6 +374,8 @@ class CheckoutController(
     }
 
     companion object {
+        const val CRYPTO_RETURN = "Venda em cripto não se desfaz pelo app. A venda continua valendo: para devolver, peça o endereço da carteira do cliente e envie pelo console (Cripto › Enviar)."
+
         /** The journal's result values (nostr/schemas/kind-7714). */
         fun journalResult(status: String): String = when (status) {
             "approved" -> "approved"

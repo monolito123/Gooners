@@ -135,7 +135,7 @@ Rules that keep it at two taps:
 - The method sheet remembers the last method and puts it first, under the thumb.
 - Installments (*parcelas*) default to 1×. Choosing more is one extra tap on the sheet, and only for credit.
 - After approval the app returns to the keypad by itself after 4 seconds. The cashier's next action is always "type the next amount".
-- Nothing in the flow asks for confirmation. A wrong sale is undone with "Cancelar venda" on the result screen (a reversal before clearing, [02 §4.6](02-api-reference.md#46-capture-cancel-refund)), which is faster than confirming every right one. A Pix or crypto sale cannot be reversed, so "Cancelar venda" refunds it to the payer; app sessions may refund their own merchant's sales only.
+- Nothing in the flow asks for confirmation. A wrong sale is undone with "Cancelar venda" on the result screen (a reversal before clearing, [02 §4.6](02-api-reference.md#46-capture-cancel-refund)), which is faster than confirming every right one. A Pix sale cannot be reversed, so "Cancelar venda" refunds it to the payer (app sessions may refund their own merchant's sales only). A crypto sale is returned in crypto to an address the customer gives, which the app explains instead ([09 §3.2](09-digital-assets-international-b3.md#32-a-payment-in-crypto)).
 - A bar under the result shows the 4 seconds before the keypad returns, so the return is never a surprise; tapping the receipt QR (the customer is scanning it) keeps the result on screen.
 - Quick amounts (R$ 10, 20, 50, 100) sit above the keypad while it is empty.
 

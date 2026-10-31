@@ -49,7 +49,8 @@ func TestDigitalAssetsInternationalAndB3(t *testing.T) {
 	if got := wallet() - start; got != 98_50 {
 		t.Fatalf("the wallet got %d, want R$ 100,00 less the 1,5%% fee", got)
 	}
-	st.call("POST", "/v1/sandbox/crypto/payments/"+cp["id"].(string), nil, 404) // nothing pending any more
+	st.call("POST", "/v1/sandbox/crypto/payments/"+cp["id"].(string), nil, 404)                          // nothing pending any more
+	st.call("POST", "/v1/refunds", map[string]any{"payment_intent_id": cp["id"], "amount": 100_00}, 409) // returned in crypto, by hand
 
 	// ---- buy and sell bitcoin ----
 	_, cq := st.call("POST", "/v1/conversions", map[string]any{"merchant_id": merchant, "side": "buy", "asset": "BTC", "brl_amount": 350_00}, 201)

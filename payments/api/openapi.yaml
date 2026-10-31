@@ -45,6 +45,8 @@ tags:
     description: Fraud shield reviews (held sales, frozen terminals)
   - name: webhooks
     description: Webhook endpoints
+  - name: assets
+    description: Crypto, accounts abroad and B3 investments (docs/09)
 
 paths:
   /oauth2/token:
@@ -1325,6 +1327,384 @@ paths:
         "4XX":
           $ref: "#/components/responses/Problem"
 
+  /v1/crypto/markets:
+    get:
+      tags: [assets]
+      operationId: listCryptoMarkets
+      summary: Best bid and ask in reais across the connected exchanges
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      responses:
+        "200":
+          description: One row per asset
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object:
+                    const: list
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CryptoMarket"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/crypto/withdrawals:
+    post:
+      tags: [assets]
+      operationId: withdrawCrypto
+      summary: Send crypto the merchant holds to an outside address (payouts:write)
+      description: Final once sent. The network fee is taken from the holding; the address is checked against the network's format.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CryptoWithdrawalCreate"
+      responses:
+        "201":
+          description: Sent to the exchange
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CryptoWithdrawal"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/holdings:
+    get:
+      tags: [assets]
+      operationId: listHoldings
+      summary: What a merchant holds besides reais, valued at the best price to sell now
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/MerchantQuery"
+      responses:
+        "200":
+          description: Holdings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object:
+                    const: list
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Holding"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/conversions:
+    post:
+      tags: [assets]
+      operationId: quoteConversion
+      summary: Quote buying or selling crypto or a foreign currency against reais
+      description: >
+        A firm price for 30 seconds, with the fee and, for foreign currency, the IOF shown apart.
+        Nothing moves until the quote is executed.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversionCreate"
+      responses:
+        "201":
+          description: The quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversion"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/conversions/{id}:
+    get:
+      tags: [assets]
+      operationId: getConversion
+      summary: A conversion
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The conversion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversion"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/conversions/{id}/execute:
+    post:
+      tags: [assets]
+      operationId: executeConversion
+      summary: Execute a quoted conversion
+      description: >
+        Idempotent. Refused (410) after the quote expires, and (422) when the market moved more than
+        the slippage guard or the holding does not cover a sale; nothing is charged then.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversion"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/international/accounts:
+    get:
+      tags: [assets]
+      operationId: listInternationalAccounts
+      summary: The merchant's USD, EUR and GBP balances and the details to receive into them
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/MerchantQuery"
+      responses:
+        "200":
+          description: One account per currency
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object:
+                    const: list
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InternationalAccount"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/international/payouts:
+    post:
+      tags: [assets]
+      operationId: payAbroad
+      summary: Pay a beneficiary abroad from a foreign-currency balance (payouts:write)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternationalPayoutCreate"
+      responses:
+        "201":
+          description: Sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternationalPayout"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/investments/quotes/{ticker}:
+    get:
+      tags: [assets]
+      operationId: quoteInstrument
+      summary: Last price of a B3 share, unit or BDR, with its lot and whether the session is open
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - name: ticker
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Z]{4}(3|4|5|6|7|8|11|31|32|33|34|35|39)$"
+      responses:
+        "200":
+          description: Quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstrumentQuote"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/investments/profile:
+    get:
+      tags: [assets]
+      operationId: getInvestorProfile
+      summary: The merchant's investor profile (CVM Resolution 30)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/MerchantQuery"
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestorProfile"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+    put:
+      tags: [assets]
+      operationId: setInvestorProfile
+      summary: Answer the suitability questions; the profile follows from the answers
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                merchant_id:
+                  $ref: "#/components/schemas/Id"
+                answers:
+                  $ref: "#/components/schemas/SuitabilityAnswers"
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestorProfile"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/investments/orders:
+    post:
+      tags: [assets]
+      operationId: createInvestmentOrder
+      summary: Buy or sell at B3 through the broker, in standard lots and the fractional market
+      description: >
+        A buy is paid from the wallet now; a sale's proceeds arrive at settlement (D+2). A
+        conservative profile cannot buy variable income (409); no profile on file is 404.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticker, side, quantity]
+              properties:
+                merchant_id:
+                  $ref: "#/components/schemas/Id"
+                ticker:
+                  type: string
+                side:
+                  type: string
+                  enum: [buy, sell]
+                quantity:
+                  type: integer
+                  minimum: 1
+      responses:
+        "201":
+          description: Executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestmentOrder"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/investments/positions:
+    get:
+      tags: [assets]
+      operationId: listPositions
+      summary: Positions at B3 with their value and result, and the recent orders
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/MerchantQuery"
+      responses:
+        "200":
+          description: Portfolio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Portfolio"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/sandbox/crypto/payments/{id}:
+    post:
+      tags: [assets]
+      operationId: sandboxCryptoPayment
+      summary: Sandbox only. The customer's transfer for a pending crypto charge arrives
+      servers:
+        - url: https://api.sandbox.goonerspay.example
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The captured payment intent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntent"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
+  /v1/sandbox/international/credits:
+    post:
+      tags: [assets]
+      operationId: sandboxInternationalCredit
+      summary: Sandbox only. A payer abroad sends money to the merchant's account
+      servers:
+        - url: https://api.sandbox.goonerspay.example
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currency, amount]
+              properties:
+                merchant_id:
+                  $ref: "#/components/schemas/Id"
+                currency:
+                  $ref: "#/components/schemas/ForeignCurrency"
+                amount:
+                  $ref: "#/components/schemas/DecimalString"
+                payer:
+                  type: string
+      responses:
+        "200":
+          description: The accounts after the credit
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InternationalAccount"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
 webhooks:
   paymentIntentCaptured:
     post:
@@ -1394,6 +1774,12 @@ components:
     StartingAfter:
       name: starting_after
       in: query
+      schema:
+        $ref: "#/components/schemas/Id"
+    MerchantQuery:
+      name: merchant_id
+      in: query
+      description: Required with a partner key; an app session always acts for its own merchant.
       schema:
         $ref: "#/components/schemas/Id"
 
@@ -1563,7 +1949,7 @@ components:
           $ref: "#/components/schemas/Id"
         channel:
           type: string
-          enum: [card_present, ecommerce, payment_link, moto]
+          enum: [card_present, ecommerce, payment_link, moto, pix, crypto]
         payment_method_types:
           type: array
           minItems: 1
@@ -1625,7 +2011,15 @@ components:
           $ref: "#/components/schemas/Id"
         payment_method_type:
           type: string
-          enum: [card, pix]
+          enum: [card, pix, crypto]
+        asset:
+          type: string
+          description: For crypto, the stablecoin or coin the customer sends (USDT, USDC, BTC, ETH).
+          enum: [USDT, USDC, BTC, ETH]
+        network:
+          type: string
+          description: For crypto, the network the transfer must use; another network is not recognized.
+          enum: [tron, ethereum, polygon, solana, bitcoin]
         three_ds:
           type: object
           properties:
@@ -1684,13 +2078,42 @@ components:
               type: string
             expires_at:
               $ref: "#/components/schemas/Timestamp"
+        - type: object
+          description: >
+            Send exactly `amount` of `asset` on `network` to `address` (and `memo`, when
+            present) before `expires_at`. Each pending charge to an address asks for a
+            different amount, which is how the platform matches the deposit (docs/09 §3.2).
+          required: [type, asset, network, address, amount, amount_units, price, expires_at, uri]
+          properties:
+            type:
+              const: crypto_transfer
+            asset:
+              type: string
+            network:
+              type: string
+            address:
+              type: string
+            memo:
+              type: string
+            amount:
+              $ref: "#/components/schemas/DecimalString"
+            amount_units:
+              type: integer
+              description: The amount in the asset's smallest unit.
+            price:
+              $ref: "#/components/schemas/DecimalString"
+            uri:
+              type: string
+              description: A wallet payment URI (BIP-21, EIP-681 or the network's own form).
+            expires_at:
+              $ref: "#/components/schemas/Timestamp"
 
     Attempt:
       type: object
       properties:
         type:
           type: string
-          enum: [card, pix]
+          enum: [card, pix, crypto]
         card:
           type: object
           properties:
@@ -2639,3 +3062,379 @@ components:
         data:
           type: object
           additionalProperties: true
+
+    # ---------------------------------------------------------------- docs/09
+    DecimalString:
+      type: string
+      pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+      description: A decimal as a string, never a float ("0.00028372", "38.50").
+    ForeignCurrency:
+      type: string
+      enum: [USD, EUR, GBP]
+    CryptoMarket:
+      type: object
+      required: [asset, name, networks]
+      properties:
+        asset:
+          type: string
+        name:
+          type: string
+        networks:
+          type: array
+          items:
+            type: string
+        bid:
+          $ref: "#/components/schemas/DecimalString"
+        bid_venue:
+          type: string
+        ask:
+          $ref: "#/components/schemas/DecimalString"
+        ask_venue:
+          type: string
+    Holding:
+      type: object
+      required: [asset, kind, units, amount, value_brl]
+      properties:
+        asset:
+          type: string
+        kind:
+          type: string
+          enum: [crypto, fiat]
+        units:
+          type: integer
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        value_brl:
+          description: At the best price to sell now; null when no venue quotes it.
+          oneOf:
+            - $ref: "#/components/schemas/MinorUnits"
+            - type: "null"
+    ConversionCreate:
+      type: object
+      required: [side, asset]
+      description: A buy names brl_amount (reais to spend); a sale names amount (of the asset to sell).
+      properties:
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        side:
+          type: string
+          enum: [buy, sell]
+        asset:
+          type: string
+          enum: [BTC, ETH, USDT, USDC, USD, EUR, GBP]
+        brl_amount:
+          $ref: "#/components/schemas/MinorUnits"
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+    Conversion:
+      type: object
+      required: [id, object, kind, merchant_id, side, asset, asset_units, amount, brl_units, fee, tax, total, price, venue, status, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: conversion
+        kind:
+          type: string
+          enum: [crypto, fx]
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        side:
+          type: string
+          enum: [buy, sell]
+        asset:
+          type: string
+        asset_units:
+          type: integer
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        brl_units:
+          $ref: "#/components/schemas/MinorUnits"
+        fee:
+          $ref: "#/components/schemas/MinorUnits"
+        tax:
+          description: IOF on foreign currency, in centavos; zero for crypto.
+          $ref: "#/components/schemas/MinorUnits"
+        total:
+          description: A buy's total leaves the wallet; a sale's total arrives in it.
+          $ref: "#/components/schemas/MinorUnits"
+        price:
+          $ref: "#/components/schemas/DecimalString"
+        venue:
+          type: string
+        status:
+          type: string
+          enum: [quoted, executed, expired, failed]
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+    CryptoWithdrawalCreate:
+      type: object
+      required: [asset, network, address, amount]
+      properties:
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        asset:
+          type: string
+        network:
+          type: string
+        address:
+          type: string
+        memo:
+          type: string
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+    CryptoWithdrawal:
+      type: object
+      required: [id, object, asset, network, address, amount, network_fee_units, status]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: crypto_withdrawal
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        asset:
+          type: string
+        network:
+          type: string
+        address:
+          type: string
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        network_fee_units:
+          type: integer
+        venue:
+          type: string
+        status:
+          type: string
+          enum: [sent, failed]
+    ReceiveDetails:
+      type: object
+      required: [holder, bank, reference]
+      properties:
+        currency:
+          $ref: "#/components/schemas/ForeignCurrency"
+        holder:
+          type: string
+        bank:
+          type: string
+        iban:
+          type: string
+        bic:
+          type: string
+        account_number:
+          type: string
+        routing_number:
+          type: string
+          description: ABA routing number (USD).
+        sort_code:
+          type: string
+          description: UK sort code (GBP).
+        reference:
+          type: string
+          description: The merchant's reference ("GP" and ten hex characters); payers must quote it.
+    InternationalAccount:
+      type: object
+      required: [currency, units, amount, receive]
+      properties:
+        currency:
+          $ref: "#/components/schemas/ForeignCurrency"
+        units:
+          type: integer
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        receive:
+          $ref: "#/components/schemas/ReceiveDetails"
+    Beneficiary:
+      type: object
+      required: [name, type, country]
+      description: IBAN (and BIC) for EUR; ABA routing and account number for USD; sort code and account number for GBP.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [private, business]
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+        iban:
+          type: string
+        bic:
+          type: string
+        account_number:
+          type: string
+        routing_number:
+          type: string
+        sort_code:
+          type: string
+    InternationalPayoutCreate:
+      type: object
+      required: [currency, amount, beneficiary]
+      properties:
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        currency:
+          $ref: "#/components/schemas/ForeignCurrency"
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        reference:
+          type: string
+          maxLength: 35
+        beneficiary:
+          $ref: "#/components/schemas/Beneficiary"
+    InternationalPayout:
+      type: object
+      required: [id, object, merchant_id, currency, units, amount, fee, beneficiary, status]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: international_payout
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        currency:
+          $ref: "#/components/schemas/ForeignCurrency"
+        units:
+          type: integer
+        amount:
+          $ref: "#/components/schemas/DecimalString"
+        fee:
+          $ref: "#/components/schemas/DecimalString"
+        beneficiary:
+          $ref: "#/components/schemas/Beneficiary"
+        reference:
+          type: string
+        status:
+          type: string
+          enum: [sent, failed]
+    InstrumentQuote:
+      type: object
+      required: [ticker, name, kind, lot, last, at, market_open]
+      properties:
+        ticker:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [share, unit, bdr]
+        lot:
+          type: integer
+          description: 100 for shares (the rest trades in the fractional market, ticker + "F"); 1 for units and BDRs.
+        last:
+          $ref: "#/components/schemas/DecimalString"
+        change:
+          $ref: "#/components/schemas/DecimalString"
+        at:
+          $ref: "#/components/schemas/Timestamp"
+        market_open:
+          type: boolean
+    SuitabilityAnswers:
+      type: object
+      required: [horizon, tolerance, experience]
+      properties:
+        horizon:
+          type: integer
+          enum: [0, 1, 2]
+          description: 0 under a year, 1 one to three years, 2 longer.
+        tolerance:
+          type: integer
+          enum: [0, 1, 2]
+          description: 0 no loss, 1 some loss, 2 large swings.
+        experience:
+          type: integer
+          enum: [0, 1, 2]
+          description: 0 none, 1 some, 2 broad.
+    InvestorProfile:
+      type: object
+      required: [merchant_id, profile, answers, updated_at]
+      properties:
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        profile:
+          type: string
+          enum: [conservador, moderado, arrojado]
+        answers:
+          $ref: "#/components/schemas/SuitabilityAnswers"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    InvestmentOrder:
+      type: object
+      required: [id, object, merchant_id, ticker, side, quantity, price, gross, fees, total, status, trade_date, settles_on, legs]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: investment_order
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        ticker:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        quantity:
+          type: integer
+        price:
+          $ref: "#/components/schemas/DecimalString"
+        gross:
+          $ref: "#/components/schemas/MinorUnits"
+        fees:
+          $ref: "#/components/schemas/MinorUnits"
+        total:
+          description: A buy's total is debited now; a sale's is credited at settlement.
+          $ref: "#/components/schemas/MinorUnits"
+        status:
+          type: string
+          enum: [executed, settled]
+        trade_date:
+          type: string
+          format: date
+        settles_on:
+          type: string
+          format: date
+        legs:
+          type: array
+          description: The broker's order IDs, standard lot and fractional market.
+          items:
+            type: string
+    Position:
+      type: object
+      required: [ticker, quantity, cost, value, result]
+      properties:
+        ticker:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: integer
+        cost:
+          $ref: "#/components/schemas/MinorUnits"
+        last:
+          $ref: "#/components/schemas/DecimalString"
+        value:
+          oneOf:
+            - $ref: "#/components/schemas/MinorUnits"
+            - type: "null"
+        result:
+          description: value − cost, in centavos; may be negative.
+          oneOf:
+            - type: integer
+            - type: "null"
+    Portfolio:
+      type: object
+      required: [object, merchant_id, positions, orders]
+      properties:
+        object:
+          const: portfolio
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvestmentOrder"
