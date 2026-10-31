@@ -310,6 +310,21 @@ func main() {
 	}
 	ok("day closed: statement of %d receipts, net R$ %.2f, proven in a public root of %v leaves", len(statement.Lines), set["net"].(float64)/100, root["tree_size"])
 
+	// Crypto, international accounts and B3 in the sandbox (docs/09).
+	cpi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 5000, "channel": "crypto"}, 201)
+	cq := call("POST", "/v1/payment-intents/"+cpi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
+	act, _ := cq["next_action"].(map[string]any)
+	if paid := call("POST", "/v1/sandbox/crypto/payments/"+cpi["id"].(string), nil, 200); paid["status"] != "captured" {
+		fail("crypto payment: %v", paid)
+	}
+	ok("R$ 50,00 paid in USDT on Tron (%v to %v), sold for reais, intent captured", act["amount"], act["address"])
+	accts := call("GET", "/v1/international/accounts?merchant_id="+m["id"].(string), nil, 200)
+	if n := len(accts["data"].([]any)); n != 3 {
+		fail("international accounts: %v", accts)
+	}
+	quote := call("GET", "/v1/investments/quotes/PETR4", nil, 200)
+	ok("international accounts in USD, EUR and GBP; B3 quote PETR4 R$ %v (lot %v)", quote["last"], quote["lot"])
+
 	resp, err = http.Get("http://" + metricsAddr + "/metrics")
 	if err != nil {
 		fail("metrics: %v", err)
@@ -324,6 +339,6 @@ func main() {
 	ok("/metrics exposes authorizations, open disputes and safeguarding headroom")
 
 	cli("verify-ledger")
-	ok("ledger invariants L1–L5 hold")
+	ok("ledger invariants L1–L6 hold")
 	fmt.Println("SMOKE OK")
 }

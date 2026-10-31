@@ -49,9 +49,12 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
 	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/config"
 	"github.com/monolito123/Gooners/payments/platform/internal/db"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
@@ -312,6 +315,25 @@ func serve(ctx context.Context) error {
 	case c.Env == config.Sandbox:
 		deps.Registrar = registrar.NewMemory() // the sandbox's own registrar: advances still register first
 	}
+	if deps.Exchanges, err = exchanges(c); err != nil {
+		return err
+	}
+	switch {
+	case c.FXProvider == "wise":
+		deps.FX = &fx.Wise{BaseURL: c.WiseURL, Token: c.WiseToken, ProfileID: c.WiseProfile}
+	case c.FXProvider == "sandbox" || (c.FXProvider == "" && c.Env == config.Sandbox):
+		deps.FX = fx.NewMemory()
+	}
+	switch {
+	case c.BrokerURL != "":
+		cl := &brokerage.Client{BaseURL: c.BrokerURL, Token: c.BrokerToken, BrokerName: c.BrokerName}
+		if c.BrapiToken != "" {
+			cl.Quotes = &brokerage.Brapi{Token: c.BrapiToken}
+		}
+		deps.Broker = cl
+	case c.Env == config.Sandbox:
+		deps.Broker = brokerage.NewMemory()
+	}
 	if len(c.TransparencySecret) == 32 {
 		k, err := nostr.KeysFromSecret(c.TransparencySecret)
 		if err != nil {
@@ -321,7 +343,8 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("transparency signer", "npub", npub)
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode}, deps)
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
+		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)
@@ -464,6 +487,38 @@ func settle(ctx context.Context, args []string) error {
 
 // attestor builds the device attestation verifier from the configured roots; nil keeps the
 // sandbox behaviour (evidence recorded, not verified).
+// exchanges builds the crypto venues EXCHANGES names; the sandbox runs its own when none is.
+func exchanges(c *config.Config) (*exchange.Router, error) {
+	names := c.Exchanges
+	if len(names) == 0 && c.Env == config.Sandbox {
+		names = []string{"sandbox"}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	r := &exchange.Router{}
+	for _, n := range names {
+		switch n {
+		case "sandbox":
+			r.Venues = append(r.Venues, exchange.NewMemory("simex"))
+		case "binance":
+			r.Venues = append(r.Venues, &exchange.Binance{APIKey: c.BinanceKey, SecretKey: c.BinanceSecret})
+		case "kraken":
+			r.Venues = append(r.Venues, &exchange.Kraken{APIKey: c.KrakenKey, SecretKey: c.KrakenSecret, WithdrawKeys: c.KrakenWithdrawKeys})
+		case "coinbase":
+			k, err := exchange.ParseCoinbaseKey(c.CoinbaseKeyPEM)
+			if err != nil {
+				return nil, err
+			}
+			r.Venues = append(r.Venues, &exchange.Coinbase{KeyName: c.CoinbaseKeyName, Key: k})
+		default:
+			return nil, fmt.Errorf("EXCHANGES: unknown venue %q (binance, kraken, coinbase, sandbox)", n)
+		}
+	}
+	log.Info("crypto venues", "venues", names)
+	return r, nil
+}
+
 func attestor(ctx context.Context, c *config.Config) (payments.Attestor, error) {
 	if c.AppAttestRoots == "" && c.AndroidAttestationRoots == "" {
 		return nil, nil

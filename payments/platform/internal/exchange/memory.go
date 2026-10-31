@@ -116,7 +116,7 @@ func (m *Memory) DepositAddress(_ context.Context, code, network string) (string
 	case "bitcoin":
 		return "bc1q" + hex.EncodeToString(h[:19]), "", nil
 	case "tron":
-		return "T" + base58(h[:24])[:33], "", nil
+		return "T" + base58(h[:])[:33], "", nil
 	case "solana":
 		return base58(h[:32]), "", nil
 	default: // ethereum, polygon
@@ -170,9 +170,6 @@ func base58(b []byte) string {
 	for n.Sign() > 0 {
 		n.DivMod(n, big.NewInt(58), mod)
 		out = append([]byte{b58[mod.Int64()]}, out...)
-	}
-	for len(out) < 44 {
-		out = append([]byte{'1'}, out...)
 	}
 	return string(out)
 }

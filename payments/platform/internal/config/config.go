@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -94,6 +95,20 @@ type Config struct {
 	// contract. The sandbox runs an in-memory registrar when it is not set.
 	RegistrarURL     string
 	PlatformDocument string // the platform's CNPJ, beneficiary of its assignments
+	// Digital assets and international accounts (docs/09). Exchanges lists the crypto venues
+	// (binance, kraken, coinbase; the sandbox runs its own). FXProvider is wise; the sandbox
+	// runs its own. BrokerURL is a B3 broker adapter (the sandbox runs its own broker).
+	Exchanges                                      []string
+	BinanceKey, BinanceSecret                      string
+	KrakenKey, KrakenSecret                        string
+	KrakenWithdrawKeys                             map[string]string
+	CoinbaseKeyName, CoinbaseKeyPEM                string
+	FXProvider, WiseToken, WiseProfile, WiseURL    string
+	BrokerURL, BrokerToken, BrokerName, BrapiToken string
+	// CryptoAuthorization and FXAuthorization name what lets the platform offer them in
+	// production: its own BCB authorization or the licensed partner it acts for.
+	CryptoAuthorization, FXAuthorization                                      string
+	CryptoFeeBps, CryptoSpreadBps, FXFeeBps, FXSpreadBps, IOFOutBps, IOFInBps int
 	// RiskMode is how the fraud shield acts (docs/07 §3): enforce, shadow or off.
 	RiskMode  string
 	Relays    []string
@@ -192,6 +207,33 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: ANDROID_ATTESTATION_ROOTS needs ANDROID_SIGNING_DIGESTS")
 	}
 	c.RegistrarURL, c.PlatformDocument = os.Getenv("REGISTRAR_URL"), os.Getenv("PLATFORM_DOCUMENT")
+	for _, x := range strings.Split(os.Getenv("EXCHANGES"), ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			c.Exchanges = append(c.Exchanges, x)
+		}
+	}
+	c.BinanceKey, c.BinanceSecret = os.Getenv("BINANCE_API_KEY"), os.Getenv("BINANCE_SECRET_KEY")
+	c.KrakenKey, c.KrakenSecret = os.Getenv("KRAKEN_API_KEY"), os.Getenv("KRAKEN_SECRET_KEY")
+	c.KrakenWithdrawKeys = map[string]string{}
+	for _, kv := range strings.Split(os.Getenv("KRAKEN_WITHDRAW_KEYS"), ";") { // address=key name;…
+		if a, k, ok := strings.Cut(kv, "="); ok {
+			c.KrakenWithdrawKeys[strings.TrimSpace(a)] = strings.TrimSpace(k)
+		}
+	}
+	c.CoinbaseKeyName, c.CoinbaseKeyPEM = os.Getenv("COINBASE_KEY_NAME"), os.Getenv("COINBASE_PRIVATE_KEY")
+	c.FXProvider, c.WiseToken, c.WiseProfile, c.WiseURL = os.Getenv("FX_PROVIDER"), os.Getenv("WISE_TOKEN"), os.Getenv("WISE_PROFILE_ID"), os.Getenv("WISE_BASE_URL")
+	c.BrokerURL, c.BrokerToken, c.BrokerName, c.BrapiToken = os.Getenv("BROKER_URL"), os.Getenv("BROKER_TOKEN"), env("BROKER_NAME", "broker"), os.Getenv("BRAPI_TOKEN")
+	c.CryptoAuthorization, c.FXAuthorization = os.Getenv("CRYPTO_AUTHORIZATION"), os.Getenv("FX_AUTHORIZATION")
+	for name, dst := range map[string]*int{"CRYPTO_FEE_BPS": &c.CryptoFeeBps, "CRYPTO_SPREAD_BPS": &c.CryptoSpreadBps, "FX_FEE_BPS": &c.FXFeeBps,
+		"FX_SPREAD_BPS": &c.FXSpreadBps, "IOF_FX_OUT_BPS": &c.IOFOutBps, "IOF_FX_IN_BPS": &c.IOFInBps} {
+		if v := os.Getenv(name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 2000 {
+				return nil, fmt.Errorf("config: %s is basis points between 0 and 2000", name)
+			}
+			*dst = n
+		}
+	}
 	switch c.RiskMode = env("RISK_MODE", "enforce"); c.RiskMode {
 	case "enforce", "shadow", "off":
 	default:
@@ -281,6 +323,12 @@ func (c *Config) Validate() error {
 			return errors.New("config: production verifies device attestation: set APPATTEST_ROOT_CA/APPATTEST_APP_ID and ANDROID_ATTESTATION_ROOTS/ANDROID_SIGNING_DIGESTS")
 		case c.AndroidAttestationStatus == "off":
 			return errors.New("config: production checks Google's attestation status list: unset ANDROID_ATTESTATION_STATUS or point it at a mirror")
+		case slices.Contains(c.Exchanges, "sandbox") || c.FXProvider == "sandbox":
+			return errors.New("config: the sandbox exchange and FX provider do not run in production")
+		case len(c.Exchanges) > 0 && c.CryptoAuthorization == "":
+			return errors.New("config: crypto in production needs CRYPTO_AUTHORIZATION: the BCB authorization (Res. BCB 519/2025) or the authorized provider the platform acts for")
+		case c.FXProvider != "" && c.FXAuthorization == "":
+			return errors.New("config: foreign exchange in production needs FX_AUTHORIZATION: the institution authorized for câmbio that carries the operations")
 		case c.RiskMode == "off":
 			return errors.New("config: production keeps the fraud shield on: RISK_MODE enforce, or shadow while a new policy is trialled")
 		}

@@ -81,3 +81,31 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
+	prod := func() *Config {
+		c := base()
+		c.Env, c.PublicURL = Production, "https://api.goonerspay.example"
+		c.Routes[0].TLS, c.Routes[0].DialectFile = &TLSFiles{CA: "ca.pem"}, "/etc/platform/sponsor.json"
+		c.VaultKEK, c.CardDataDevKey, c.ReceiptsSecret = nil, nil, nil
+		c.RegistrarURL, c.PlatformDocument = "https://registrar.internal", "99999999000191"
+		c.AppAttestRoots, c.AppAttestAppID, c.AndroidAttestationRoots = "a.pem", "T.app", "g.pem"
+		return c
+	}
+	for want, mod := range map[string]func(*Config){
+		"do not run in production": func(c *Config) { c.Exchanges = []string{"sandbox"} },
+		"CRYPTO_AUTHORIZATION":     func(c *Config) { c.Exchanges = []string{"binance"} },
+		"FX_AUTHORIZATION":         func(c *Config) { c.FXProvider = "wise" },
+	} {
+		c := prod()
+		mod(c)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+	}
+	c := prod()
+	c.Exchanges, c.CryptoAuthorization, c.FXProvider, c.FXAuthorization = []string{"binance"}, "SPSAV autorizada pelo BCB", "wise", "Banco parceiro de câmbio"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
+		t.Errorf("with authorizations the remaining check is the HSM adapters: %v", err)
+	}
+}
