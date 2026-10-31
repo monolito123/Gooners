@@ -98,6 +98,25 @@ func TestTron(t *testing.T) {
 	}
 }
 
+type fixed struct {
+	senders []string
+	err     error
+}
+
+func (f fixed) Senders(context.Context, string, string, string, string) ([]string, error) {
+	return f.senders, f.err
+}
+
+func TestAllSources(t *testing.T) {
+	got, err := All{fixed{senders: []string{"b", "a"}}, fixed{senders: []string{"a", "c"}}}.Senders(context.Background(), "bitcoin", "BTC", tx, "x")
+	if err != nil || !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+		t.Fatalf("every sender any source names: %v %v", got, err)
+	}
+	if _, err := (All{fixed{senders: []string{"a"}}, fixed{err: errors.New("down")}}).Senders(context.Background(), "bitcoin", "BTC", tx, "x"); err == nil {
+		t.Fatal("a source that fails was ignored")
+	}
+}
+
 func TestServiceAndRouter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

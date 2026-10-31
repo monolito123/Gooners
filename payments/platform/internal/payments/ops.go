@@ -141,11 +141,12 @@ func (s *Service) RevokeTerminal(ctx context.Context, tenantID, terminalID, reas
 
 // APIKey describes an API key without revealing it. The ID is derived from the key's hash.
 type APIKey struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Scopes    []string  `json:"scopes"`
-	CreatedAt time.Time `json:"created_at"`
-	Revoked   bool      `json:"revoked"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Scopes    []string   `json:"scopes"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	Revoked   bool       `json:"revoked"`
 }
 
 // APIKeyID is the public identifier of a key: "ak_" and the first 16 hex digits of its hash.
@@ -153,7 +154,7 @@ func APIKeyID(keyHash string) string { return "ak_" + keyHash[:16] }
 
 // ListAPIKeys lists a tenant's API keys.
 func (s *Service) ListAPIKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
-	rows, err := s.pool.Query(ctx, `SELECT key_hash, name, scopes, created_at, revoked_at IS NOT NULL FROM api_clients WHERE tenant_id = $1 ORDER BY created_at`, tenantID)
+	rows, err := s.pool.Query(ctx, `SELECT key_hash, name, scopes, created_at, expires_at, revoked_at IS NOT NULL FROM api_clients WHERE tenant_id = $1 ORDER BY created_at`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +163,7 @@ func (s *Service) ListAPIKeys(ctx context.Context, tenantID string) ([]APIKey, e
 	for rows.Next() {
 		var k APIKey
 		var hash string
-		if err := rows.Scan(&hash, &k.Name, &k.Scopes, &k.CreatedAt, &k.Revoked); err != nil {
+		if err := rows.Scan(&hash, &k.Name, &k.Scopes, &k.CreatedAt, &k.ExpiresAt, &k.Revoked); err != nil {
 			return nil, err
 		}
 		k.ID = APIKeyID(hash)

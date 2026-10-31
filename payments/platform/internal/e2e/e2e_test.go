@@ -156,7 +156,7 @@ func newStack(t *testing.T, opts ...any) *stack {
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
 		Exchanges: &exchange.Router{Venues: []exchange.Exchange{exchange.NewMemory("simex")}}, FX: fx.NewMemory(), Broker: brokerage.NewMemory(),
-		Screener: screening.Set{screening.SandboxAddresses}, TravelRule: travelrule.Sandbox{},
+		Screener: screening.Set{screening.SandboxAddresses, screening.SandboxNames}, TravelRule: travelrule.Sandbox{},
 	}
 	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
 	for _, o := range opts {
@@ -221,7 +221,7 @@ func newStack(t *testing.T, opts ...any) *stack {
 func (st *stack) complianceKey() string {
 	st.t.Helper()
 	if st.compKey == "" {
-		k, err := api.NewAPIKey(context.Background(), st.pool, tenant, "compliance", []string{"compliance:read", "compliance:write"}, false)
+		k, err := api.NewAPIKey(context.Background(), st.pool, tenant, "compliance", []string{"compliance:read", "compliance:write", "travel_rule:read"}, false)
 		if err != nil {
 			st.t.Fatal(err)
 		}

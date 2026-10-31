@@ -568,6 +568,26 @@ func (s *Server) replayWebhooks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"replayed": n})
 }
 
+func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		// OverlapHours is how long the old secret keeps signing too (default 24; 0 at once).
+		OverlapHours *float64 `json:"overlap_hours"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	overlap := 24 * time.Hour
+	if in.OverlapHours != nil {
+		overlap = time.Duration(*in.OverlapHours * float64(time.Hour))
+	}
+	rs, err := s.svc.RotateWebhookSecret(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), overlap)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rs)
+}
+
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		URL             string   `json:"url"`

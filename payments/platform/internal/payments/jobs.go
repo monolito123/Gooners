@@ -117,6 +117,11 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 		} else if n > 0 {
 			s.log.Info("risk assessments past retention deleted", "count", n)
 		}
+		if n, err := s.RedactTravelRule(ctx, now); err != nil {
+			s.log.Error("redact travel-rule data", "err", err)
+		} else if n > 0 {
+			s.log.Info("travel-rule data past retention redacted", "count", n)
+		}
 	}
 	if n, err := s.RecoverShortfalls(ctx); err != nil {
 		s.log.Error("recover shortfalls", "err", err)
@@ -209,6 +214,8 @@ func (s *Service) RegisterMetrics(r *metrics.Registry) {
 	count("goonerspay_decripto_unfiled", "DeCripto files written and not yet marked filed.", `SELECT count(*) FROM decripto_reports WHERE filed_at IS NULL`)
 	grouped("goonerspay_address_screening_hits_24h", "Addresses sanctions screening matched in the last 24 hours, by purpose (withdrawal, deposit_sender).", "purpose",
 		`SELECT purpose, count(*) FROM address_screenings WHERE result = 'hit' AND created_at > now() - interval '24 hours' GROUP BY purpose`)
+	grouped("goonerspay_api_keys_expiring_14d", "API keys that stop working within 14 days, per tenant.", "tenant",
+		`SELECT tenant_id::text, count(*) FROM api_clients WHERE revoked_at IS NULL AND expires_at > now() AND expires_at < now() + interval '14 days' GROUP BY tenant_id`)
 	grouped("goonerspay_compliance_cases_open", "Compliance cases waiting for a decision, by reason.", "reason",
 		`SELECT reason, count(*) FROM compliance_cases WHERE status = 'open' GROUP BY reason`)
 	count("goonerspay_compliance_held_deposits", "Crypto deposits held for compliance (open cases holding funds).",

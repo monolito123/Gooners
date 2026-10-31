@@ -252,7 +252,9 @@ func TestTravelRule(t *testing.T) {
 	if tr["status"] != "accepted" || tr["reference"] == "" {
 		t.Fatalf("the provider's acceptance: %v", accepted)
 	}
-	_, msg := st.call("GET", "/v1/travel-rule/messages/"+tr["id"].(string), nil, 200)
+	// The payload names people: a partner's "*" key does not read it; travel_rule:read does.
+	st.call("GET", "/v1/travel-rule/messages/"+tr["id"].(string), nil, 403)
+	_, msg := st.callAs(st.complianceKey(), "GET", "/v1/travel-rule/messages/"+tr["id"].(string), nil, 200)
 	payload, _ := json.Marshal(msg["ivms101"])
 	for _, want := range []string{`"legalPersonName":"Mercado Bom Preço Ltda"`, `"nationalIdentifier":"` + document + `"`, `"registrationAuthority":"RA000681"`,
 		`"customerIdentification":"` + merchant + `"`, `"legalPersonName":"goonersPAY Teste"`, `"nationalIdentifier":"506700GE1G29325QX363","nationalIdentifierType":"LEIX"`,
@@ -360,5 +362,109 @@ func TestTravelRule(t *testing.T) {
 	_, all := st.call("GET", "/v1/compliance/cases?status=all", nil, 200)
 	if len(all["data"].([]any)) != 4 {
 		t.Fatalf("every case stays on record: %v", all)
+	}
+
+	// ---- personal data ----
+	// Nothing names anyone in the clear: payloads and declarations are sealed under the KEK.
+	var clear, sealed, total int
+	_ = st.pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE ivms101 IS NOT NULL), count(*) FILTER (WHERE ivms101_sealed LIKE 'sealed.v1.%'), count(*) FROM travel_rule_messages`).
+		Scan(&clear, &sealed, &total)
+	if clear != 0 || sealed != total || total < 10 {
+		t.Fatalf("payloads: %d in the clear, %d sealed of %d", clear, sealed, total)
+	}
+	var payers int
+	_ = st.pool.QueryRow(ctx, `SELECT count(*) FROM crypto_charges WHERE payer IS NULL AND payer_sealed LIKE 'sealed.v1.%'`).Scan(&payers)
+	if payers != 1 {
+		t.Fatalf("the payer's declaration is sealed: %d", payers)
+	}
+	_, page := st.call("GET", "/v1/travel-rule/messages", nil, 200)
+	for _, m := range page["data"].([]any) {
+		if _, ok := m.(map[string]any)["ivms101"]; ok {
+			t.Fatalf("a list carries payloads: %v", m)
+		}
+	}
+	// After the record-keeping period the names go; the record of the transfer stays.
+	n, err := st.svc.RedactTravelRule(ctx, time.Now().AddDate(10, 1, 0))
+	if err != nil || n != int64(total) {
+		t.Fatalf("redacted %d of %d: %v", n, total, err)
+	}
+	_, gone := st.callAs(st.complianceKey(), "GET", "/v1/travel-rule/messages/"+tr["id"].(string), nil, 200)
+	if gone["ivms101"] != nil || gone["redacted_at"] == nil || gone["status"] != "accepted" {
+		t.Fatalf("a redacted message: %v", gone)
+	}
+}
+
+// Names in travel-rule data are screened where a list carries names (docs/09 §6.6): a
+// beneficiary on the list refuses the withdrawal; an originator or a payer on it holds the
+// deposit; one learnt after the deposit settled is a review.
+func TestNameScreening(t *testing.T) {
+	venue := exchange.NewMemory("simex")
+	st := newStack(t, func(c *payments.Config) {
+		c.RiskMode = payments.RiskShadow
+		c.PlatformDocument, c.ReportingName = "22.222.222/0001-91", "goonersPAY Teste"
+	}, func(d *payments.Deps) { d.Exchanges = &exchange.Router{Venues: []exchange.Exchange{venue}} })
+	ctx := t.Context()
+	merchant := cryptoMerchant(t, st, "778899000001", "Empório Central Ltda")
+	pi, _ := charge(t, st, merchant, 900_00, nil)
+	st.call("POST", "/v1/sandbox/crypto/payments/"+pi, nil, 200)
+	_, q := st.call("POST", "/v1/conversions", map[string]any{"merchant_id": merchant, "side": "buy", "asset": "USDT", "brl_amount": 200_00}, 201)
+	st.call("POST", "/v1/conversions/"+q["id"].(string)+"/execute", nil, 200)
+	before := holding(t, st, merchant, "USDT")
+
+	// A withdrawal to a beneficiary on the list: refused before anything moves, on record.
+	_, out := st.call("POST", "/v1/crypto/withdrawals", map[string]any{"merchant_id": merchant, "asset": "USDT", "network": "tron", "address": "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+		"amount": "2", "beneficiary": map[string]any{"type": "natural", "name": "SANCTIONED PERSON, Sandbox", "country": "BR"}}, 403)
+	if out["code"] != "address_refused" || holding(t, st, merchant, "USDT") != before {
+		t.Fatalf("a listed beneficiary: %v", out)
+	}
+	cs := openCases(t, st)
+	if len(cs) != 1 || cs[0]["reason"] != "name_match" || cs[0]["subject"] == "" || cs[0]["holds_funds"] != false {
+		t.Fatalf("the withdrawal's case: %v", cs)
+	}
+	var refused int
+	_ = st.pool.QueryRow(ctx, `SELECT count(*) FROM travel_rule_messages WHERE direction = 'outbound' AND status = 'refused'`).Scan(&refused)
+	if refused != 1 {
+		t.Fatalf("the refused message on record: %d", refused)
+	}
+	st.callAs(st.complianceKey(), "POST", "/v1/compliance/cases/"+cs[0]["id"].(string)+"/decision", map[string]any{"action": "close", "note": "reported"}, 200)
+
+	// A payer who declares a listed name: the payment is held like a listed address.
+	pi, _ = charge(t, st, merchant, 70_00, map[string]any{"type": "natural", "name": "Sandbox Sanctioned Person", "document": "529.982.247-25", "country": "BR"})
+	if _, p := st.call("POST", "/v1/sandbox/crypto/payments/"+pi, nil, 200); p["status"] != "processing" {
+		t.Fatalf("a listed payer's payment: %v", p)
+	}
+	cs = openCases(t, st)
+	if len(cs) != 1 || cs[0]["reason"] != "name_match" || cs[0]["holds_funds"] != true || cs[0]["kind"] != "deposit_screening" {
+		t.Fatalf("the held deposit's case: %v", cs)
+	}
+	st.callAs(st.complianceKey(), "POST", "/v1/compliance/cases/"+cs[0]["id"].(string)+"/decision", map[string]any{"action": "release", "note": "a namesake: CPF differs from the listed person's"}, 200)
+	if _, p := st.call("GET", "/v1/payment-intents/"+pi, nil, 200); p["status"] != "captured" {
+		t.Fatalf("released: %v", p)
+	}
+
+	// Another provider names a listed originator before the coins arrive: held on arrival.
+	listed := ivms("Sandbox Sanctioned Person", "")
+	pi, act := charge(t, st, merchant, 60_00, nil)
+	st.inbound(map[string]any{"reference": "trp-n1", "asset": "USDT", "network": "tron", "address": act["address"], "amount": act["amount"],
+		"originator_vasp": map[string]any{"name": "Outra Exchange S.A."}, "ivms101": listed}, st.travelSecret)
+	if _, p := st.call("POST", "/v1/sandbox/crypto/payments/"+pi, nil, 200); p["status"] != "processing" {
+		t.Fatalf("a listed originator's payment: %v", p)
+	}
+	cs = openCases(t, st)
+	if len(cs) != 1 || cs[0]["reason"] != "name_match" || cs[0]["holds_funds"] != true {
+		t.Fatalf("%v", cs)
+	}
+	st.callAs(st.complianceKey(), "POST", "/v1/compliance/cases/"+cs[0]["id"].(string)+"/decision", map[string]any{"action": "block", "note": "confirmed"}, 200)
+
+	// The name arrives after the deposit settled: a review, nothing to hold.
+	pi, act = charge(t, st, merchant, 50_00, nil)
+	st.call("POST", "/v1/sandbox/crypto/payments/"+pi, nil, 200)
+	var txid string
+	_ = st.pool.QueryRow(ctx, `SELECT txid FROM crypto_deposits WHERE matched_to = $1`, pi).Scan(&txid)
+	st.inbound(map[string]any{"reference": "trp-n2", "asset": "USDT", "network": "tron", "address": act["address"], "amount": act["amount"], "txid": txid,
+		"originator_vasp": map[string]any{"name": "Outra Exchange S.A."}, "ivms101": listed}, st.travelSecret)
+	cs = openCases(t, st)
+	if len(cs) != 1 || cs[0]["reason"] != "name_match" || cs[0]["kind"] != "travel_rule" || cs[0]["holds_funds"] != false {
+		t.Fatalf("a late name: %v", cs)
 	}
 }

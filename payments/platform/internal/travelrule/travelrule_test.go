@@ -78,6 +78,7 @@ func TestConstraints(t *testing.T) {
 		"C9 needs a registration authority":       {legal(&NationalIdentification{NationalIdentifier: "1", NationalIdentifierType: "RAID"}), "(C9)"},
 		"C9 no country of issue":                  {legal(&NationalIdentification{NationalIdentifier: "1", NationalIdentifierType: "TXID", CountryOfIssue: "BR", RegistrationAuthority: "RA000681"}), "(C9)"},
 		"C10 the authority's form":                {legal(&NationalIdentification{NationalIdentifier: "1", NationalIdentifierType: "RAID", RegistrationAuthority: "CNPJ"}), "(C10)"},
+		"C10 on GLEIF's list":                     {legal(&NationalIdentification{NationalIdentifier: "1", NationalIdentifierType: "RAID", RegistrationAuthority: "RA000000"}), "(C10)"},
 		"C11 a valid LEI":                         {legal(&NationalIdentification{NationalIdentifier: "3M5E1GQKGL17HI8CPN21", NationalIdentifierType: "LEIX"}), "(C11)"},
 		"C5 a legal name": {Person{LegalPerson: &LegalPerson{Name: LegalPersonName{NameIdentifier: []LegalPersonNameID{{LegalPersonName: "CBA", LegalPersonNameIdentifierType: "TRAD"}}},
 			CustomerIdentification: "c1"}}, "(C5)"},

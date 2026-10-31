@@ -73,6 +73,9 @@ type Config struct {
 	// TravelRuleReview is the value (centavos) from which a deposit that arrived with no
 	// identification of its originator opens a compliance review. Default R$ 5.000,00.
 	TravelRuleReview int64
+	// TravelRuleRetention is how long the personal data of the travel rule is kept before it
+	// is redacted. Default ten years (Circular BCB 3.978/2020, art. 67).
+	TravelRuleRetention time.Duration
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -166,6 +169,9 @@ func New(cfg Config, d Deps) *Service {
 	}
 	if cfg.TravelRuleReview <= 0 {
 		cfg.TravelRuleReview = 500_000
+	}
+	if cfg.TravelRuleRetention <= 0 {
+		cfg.TravelRuleRetention = 10 * 365 * 24 * time.Hour
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,

@@ -539,4 +539,42 @@ func (s *Service) CreateWebhookEndpoint(ctx context.Context, tenantID, url strin
 	return e, err
 }
 
+// RotatedSecret is a webhook endpoint's new signing secret, returned once.
+type RotatedSecret struct {
+	ID             string    `json:"id"`
+	Object         string    `json:"object"`
+	Secret         string    `json:"secret"`
+	PreviousExpiry time.Time `json:"previous_secret_expires_at"`
+}
+
+// RotateWebhookSecret gives an endpoint a new signing secret. The old one keeps signing
+// beside it for overlap (default 24 hours, at most 7 days), so the partner can deploy the new
+// secret without losing a delivery; a leaked secret is rotated with an overlap of zero.
+func (s *Service) RotateWebhookSecret(ctx context.Context, tenantID, endpointID string, overlap time.Duration) (*RotatedSecret, error) {
+	if overlap < 0 || overlap > 7*24*time.Hour {
+		return nil, invalid("overlap_hours is between 0 and 168")
+	}
+	secret := webhooks.NewSecret()
+	stored := secret
+	if s.vault != nil {
+		sealed, err := s.vault.SealSecret(ctx, secret, endpointID)
+		if err != nil {
+			return nil, err
+		}
+		stored = sealed
+	} else if s.cfg.Env == "production" {
+		return nil, fmt.Errorf("%w: the vault is required to store webhook secrets", ErrDisabled)
+	}
+	until := s.cfg.Now().Add(overlap)
+	tag, err := s.pool.Exec(ctx, `UPDATE webhook_endpoints SET previous_secret = secret, previous_until = $4, secret = $3 WHERE tenant_id = $1 AND id = $2`,
+		tenantID, endpointID, stored, until)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return &RotatedSecret{ID: endpointID, Object: "webhook_secret", Secret: secret, PreviousExpiry: until.UTC()}, nil
+}
+
 func pow(x, y float64) float64 { return math.Pow(x, y) }

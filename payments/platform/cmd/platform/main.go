@@ -135,12 +135,17 @@ func apikey(ctx context.Context, args []string) error {
 	name := fs.String("name", "default", "key name")
 	scopes := fs.String("scopes", "*", "comma-separated scopes")
 	live := fs.Bool("live", false, "issue a sk_live_ key")
+	expires := fs.Duration("expires", 365*24*time.Hour, "how long the key works (0: until revoked)")
 	_ = fs.Parse(args)
 	if *tenant == "" {
 		return errors.New("-tenant is required")
 	}
+	var until time.Time
+	if *expires > 0 {
+		until = time.Now().Add(*expires)
+	}
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
-		key, err := api.NewAPIKey(ctx, pool, *tenant, *name, strings.Split(*scopes, ","), *live)
+		key, err := api.NewAPIKeyUntil(ctx, pool, *tenant, *name, strings.Split(*scopes, ","), *live, until)
 		if err == nil {
 			fmt.Println(key)
 		}
@@ -359,21 +364,33 @@ func serve(ctx context.Context) error {
 			set = append(set, &screening.Service{URL: c.ScreeningURL, Token: c.ScreeningToken})
 		}
 		if len(set) == 0 && c.Env == config.Sandbox {
-			set = screening.Set{screening.SandboxAddresses}
+			set = screening.Set{screening.SandboxAddresses, screening.SandboxNames}
 		}
 		if len(set) > 0 {
 			deps.Screener = set
 		}
 		// Who sent each deposit, read from each network (docs/09 §6.5).
 		lookups := chain.Router{}
-		for network, u := range c.SenderLookups {
-			switch network {
-			case "bitcoin":
-				lookups[network] = &chain.Esplora{URL: u}
-			case "ethereum", "polygon":
-				lookups[network] = &chain.EVM{URL: u}
-			case "tron":
-				lookups[network] = &chain.Tron{URL: u, APIKey: c.TronAPIKey}
+		for network, urls := range c.SenderLookups {
+			// Several URLs, comma-separated, are independent sources asked together (chain.All).
+			var all chain.All
+			for _, u := range strings.Split(urls, ",") {
+				if u = strings.TrimSpace(u); u == "" {
+					continue
+				}
+				switch network {
+				case "bitcoin":
+					all = append(all, &chain.Esplora{URL: u})
+				case "ethereum", "polygon":
+					all = append(all, &chain.EVM{URL: u})
+				case "tron":
+					all = append(all, &chain.Tron{URL: u, APIKey: c.TronAPIKey})
+				}
+			}
+			if len(all) == 1 {
+				lookups[network] = all[0]
+			} else if len(all) > 1 {
+				lookups[network] = all
 			}
 		}
 		if c.SenderLookupURL != "" {
@@ -416,7 +433,7 @@ func serve(ctx context.Context) error {
 		log.Info("transparency signer", "npub", npub)
 	}
 	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
-		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview,
+		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview, TravelRuleRetention: c.TravelRuleRetention,
 		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {

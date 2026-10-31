@@ -139,7 +139,9 @@ grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20ac
 }
 ```
 
-Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`, `compliance:read`, `compliance:write`. A key with `*` holds every scope except `compliance:write`, which the platform grants by name to its compliance officers' keys: releasing or blocking funds a sanctions screening held is its decision, not a partner's.
+Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`, `compliance:read`, `compliance:write`, `travel_rule:read`. A key with `*` holds every scope except `compliance:write` and `travel_rule:read`, which the platform grants by name to its compliance officers' keys: releasing or blocking funds a sanctions screening held is its decision, not a partner's, and the names and documents in travel-rule messages are read only by those who need them.
+
+API keys expire: `platform apikey` issues them for a year by default (`-expires`, `0` for a key that lasts until revoked), and a request with an expired key answers `401 key_expired`. Issue the replacement, deploy it, then let the old one lapse or revoke it; `goonerspay_api_keys_expiring_14d` warns two weeks ahead.
 
 ### 3.2 `POST /v1/auth/nostr` (merchant apps)
 
@@ -910,6 +912,17 @@ This is a real signature. The test vector below lets integrators check their ver
 
 Receivers must reject timestamps more than 5 minutes old, compare signatures in constant time, and accept any of several space-separated signatures during secret rotation. Partners who prefer asymmetric verification can choose `v1a` (Ed25519) signatures per endpoint.
 
+`POST /v1/webhook-endpoints/{id}/rotate-secret` (scope `webhooks:write`) issues a new secret, returned once. The old one keeps signing beside it for `overlap_hours` (default 24, at most 168), so every delivery in that window carries both signatures and the receiver can switch whenever its deploy lands; a leaked secret is rotated with `"overlap_hours": 0`:
+
+```json
+{
+  "id": "we_01M69K0V3GC8TSECSX0HV48PR3",
+  "object": "webhook_secret",
+  "secret": "whsec_X8b2kq0VbDqzJmC5R0Q4mYwTn1pYw0eA",
+  "previous_secret_expires_at": "2026-11-01T19:02:11Z"
+}
+```
+
 ### 10.2 Semantics
 
 - **At least once.** Receivers deduplicate on `webhook-id`.
@@ -940,6 +953,7 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `payment_intent.processing` | A crypto payment arrived and is held while compliance checks who sent it (`reason: "under_review"`); it ends `captured` or `canceled` (§11.6) |
 | `compliance.address_refused` | Sanctions screening refused a withdrawal address |
 | `compliance.case_opened` / `.case_decided` | A deposit was held or a travel-rule review opened; compliance released, blocked or closed it (§11.6) |
+| `compliance.party_refused` | A withdrawal was refused because its beneficiary or receiving provider is named on a sanctions list |
 
 ---
 
@@ -1257,7 +1271,7 @@ Held deposits and travel-rule reviews are cases ([09 §6.7](09-digital-assets-in
 
 `POST /v1/compliance/cases/{id}/decision` (scope `compliance:write`, granted by name, never through `*`) takes `{"action": "release" | "block" | "close", "note": "…"}`; the note is required and kept with who decided. A case holding funds is released (the payment settles) or blocked (the coins stay frozen, the payment is canceled); a review is closed. A case already decided answers `409`.
 
-`GET /v1/compliance/screenings?purpose=withdrawal|deposit_sender&result=clear|hit|error` lists every address screening; `GET /v1/travel-rule/messages?direction=outbound|inbound` and `/{id}` every travel-rule message with its IVMS101 payload, the counterparty and the outcome (`accepted`, `rejected`, `unreachable`, `self_declared`, `received`, `matched`, `refused`).
+`GET /v1/compliance/screenings?purpose=withdrawal|deposit_sender&result=clear|hit|error` lists every address screening. `GET /v1/travel-rule/messages?direction=outbound|inbound` lists every travel-rule message with the counterparty and the outcome (`accepted`, `rejected`, `unreachable`, `self_declared`, `received`, `matched`, `refused`), without the payload; `GET /v1/travel-rule/messages/{id}` adds the IVMS101 payload and needs `travel_rule:read`. Payloads are stored sealed under the vault's KEK and redacted after the record-keeping period (`redacted_at`).
 
 `POST /v1/travel-rule/inbound` is for the travel-rule adapter, not partners: it posts what other providers send, signed with the shared secret (`webhook-id`, `webhook-timestamp`, `webhook-signature`, as in §10.1), and receives the platform's answer for the sender:
 
@@ -1340,7 +1354,7 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 | GET | `/v1/transparency/{date}` | api | none (public) | Yes | The day's kind 7715 root |
 | POST · GET | `/v1/terminal/journal` | api | app session | Yes | The device's kind 7714 journal; answers `missing` ranges and forks |
 | GET | `/v1/payment-intents/{id}/journal` | api | `payments:read` | Yes | The devices' signed entries about a payment |
-| POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |
+| POST | `/v1/webhook-endpoints` · `/{id}/replay` · `/{id}/rotate-secret` | api | `webhooks:write` | Key | Rotation keeps the old secret signing for an overlap |
 | GET | `/v1/crypto/markets` | api | `assets:read` | Yes | Best bid and ask across the exchanges |
 | GET | `/v1/holdings` | api | `assets:read` | Yes | Crypto and foreign balances, valued in reais |
 | POST | `/v1/conversions` | api | `assets:write` | Key | A 30-second quote |
@@ -1349,7 +1363,8 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 | GET | `/v1/compliance/cases` · `/{id}` | api | `compliance:read` | Yes | Held deposits and travel-rule reviews |
 | POST | `/v1/compliance/cases/{id}/decision` | api | `compliance:write` | Key | Release, block or close, with a note |
 | GET | `/v1/compliance/screenings` | api | `compliance:read` | Yes | Every withdrawal address and deposit sender screened |
-| GET | `/v1/travel-rule/messages` · `/{id}` | api | `compliance:read` | Yes | IVMS101 sent and received |
+| GET | `/v1/travel-rule/messages` | api | `compliance:read` | Yes | Travel-rule messages sent and received, without payloads |
+| GET | `/v1/travel-rule/messages/{id}` | api | `travel_rule:read` | Yes | With the IVMS101 payload (names and documents) |
 | POST | `/v1/travel-rule/inbound` | api | the adapter's signature | Reference | Messages from other providers |
 | GET | `/v1/international/accounts` | api | `assets:read` | Yes | Balances and details to receive from abroad |
 | POST | `/v1/international/payouts` | api | `payouts:write` | Key | Reversed in full if the transfer fails |

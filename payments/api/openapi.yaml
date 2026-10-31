@@ -1387,6 +1387,41 @@ paths:
         "4XX":
           $ref: "#/components/responses/Problem"
 
+  /v1/webhook-endpoints/{id}/rotate-secret:
+    post:
+      tags: [webhooks]
+      operationId: rotateWebhookSecret
+      summary: Issue a new signing secret (webhooks:write)
+      description: >
+        The new secret is returned once. The old one keeps signing beside it for overlap_hours
+        (default 24, at most 168): deliveries in that window carry both signatures, so the
+        receiver can switch when its deploy lands. A leaked secret is rotated with 0.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: number
+                  minimum: 0
+                  maximum: 168
+                  default: 24
+      responses:
+        "200":
+          description: The new secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotatedSecret"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
   /v1/compliance/cases:
     get:
       tags: [compliance]
@@ -1554,7 +1589,11 @@ paths:
     get:
       tags: [compliance]
       operationId: getTravelRuleMessage
-      summary: Retrieve a travel-rule message (compliance:read)
+      summary: Retrieve a travel-rule message with its payload (travel_rule:read)
+      description: >
+        The IVMS101 payload names people and their documents: it is stored sealed and read
+        only with travel_rule:read, which a "*" key does not include. A redacted message
+        (past the record-keeping period) has redacted_at and no payload.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/PathId"
@@ -3487,6 +3526,20 @@ components:
                   enum: [accepted, self_declared]
                 reference:
                   type: string
+    RotatedSecret:
+      type: object
+      required: [id, object, secret, previous_secret_expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: webhook_secret
+        secret:
+          type: string
+          pattern: "^whsec_"
+        previous_secret_expires_at:
+          type: string
+          format: date-time
     TravelRuleParty:
       type: object
       required: [type, name]
@@ -3559,7 +3612,7 @@ components:
           enum: [deposit_screening, travel_rule]
         reason:
           type: string
-          enum: [sanctions_hit, screening_failed, originator_missing, beneficiary_mismatch]
+          enum: [sanctions_hit, screening_failed, originator_missing, beneficiary_mismatch, name_match]
         subject:
           type: string
           description: '"deposit:<venue>/<deposit id>"'
@@ -3627,7 +3680,7 @@ components:
           format: date-time
     TravelRuleMessage:
       type: object
-      required: [id, object, direction, asset, network, address, amount, units, counterparty, ivms101, status, created_at]
+      required: [id, object, direction, asset, network, address, amount, units, counterparty, status, created_at]
       properties:
         id:
           $ref: "#/components/schemas/Id"
@@ -3662,6 +3715,10 @@ components:
           description: '{"vasp": VASP, "owner": …} or {"self_hosted": true, …}'
         ivms101:
           $ref: "#/components/schemas/IVMS101"
+        redacted_at:
+          type: string
+          format: date-time
+          description: When the payload was removed, past the record-keeping period.
         status:
           type: string
           enum: [accepted, rejected, unreachable, self_declared, received, matched, refused]

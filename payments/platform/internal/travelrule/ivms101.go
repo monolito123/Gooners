@@ -148,7 +148,6 @@ func set(xs ...string) map[string]bool {
 }
 
 var (
-	raCode  = regexp.MustCompile(`^RA[0-9]{6}$`)
 	leiText = regexp.MustCompile(`^[0-9A-Z]{18}[0-9]{2}$`)
 )
 
@@ -171,8 +170,8 @@ func ValidLEI(lei string) bool {
 
 // Validate checks a payload against the standard's constraints: C1 and C4 (what identifies
 // an originator), C2 (a birth date in the past), C3 (country codes), C5 and C6 (a legal
-// name), C7 and C9 (a legal person's identifier), C8 (a usable address), C10 (the form of a
-// registration authority code; the code list is GLEIF's), C11 (a valid LEI) and the "Or" of
+// name), C7 and C9 (a legal person's identifier), C8 (a usable address), C10 (a registration
+// authority on GLEIF's list), C11 (a valid LEI) and the "Or" of
 // natural and legal person. It returns every problem found, joined.
 func (m *Message) Validate(now time.Time) error {
 	var errs []error
@@ -296,8 +295,8 @@ func checkPerson(path string, p Person, originator bool, now time.Time, add func
 				add(p+".registrationAuthority", "an LEI has no registration authority (C9)")
 			case ni.NationalIdentifierType != "LEIX" && ni.RegistrationAuthority == "":
 				add(p+".registrationAuthority", "required unless the identifier is an LEI (C9)")
-			case ni.RegistrationAuthority != "" && !raCode.MatchString(ni.RegistrationAuthority):
-				add(p+".registrationAuthority", "%q is not a GLEIF registration authority code (C10)", ni.RegistrationAuthority)
+			case ni.RegistrationAuthority != "" && !RegistrationAuthorities[ni.RegistrationAuthority]:
+				add(p+".registrationAuthority", "%q is not on GLEIF's Registration Authorities List (C10)", ni.RegistrationAuthority)
 			}
 			if ni.NationalIdentifierType == "LEIX" && !ValidLEI(ni.NationalIdentifier) {
 				add(p+".nationalIdentifier", "%q is not a valid LEI (C11)", ni.NationalIdentifier)

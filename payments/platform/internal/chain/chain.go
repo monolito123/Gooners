@@ -53,6 +53,28 @@ func (r Router) Senders(ctx context.Context, network, asset, txid, to string) ([
 	return out, nil
 }
 
+// All asks several independent sources about the same network (the platform's own node and
+// a public one, or two vendors) and answers every sender any of them names. A source that
+// fails fails the lookup (the deposit waits): a compromised or broken source can then add
+// senders, never hide one.
+type All []Lookup
+
+// Senders implements Lookup.
+func (a All) Senders(ctx context.Context, network, asset, txid, to string) ([]string, error) {
+	if len(a) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrNoLookup, network)
+	}
+	var out []string
+	for i, l := range a {
+		s, err := l.Senders(ctx, network, asset, txid, to)
+		if err != nil {
+			return nil, fmt.Errorf("source %d of %d: %w", i+1, len(a), err)
+		}
+		out = append(out, s...)
+	}
+	return unique(out), nil
+}
+
 var hexTx = regexp.MustCompile(`^(0x)?[0-9a-fA-F]{64}$`)
 
 func checkTx(txid string) error {

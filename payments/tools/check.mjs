@@ -256,7 +256,7 @@ const schemaFor = (v) => {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
     transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
     conversion: 'Conversion', crypto_withdrawal: 'CryptoWithdrawal', international_payout: 'InternationalPayout', investment_order: 'InvestmentOrder', portfolio: 'Portfolio',
-    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening',
+    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';

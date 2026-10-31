@@ -183,8 +183,8 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/compliance/cases/{id}/decision", "compliance:write", true, s.decideCase)
 	route("GET /v1/compliance/screenings", "compliance:read", false, s.listScreenings)
 	route("GET /v1/travel-rule/messages", "compliance:read", false, s.listTravelRule)
-	route("GET /v1/travel-rule/messages/{id}", "compliance:read", false, s.getTravelRule)
-	open("POST /v1/travel-rule/inbound", s.travelRuleInbound) // signed by the travel-rule adapter
+	route("GET /v1/travel-rule/messages/{id}", "travel_rule:read", false, s.getTravelRule) // the payload: names and documents
+	open("POST /v1/travel-rule/inbound", s.travelRuleInbound)                              // signed by the travel-rule adapter
 	route("GET /v1/risk/reviews", "risk:read", false, s.listRiskReviews)
 	route("GET /v1/risk/reviews/{id}", "risk:read", false, s.getRiskReview)
 	route("POST /v1/risk/reviews/{id}/resolve", "risk:write", true, s.resolveRiskReview)
@@ -195,11 +195,13 @@ func (s *Server) Handler() http.Handler {
 	open("GET /v1/transparency/{date}", s.transparencyRoot)
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
 	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
+	route("POST /v1/webhook-endpoints/{id}/rotate-secret", "webhooks:write", true, s.rotateWebhookSecret)
 	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
 }
 
-// explicitOnly are the scopes "*" does not include.
-var explicitOnly = map[string]bool{"compliance:write": true}
+// explicitOnly are the scopes "*" does not include: deciding on held funds, and reading the
+// names and documents travel-rule messages carry.
+var explicitOnly = map[string]bool{"compliance:write": true, "travel_rule:read": true}
 
 // sessionRoutes are the only routes a merchant app session may call. Each handler also
 // holds the session to its own merchant (ownership checks in handlers.go).
@@ -361,6 +363,11 @@ func (s *Server) recover(next http.Handler) http.Handler {
 
 // NewAPIKey creates an API key for a tenant and returns it (only its hash is stored).
 func NewAPIKey(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, scopes []string, live bool) (string, error) {
+	return NewAPIKeyUntil(ctx, pool, tenantID, name, scopes, live, time.Time{})
+}
+
+// NewAPIKeyUntil creates an API key that stops authenticating at expires (never when zero).
+func NewAPIKeyUntil(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, scopes []string, live bool, expires time.Time) (string, error) {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 	var sb strings.Builder
 	if live {
@@ -373,7 +380,11 @@ func NewAPIKey(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, s
 		sb.WriteByte(alphabet[n.Int64()])
 	}
 	key := sb.String()
-	_, err := pool.Exec(ctx, `INSERT INTO api_clients (key_hash, tenant_id, name, scopes) VALUES ($1, $2, $3, $4)`, hashKey(key), tenantID, name, scopes)
+	var until *time.Time
+	if !expires.IsZero() {
+		until = &expires
+	}
+	_, err := pool.Exec(ctx, `INSERT INTO api_clients (key_hash, tenant_id, name, scopes, expires_at) VALUES ($1, $2, $3, $4, $5)`, hashKey(key), tenantID, name, scopes, until)
 	return key, err
 }
 
@@ -444,9 +455,15 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 		}
 		var tenant string
 		var scopes []string
-		err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`, hashKey(key)).Scan(&tenant, &scopes)
+		var expired bool
+		err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes, COALESCE(expires_at <= now(), false) FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`,
+			hashKey(key)).Scan(&tenant, &scopes, &expired)
 		if err != nil {
 			unauthorized("unauthorized", "Invalid API key", "")
+			return
+		}
+		if expired {
+			unauthorized("key-expired", "The API key expired", "issue a new key and retire this one")
 			return
 		}
 		p := principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}

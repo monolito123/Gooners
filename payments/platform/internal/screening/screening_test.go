@@ -130,3 +130,48 @@ func TestServiceAndSet(t *testing.T) {
 		t.Fatal("no source is not a pass")
 	}
 }
+
+func TestNames(t *testing.T) {
+	for a, b := range map[string]string{
+		"AL-ZAWAHIRI, Ayman":   "Ayman al-Zawahiri",
+		"SILVA, João da":       "Joao Da Silva",
+		"BANCO NACIONAL, S.A.": "banco nacional s a",
+	} {
+		if NameKey(a) == "" || NameKey(a) != NameKey(b) {
+			t.Errorf("%q and %q: %q vs %q", a, b, NameKey(a), NameKey(b))
+		}
+	}
+	if NameKey("Ana") != "" || NameKey("de da") != "" || NameKey("Maria Souza") == NameKey("Maria Souza Lima") {
+		t.Fatal("short or partial names compared")
+	}
+	// The SDN list's names, individuals and entities, not vessels; an address list has none.
+	sdn := sdnLine + "\n" + `88888,"EXAMPLE TRADING CO",-0- ,"SDGT",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ` + "\n" + `77777,"SEA EXAMPLE","vessel","IRAN",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ` + "\n"
+	ns, _ := ParseNames(strings.NewReader(sdn), "OFAC SDN")
+	if len(ns) != 2 || ns[NameKey("Person Example")] == "" || ns[NameKey("Example Trading Co")] == "" {
+		t.Fatalf("%v", ns)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SDN.CSV")
+	_ = os.WriteFile(path, []byte(sdn), 0o600)
+	l := &List{Sources: []string{path}}
+	if err := l.Load(ctx); err != nil || !l.HasNames() {
+		t.Fatalf("%v %v", err, l.HasNames())
+	}
+	set := Set{l, &List{Sources: []string{path}}}
+	if hit, m, err := l.ScreenName(ctx, "Person EXAMPLE"); err != nil || !hit || !strings.Contains(m, "EXAMPLE, Person") {
+		t.Fatalf("%v %q %v", hit, m, err)
+	}
+	if r, err := set.ScreenName(ctx, "Pessoa Comum da Silva"); err == nil && (r.Hit || len(r.Sources) != 1) {
+		t.Fatalf("an unrelated name, one source with names consulted: %+v", r)
+	}
+	if r, err := (Set{SandboxAddresses}).ScreenName(ctx, "Person Example"); err != nil || len(r.Sources) != 0 {
+		t.Fatalf("no names to screen against is no screening: %+v %v", r, err)
+	}
+	if r, _ := (Set{SandboxNames}).ScreenName(ctx, "sandbox sanctioned PERSON"); !r.Hit {
+		t.Fatal("the sandbox's test name")
+	}
+	l.Now = func() time.Time { return time.Now().Add(100 * time.Hour) }
+	if _, _, err := l.ScreenName(ctx, "Person Example"); !errors.Is(err, ErrStale) {
+		t.Fatalf("a stale list: %v", err)
+	}
+}

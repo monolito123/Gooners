@@ -8,7 +8,9 @@ package screening
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +42,14 @@ type Screener interface {
 // ErrStale is a list too old to rely on.
 var ErrStale = errors.New("screening: list is stale")
 
+// NameScreener checks a person's or an entity's name (the names in travel-rule messages).
+type NameScreener interface {
+	Name() string
+	ScreenName(ctx context.Context, name string) (hit bool, match string, err error)
+	// HasNames reports whether there are names to screen against (an address list has none).
+	HasNames() bool
+}
+
 // Set screens with every screener: a hit anywhere is a hit, an error anywhere is an error.
 type Set []Screener
 
@@ -65,6 +75,67 @@ func (s Set) Screen(ctx context.Context, network, address string) (Result, error
 	return r, errors.Join(errs...)
 }
 
+// ScreenName screens a name with every screener that holds names. A Set whose sources
+// hold no names (address lists, a provider's address contract) consults nothing and
+// answers with no sources: the name was not screened.
+func (s Set) ScreenName(ctx context.Context, name string) (Result, error) {
+	var r Result
+	var errs []error
+	for _, x := range s {
+		n, ok := x.(NameScreener)
+		if !ok || !n.HasNames() {
+			continue
+		}
+		r.Sources = append(r.Sources, n.Name())
+		hit, match, err := n.ScreenName(ctx, name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", n.Name(), err))
+			continue
+		}
+		if hit {
+			r.Hit = true
+			r.Matches = append(r.Matches, n.Name()+": "+match)
+		}
+	}
+	return r, errors.Join(errs...)
+}
+
+// NameKey is the form names are compared in: capitals without accents, punctuation as
+// spaces, the particles of Portuguese and Spanish names left out, the words sorted. So
+// "AL-ZAWAHIRI, Ayman" and "Ayman al-Zawahiri" are the same name, and "João da Silva" is
+// "Joao Silva". A name of one short word is not compared (too many people share it).
+func NameKey(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(name) {
+		if f, ok := folded[r]; ok {
+			r = f
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	var words []string
+	for _, w := range strings.Fields(b.String()) {
+		if !particles[w] {
+			words = append(words, w)
+		}
+	}
+	if len(words) == 0 || (len(words) == 1 && len(words[0]) < 5) {
+		return ""
+	}
+	sort.Strings(words)
+	return strings.Join(words, " ")
+}
+
+var folded = map[rune]rune{
+	'Á': 'A', 'À': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A', 'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E', 'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+	'Ó': 'O', 'Ò': 'O', 'Ô': 'O', 'Õ': 'O', 'Ö': 'O', 'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U', 'Ç': 'C', 'Ñ': 'N', 'Ý': 'Y',
+}
+
+var particles = map[string]bool{"DE": true, "DA": true, "DO": true, "DAS": true, "DOS": true, "E": true, "DEL": true, "LA": true, "Y": true}
+
 // Normalize is the form addresses are compared in: hexadecimal (0x…) and bech32 (bc1…)
 // addresses are case-insensitive; base58 addresses (Tron, Solana, legacy Bitcoin) are not.
 func Normalize(address string) string {
@@ -77,6 +148,29 @@ func Normalize(address string) string {
 }
 
 // ---------------------------------------------------------------- lists
+
+// ParseNames reads the names of OFAC's SDN.CSV (its second column) for individuals and
+// entities; vessels and aircraft are left out. A file that is not the SDN list gives none.
+func ParseNames(r io.Reader, label string) (map[string]string, error) {
+	cr := csv.NewReader(r)
+	cr.LazyQuotes, cr.FieldsPerRecord, cr.ReuseRecord = true, -1, true
+	out := map[string]string{}
+	for {
+		rec, err := cr.Read()
+		if errors.Is(err, io.EOF) {
+			return out, nil
+		}
+		if err != nil {
+			return out, nil // not a CSV: an address list
+		}
+		if len(rec) < 3 || rec[2] == "vessel" || rec[2] == "aircraft" {
+			continue
+		}
+		if k := NameKey(rec[1]); k != "" {
+			out[k] = label + " (" + strings.TrimSpace(rec[1]) + ")"
+		}
+	}
+}
 
 var ofacFeature = regexp.MustCompile(`Digital Currency Address - ([A-Z0-9]+)\s+([A-Za-z0-9:]+)`)
 
@@ -120,6 +214,7 @@ type List struct {
 
 	mu       sync.RWMutex
 	set      map[string]string
+	names    map[string]string // from SDN.CSV, by NameKey
 	loadedAt time.Time
 }
 
@@ -150,23 +245,33 @@ func (l *List) now() time.Time {
 
 // Load reads every source; the lists replace the old ones only if all of them load.
 func (l *List) Load(ctx context.Context) error {
-	set := map[string]string{}
+	set, names := map[string]string{}, map[string]string{}
 	for _, src := range l.Sources {
 		rc, err := l.open(ctx, src)
 		if err != nil {
 			return fmt.Errorf("screening: %s: %w", src, err)
 		}
-		m, err := Parse(rc, label(src))
+		raw, err := io.ReadAll(io.LimitReader(rc, 256<<20))
 		rc.Close()
+		if err != nil {
+			return fmt.Errorf("screening: %s: %w", src, err)
+		}
+		m, err := Parse(bytes.NewReader(raw), label(src))
 		if err != nil {
 			return fmt.Errorf("screening: %s: %w", src, err)
 		}
 		for k, v := range m {
 			set[k] = v
 		}
+		if ofacFeature.Match(raw) { // the SDN list: its names too
+			ns, _ := ParseNames(bytes.NewReader(raw), label(src))
+			for k, v := range ns {
+				names[k] = v
+			}
+		}
 	}
 	l.mu.Lock()
-	l.set, l.loadedAt = set, l.now()
+	l.set, l.names, l.loadedAt = set, names, l.now()
 	l.mu.Unlock()
 	return nil
 }
@@ -234,6 +339,59 @@ func (l *List) Screen(_ context.Context, _ string, address string) (bool, string
 	}
 	return false, "", nil
 }
+
+// HasNames implements NameScreener: whether an SDN list was loaded.
+func (l *List) HasNames() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.names) > 0
+}
+
+// ScreenName implements NameScreener.
+func (l *List) ScreenName(_ context.Context, name string) (bool, string, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	maxAge := l.MaxAge
+	if maxAge == 0 {
+		maxAge = 72 * time.Hour
+	}
+	if l.set == nil || l.now().Sub(l.loadedAt) > maxAge {
+		return false, "", ErrStale
+	}
+	k := NameKey(name)
+	if src, ok := l.names[k]; ok && k != "" {
+		return true, src, nil
+	}
+	return false, "", nil
+}
+
+// StaticNames is a fixed list of names (the sandbox's test names, tests), keyed by NameKey.
+type StaticNames map[string]string
+
+// Name implements NameScreener.
+func (StaticNames) Name() string { return "static-names" }
+
+// HasNames implements NameScreener.
+func (s StaticNames) HasNames() bool { return len(s) > 0 }
+
+// Screen implements Screener: names hold no addresses.
+func (StaticNames) Screen(context.Context, string, string) (bool, string, error) {
+	return false, "", nil
+}
+
+// ScreenName implements NameScreener.
+func (s StaticNames) ScreenName(_ context.Context, name string) (bool, string, error) {
+	for k, v := range s {
+		if NameKey(k) == NameKey(name) && NameKey(name) != "" {
+			return true, v, nil
+		}
+	}
+	return false, "", nil
+}
+
+// SandboxNames is the sandbox's sanctioned test name: a withdrawal to it, or a deposit from
+// it, shows what name screening does. It names nobody.
+var SandboxNames = StaticNames{"Sandbox Sanctioned Person": "sandbox test list"}
 
 // Static is a fixed list (the sandbox's test addresses, tests).
 type Static map[string]string

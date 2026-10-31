@@ -140,6 +140,16 @@ func (s *Service) ConfirmCrypto(ctx context.Context, tenantID, id, code, network
 		}
 		payerJSON, _ = json.Marshal(payer)
 	}
+	var payerSealed string
+	if len(payerJSON) > 0 {
+		sealed, err := s.sealPII(ctx, payerJSON, id) // bound to the payment intent
+		if err != nil {
+			return nil, err
+		}
+		if sealed != "" {
+			payerSealed, payerJSON = sealed, nil
+		}
+	}
 	a, err := cryptoAsset(code)
 	if err != nil {
 		return nil, err
@@ -183,8 +193,8 @@ func (s *Service) ConfirmCrypto(ctx context.Context, tenantID, id, code, network
 	expires := s.cfg.Now().Add(cryptoChargeTTL)
 	for attempt := 0; ; attempt++ {
 		u := units + uniqueTail(a) // tells this payment's deposit apart from others to the same address
-		_, err = s.pool.Exec(ctx, `INSERT INTO crypto_charges (payment_intent_id, tenant_id, merchant_id, exchange, asset, network, address, memo, units, price, status, expires_at, payer)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12)`, id, tenantID, pi.MerchantID, venue.Name(), a.Code, network, address, memo, u, price, expires, payerJSON)
+		_, err = s.pool.Exec(ctx, `INSERT INTO crypto_charges (payment_intent_id, tenant_id, merchant_id, exchange, asset, network, address, memo, units, price, status, expires_at, payer, payer_sealed)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, NULLIF($13, ''))`, id, tenantID, pi.MerchantID, venue.Name(), a.Code, network, address, memo, u, price, expires, payerJSON, payerSealed)
 		if err == nil || attempt == 4 || !strings.Contains(err.Error(), "crypto_charges_match") {
 			break
 		}
@@ -375,9 +385,25 @@ func (s *Service) settleDeposit(ctx context.Context, venue exchange.Exchange, d 
 		venue.Name(), d.ID, v.senders, screened); err != nil {
 		return false, err
 	}
-	// The travel rule: link the data another provider sent with this deposit, if any.
-	if err := s.depositTravelRule(ctx, venue.Name(), d, tenantID, merchantID, piID, value); err != nil {
+	// The travel rule: link the data another provider sent with this deposit, if any, and
+	// screen the originator it names (or the payer declared): a name on a list holds the
+	// deposit as a listed address does.
+	originators, err := s.depositTravelRule(ctx, venue.Name(), d, tenantID, merchantID, piID, value)
+	if err != nil {
 		s.log.Error("travel rule for a deposit", "venue", venue.Name(), "deposit", d.ID, "err", err)
+	}
+	if v.reason == "" && len(originators) > 0 {
+		switch hits, err := s.screenNames(ctx, originators); {
+		case err != nil:
+			v.reason, v.errs = ReasonScreeningFailed, append(v.errs, "originator's name: "+err.Error())
+		case len(hits) > 0:
+			v.reason, v.matches = ReasonNameMatch, hits
+		}
+		if v.reason != "" {
+			if _, err := s.pool.Exec(ctx, `UPDATE crypto_deposits SET screening = 'pending' WHERE exchange = $1 AND deposit_id = $2`, venue.Name(), d.ID); err != nil {
+				return false, err
+			}
+		}
 	}
 	if v.reason != "" {
 		return false, s.holdDeposit(ctx, venue.Name(), d, tenantID, merchantID, piID, status, v)

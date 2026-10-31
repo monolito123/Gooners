@@ -130,6 +130,8 @@ type Config struct {
 	// withdrawal) and TravelRuleReview (deposits without originator data) set the values.
 	TravelRuleURL, TravelRuleToken, TravelRuleSecret string
 	TravelRuleThreshold, TravelRuleReview            int64
+	// TravelRuleRetention is how long the travel rule's personal data is kept (default ten years).
+	TravelRuleRetention time.Duration
 	// PlatformLEI is the platform's Legal Entity Identifier, when it has one.
 	PlatformLEI string
 	// RiskMode is how the fraud shield acts (docs/07 §3): enforce, shadow or off.
@@ -263,6 +265,13 @@ func Load() (*Config, error) {
 	c.TronAPIKey, c.SenderLookupURL, c.SenderLookupToken = os.Getenv("TRON_API_KEY"), os.Getenv("SENDER_LOOKUP_URL"), os.Getenv("SENDER_LOOKUP_TOKEN")
 	c.TravelRuleURL, c.TravelRuleToken, c.TravelRuleSecret = os.Getenv("TRAVEL_RULE_URL"), os.Getenv("TRAVEL_RULE_TOKEN"), os.Getenv("TRAVEL_RULE_INBOUND_SECRET")
 	c.PlatformLEI = os.Getenv("PLATFORM_LEI")
+	if v := os.Getenv("TRAVEL_RULE_RETENTION_YEARS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 5 || n > 30 {
+			return nil, errors.New("config: TRAVEL_RULE_RETENTION_YEARS is between 5 (Law 9.613/1998, art. 10) and 30")
+		}
+		c.TravelRuleRetention = time.Duration(n) * 365 * 24 * time.Hour
+	}
 	for name, dst := range map[string]*int64{"TRAVEL_RULE_THRESHOLD_BRL": &c.TravelRuleThreshold, "TRAVEL_RULE_REVIEW_BRL": &c.TravelRuleReview} {
 		if v := os.Getenv(name); v != "" {
 			n, err := strconv.ParseFloat(v, 64)

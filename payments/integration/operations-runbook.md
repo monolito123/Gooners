@@ -85,6 +85,8 @@ The platform serves Prometheus metrics on `METRICS_ADDR` (internal network only)
 | `goonerspay_compliance_held_deposits`, `goonerspay_compliance_cases_open` | Any held deposit for 4 hours; any open case at the end of the day | §4.12 |
 | `goonerspay_deposit_screenings_total{verdict="screening_failed"}`, `goonerspay_deposits_unscreened` | Any for 15 minutes | A sender lookup is down (the node, Esplora, the provider): the logs name it. Deposits wait meanwhile and are re-screened once it is back |
 | `goonerspay_travel_rule_refusals_24h{status="unreachable"}` | Above 3 in an hour | The travel-rule network or its adapter is down: withdrawals to other providers are refused meanwhile (§4.13) |
+| `goonerspay_name_screenings_total{result="error"}` | Any for 15 minutes | The SDN list is stale or unreadable: withdrawals with travel-rule data are refused and deposits with an originator held meanwhile (§4.11) |
+| `goonerspay_api_keys_expiring_14d` | Above 0 | Issue the partner's replacement key and agree when the old one lapses (§4.5) |
 | `goonerspay_decripto_unfiled` | Above 0 five business days before the deadline | File it (§4.10) |
 | `goonerspay_risk_assessments_total` by `action` | Declines or holds above their weekly baseline | A new attack, or a rule misfiring on honest sales: read `goonerspay_risk_signals_total` by `signal`, and move a misfiring rule to shadow (`RISK_MODE=shadow`) while it is fixed |
 
@@ -130,15 +132,15 @@ platform terminal-revoke -tenant T -terminal T7Q2M9KX -reason "reported stolen, 
 
 The terminal's certificate stops authenticating and its ID takes no authorizations. Register a new terminal for the replacement device.
 
-### 4.5 Leaked API key
+### 4.5 Leaked or expiring API key, leaked webhook secret
 
 ```bash
-platform apikey-list -tenant T                                   # find the key's ak_ ID by name
+platform apikey-list -tenant T                                   # find the key's ak_ ID by name; expires_at shows when it lapses
 platform apikey-revoke -tenant T -id ak_3f9a… -reason "key in a public log" -actor ana@goonerspay.example
-platform apikey -tenant T -name integration -scopes payments:read,payments:write -live
+platform apikey -tenant T -name integration -scopes payments:read,payments:write -live -expires 8760h
 ```
 
-Revocation takes effect on the next request.
+Revocation takes effect on the next request. Keys expire after a year unless issued with `-expires 0`; before one lapses (`goonerspay_api_keys_expiring_14d`), issue the replacement and agree with the partner when the old one stops. A leaked webhook secret is rotated by the partner, or by operations with the partner's key, with no overlap: `POST /v1/webhook-endpoints/{id}/rotate-secret {"overlap_hours": 0}`; a planned rotation keeps the default 24 hours, during which deliveries carry both signatures.
 
 ### 4.6 Chargebacks
 
@@ -188,7 +190,7 @@ A deposit whose sender is on a sanctions list (`sanctions_hit`), or whose sender
 
 1. Open the case: Console › Compliance, or `platform compliance-cases -tenant T` (the platform tenant `00000000-0000-0000-0000-000000000000` holds the deposits no charge matches). The case lists the transaction, the senders, the matches and any errors.
 2. `screening_failed`: the job screens it again every ten minutes once the lookup or the list is back, and releases it if every sender is clear. Release it by hand only after screening the senders yourself, and say how in the note.
-3. `sanctions_hit`: compare the match with the list's entry (the address, the asset, the program). A false positive (the list's own error, or an entry since removed): release, with the evidence in the note; the charge settles for the intent's amount.
+3. `sanctions_hit`: compare the match with the list's entry (the address, the asset, the program). `name_match` (a payer or an originator whose name is on the list): namesakes are common; compare the document, the date and place of birth and the country with the list's entry before deciding, and say what you compared in the note. A deposit held because the name could not be screened is not released by the job: decide it by hand. A false positive (the list's own error, or an entry since removed): release, with the evidence in the note; the charge settles for the intent's amount.
 4. A real match: block. The coins stay frozen in `liability.compliance_hold`; they are never returned to the sender, and the charge is canceled. The same day, report the frozen assets to the Ministry of Justice and Public Security as Law 13.810/2019 and Resolution BCB 44/2020 require, and file the communication to the COAF (Siscoaf); record both protocol numbers in the case's note trail (the decision note says what was done; add the protocols to the ticket).
 5. Every decision is `platform compliance-decide -tenant T -case cc_… -action release|block -reason "…" -actor you@goonerspay.example`, or the console's buttons; the decision, its author and the note are kept.
 

@@ -139,6 +139,7 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 	type job struct {
 		id                              int64
 		endpoint, url, secret, msg, typ string
+		previous                        string // a rotated secret still in its overlap
 		body                            string
 		attempts                        int
 		created                         time.Time
@@ -150,7 +151,8 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 			WHERE delivered_at IS NULL AND abandoned_at IS NULL AND COALESCE(replayed_at, created_at) < now() - $1::interval`, fmt.Sprintf("%d seconds", int(maxAge.Seconds()))); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT w.id, e.id, e.url, e.secret, w.message_id, w.type, w.body, w.attempts, w.created_at
+		rows, err := tx.Query(ctx, `SELECT w.id, e.id, e.url, e.secret, CASE WHEN e.previous_until > now() THEN COALESCE(e.previous_secret, '') ELSE '' END,
+			w.message_id, w.type, w.body, w.attempts, w.created_at
 			FROM webhook_deliveries w JOIN webhook_endpoints e ON e.id = w.endpoint_id
 			WHERE w.delivered_at IS NULL AND w.abandoned_at IS NULL AND w.next_at <= now() ORDER BY w.id LIMIT 50 FOR UPDATE OF w SKIP LOCKED`)
 		if err != nil {
@@ -158,7 +160,7 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 		}
 		for rows.Next() {
 			var j job
-			if err := rows.Scan(&j.id, &j.endpoint, &j.url, &j.secret, &j.msg, &j.typ, &j.body, &j.attempts, &j.created); err != nil {
+			if err := rows.Scan(&j.id, &j.endpoint, &j.url, &j.secret, &j.previous, &j.msg, &j.typ, &j.body, &j.attempts, &j.created); err != nil {
 				rows.Close()
 				return err
 			}
@@ -184,20 +186,29 @@ func (d *Dispatcher) Once(ctx context.Context) (int, error) {
 	}
 	ok := 0
 	for _, j := range jobs {
-		secret := j.secret
-		if vault.IsSealed(secret) {
-			if d.Secrets == nil {
-				return ok, fmt.Errorf("webhooks: endpoint %s has a sealed secret and no SecretOpener is configured", j.endpoint)
+		ts := time.Now().Unix()
+		// During a rotation's overlap the delivery carries both signatures (space-separated,
+		// as Standard Webhooks allows): a receiver with either secret accepts it.
+		var sigs []string
+		for _, sec := range []string{j.secret, j.previous} {
+			if sec == "" {
+				continue
 			}
-			if secret, err = d.Secrets.OpenSecret(ctx, secret, j.endpoint); err != nil {
+			if vault.IsSealed(sec) {
+				if d.Secrets == nil {
+					return ok, fmt.Errorf("webhooks: endpoint %s has a sealed secret and no SecretOpener is configured", j.endpoint)
+				}
+				if sec, err = d.Secrets.OpenSecret(ctx, sec, j.endpoint); err != nil {
+					return ok, err
+				}
+			}
+			s, err := Sign(sec, j.msg, ts, []byte(j.body))
+			if err != nil {
 				return ok, err
 			}
+			sigs = append(sigs, s)
 		}
-		ts := time.Now().Unix()
-		sig, err := Sign(secret, j.msg, ts, []byte(j.body))
-		if err != nil {
-			return ok, err
-		}
+		sig := strings.Join(sigs, " ")
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, j.url, bytes.NewReader([]byte(j.body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("webhook-id", j.msg)

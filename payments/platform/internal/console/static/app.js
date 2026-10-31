@@ -658,12 +658,14 @@ views.investments = async () => {
 const caseReason = {
   sanctions_hit: 'Remetente em lista de sanções', screening_failed: 'Verificação de sanções não concluída',
   originator_missing: 'Depósito sem dados de quem enviou', beneficiary_mismatch: 'Beneficiário informado não é o lojista',
+  name_match: 'Nome em lista de sanções',
 };
 const caseHint = {
   sanctions_hit: 'Confira a correspondência. Se confirmada, bloqueie: o valor fica indisponível, não é devolvido, e a comunicação ao MJSP e ao COAF segue o runbook §4.12.',
   screening_failed: 'A verificação não respondeu. A plataforma tenta de novo sozinha a cada 10 minutos; libere à mão só depois de verificar os remetentes.',
   originator_missing: 'Nenhuma instituição enviou os dados de quem pagou e o cliente não se identificou. Pergunte ao lojista quem pagou, ou registre por que não é preciso.',
   beneficiary_mismatch: 'A instituição de origem informou um beneficiário com documento diferente do lojista. Confirme com o lojista antes de encerrar.',
+  name_match: 'Um nome informado (quem pagou, quem recebe ou a instituição) coincide com um nome da lista. Homônimos são comuns: compare documento e data de nascimento com a entrada da lista antes de decidir.',
 };
 const caseStatus = { open: ['Aberto', 'warn'], released: ['Liberado', 'ok'], blocked: ['Bloqueado', 'bad'], closed: ['Encerrado', ''] };
 const travelStatus = { accepted: 'Aceita', rejected: 'Recusada', unreachable: 'Sem resposta', self_declared: 'Declaração do titular', received: 'Recebida, aguardando o depósito', matched: 'Recebida e ligada ao depósito', refused: 'Recusada por nós' };

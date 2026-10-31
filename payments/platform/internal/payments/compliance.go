@@ -17,6 +17,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 )
 
 // SenderLookup finds the addresses that funded a deposit (chain.Router).
@@ -38,7 +39,46 @@ const (
 	ReasonScreeningFailed     = "screening_failed"
 	ReasonOriginatorMissing   = "originator_missing"
 	ReasonBeneficiaryMismatch = "beneficiary_mismatch"
+	ReasonNameMatch           = "name_match"
 )
+
+// NameScreener checks the names in travel-rule data against the sanctions lists that carry
+// names (screening.Set, with OFAC's SDN.CSV loaded).
+type NameScreener interface {
+	ScreenName(ctx context.Context, name string) (screening.Result, error)
+}
+
+var mNameScreenings = metrics.Default.Counter("goonerspay_name_screenings_total", "Names in travel-rule data screened, by result (clear, hit, error, skipped).", "result")
+
+// screenNames screens every name of the persons given. Without a list that holds names
+// (address lists and providers' address contracts do not) the names are not screened, and
+// the metric says so; addresses remain the control that always runs.
+func (s *Service) screenNames(ctx context.Context, persons []travelrule.Person) ([]string, error) {
+	ns, ok := s.screener.(NameScreener)
+	var hits []string
+	for _, p := range persons {
+		for _, n := range p.Names() {
+			if !ok {
+				mNameScreenings.Inc("skipped")
+				continue
+			}
+			r, err := ns.ScreenName(ctx, n)
+			switch {
+			case err != nil:
+				mNameScreenings.Inc("error")
+				return nil, err
+			case len(r.Sources) == 0:
+				mNameScreenings.Inc("skipped")
+			case r.Hit:
+				mNameScreenings.Inc("hit")
+				hits = append(hits, r.Matches...)
+			default:
+				mNameScreenings.Inc("clear")
+			}
+		}
+	}
+	return hits, nil
+}
 
 // ComplianceCase is something compliance must decide: a deposit held because a sender is on
 // a sanctions list or could not be screened (release or block), or a travel-rule review
@@ -221,8 +261,8 @@ func (s *Service) holdDeposit(ctx context.Context, venue string, d exchange.Depo
 	if err != nil {
 		return err
 	}
-	if v.reason == ReasonSanctionsHit {
-		s.log.Warn("deposit from a sanctioned address held", "case", c, "venue", venue, "deposit", d.ID, "matches", v.matches)
+	if v.reason == ReasonSanctionsHit || v.reason == ReasonNameMatch {
+		s.log.Warn("deposit from a sanctioned party held", "reason", v.reason, "case", c, "venue", venue, "deposit", d.ID, "matches", v.matches)
 	} else {
 		s.log.Error("deposit held: its senders could not be screened", "case", c, "venue", venue, "deposit", d.ID, "errors", v.errs)
 	}
@@ -424,6 +464,7 @@ func (s *Service) RescreenHeldDeposits(ctx context.Context) (int, error) {
 			rows.Close()
 			return 0, err
 		}
+		_ = json.Unmarshal(detail, &c.Detail)
 		items = append(items, item{c, tenant})
 	}
 	rows.Close()
@@ -432,6 +473,12 @@ func (s *Service) RescreenHeldDeposits(ctx context.Context) (int, error) {
 	}
 	done := 0
 	for _, it := range items {
+		if nameFailed(it.c) {
+			// The originator's name could not be screened: re-screening the senders says
+			// nothing about it, so a person decides.
+			_, _ = s.pool.Exec(ctx, `UPDATE compliance_cases SET updated_at = now() WHERE id = $1`, it.c.ID)
+			continue
+		}
 		venue, d, st, err := s.heldDeposit(ctx, it.c)
 		if err != nil || st != "held" {
 			continue
@@ -458,6 +505,17 @@ func (s *Service) RescreenHeldDeposits(ctx context.Context) (int, error) {
 		}
 	}
 	return done, nil
+}
+
+// nameFailed reports whether a held deposit's screening failed on the originator's name.
+func nameFailed(c *ComplianceCase) bool {
+	errs, _ := c.Detail["errors"].([]any)
+	for _, e := range errs {
+		if str, _ := e.(string); strings.HasPrefix(str, "originator's name") {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------- reading
