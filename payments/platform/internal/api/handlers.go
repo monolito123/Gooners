@@ -456,7 +456,7 @@ func (s *Server) createRefund(w http.ResponseWriter, r *http.Request) {
 		Reason          string            `json:"reason"`
 		Metadata        map[string]string `json:"metadata"`
 	}
-	if !decode(w, r, &in) {
+	if !decode(w, r, &in) || !s.ownIntent(w, r, in.PaymentIntentID) {
 		return
 	}
 	ref, err := s.svc.CreateRefund(r.Context(), from(r.Context()).tenantID, in.PaymentIntentID, in.Amount)

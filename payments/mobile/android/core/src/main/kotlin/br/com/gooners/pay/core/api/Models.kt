@@ -75,10 +75,42 @@ data class IntentCreate(
     val channel: String? = null,
     @SerialName("payment_method_types") val paymentMethodTypes: List<String>? = null,
     val description: String? = null,
+    /** Credit in parcelas; one payment when null (docs/06 §5). */
+    val installments: Installments? = null,
+)
+
+/** Parcelas the merchant finances ("parcelado lojista"). */
+@Serializable
+data class Installments(val count: Int, val type: String = "merchant")
+
+@Serializable
+data class NextAction(
+    val type: String,
+    val txid: String? = null,
+    @SerialName("br_code") val brCode: String? = null,
+    // crypto_transfer: send exactly amount of asset on network to address (docs/09)
+    val asset: String? = null,
+    val network: String? = null,
+    val address: String? = null,
+    val memo: String? = null,
+    val amount: String? = null,
+    val price: String? = null,
+    val uri: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
 )
 
 @Serializable
-data class NextAction(val type: String, val txid: String? = null, @SerialName("br_code") val brCode: String? = null)
+data class CryptoConfirm(
+    val asset: String,
+    val network: String,
+    @SerialName("payment_method_type") val paymentMethodType: String = "crypto",
+)
+
+@Serializable
+data class RefundCreate(@SerialName("payment_intent_id") val paymentIntentId: String, val amount: Long)
+
+@Serializable
+data class Refund(val id: String, val status: String, val amount: Long)
 
 @Serializable
 data class PaymentIntent(
@@ -248,3 +280,86 @@ data class InclusionProof(
 @Serializable
 data class TransparencyRoot(val date: String, @SerialName("tree_size") val treeSize: Long, val root: String, val event: Event)
 
+
+// ---- digital assets, international accounts and B3 (docs/09) ----
+
+@Serializable
+data class Holding(
+    val asset: String,
+    val kind: String,
+    val units: Long,
+    val amount: String,
+    /** At the best price to sell now; null when no venue quotes it. */
+    @SerialName("value_brl") val valueBrl: Long? = null,
+)
+
+@Serializable
+data class Holdings(val data: List<Holding> = emptyList())
+
+@Serializable
+data class ReceiveDetails(
+    val currency: String = "",
+    val holder: String = "",
+    val bank: String = "",
+    val iban: String? = null,
+    val bic: String? = null,
+    @SerialName("account_number") val accountNumber: String? = null,
+    @SerialName("routing_number") val routingNumber: String? = null,
+    @SerialName("sort_code") val sortCode: String? = null,
+    val reference: String = "",
+)
+
+@Serializable
+data class InternationalAccount(val currency: String, val units: Long, val amount: String, val receive: ReceiveDetails)
+
+@Serializable
+data class InternationalAccounts(val data: List<InternationalAccount> = emptyList())
+
+@Serializable
+data class Position(
+    val ticker: String,
+    val name: String = "",
+    val quantity: Long,
+    val cost: Long,
+    val last: String? = null,
+    val value: Long? = null,
+    val result: Long? = null,
+)
+
+@Serializable
+data class InvestmentOrder(
+    val id: String,
+    val ticker: String,
+    val side: String,
+    val quantity: Long,
+    val total: Long,
+    val status: String,
+    @SerialName("settles_on") val settlesOn: String = "",
+)
+
+@Serializable
+data class Portfolio(val positions: List<Position> = emptyList(), val orders: List<InvestmentOrder> = emptyList())
+
+@Serializable
+data class ConversionRequest(
+    val side: String,
+    val asset: String,
+    @SerialName("brl_amount") val brlAmount: Long? = null,
+    val amount: String? = null,
+)
+
+@Serializable
+data class Conversion(
+    val id: String,
+    val side: String,
+    val asset: String,
+    val amount: String,
+    @SerialName("brl_units") val brlUnits: Long,
+    val fee: Long,
+    val tax: Long = 0,
+    val total: Long,
+    val price: String,
+    val venue: String = "",
+    val status: String,
+    @SerialName("expires_at") val expiresAt: String,
+)

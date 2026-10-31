@@ -40,9 +40,12 @@ struct HomeView: View {
             ChargeView()
                 .tabItem { Label("Cobrar", systemImage: "creditcard") }
                 .tag(HomeTab.charge)
-            NavigationStack { MoneyView().navigationTitle("Recebíveis") }
-                .tabItem { Label("Recebíveis", systemImage: "banknote") }
+            NavigationStack { MoneyView().navigationTitle("Dinheiro") }
+                .tabItem { Label("Dinheiro", systemImage: "banknote") }
                 .tag(HomeTab.money)
+            NavigationStack { AssetsView().navigationTitle("Ativos") }
+                .tabItem { Label("Ativos", systemImage: "chart.line.uptrend.xyaxis") }
+                .tag(HomeTab.assets)
             if model.isOwner {
                 NavigationStack { DevicesView().navigationTitle("Aparelhos") }
                     .tabItem { Label("Aparelhos", systemImage: "iphone.gen3") }

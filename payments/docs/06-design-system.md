@@ -135,7 +135,11 @@ Rules that keep it at two taps:
 - The method sheet remembers the last method and puts it first, under the thumb.
 - Installments (*parcelas*) default to 1×. Choosing more is one extra tap on the sheet, and only for credit.
 - After approval the app returns to the keypad by itself after 4 seconds. The cashier's next action is always "type the next amount".
-- Nothing in the flow asks for confirmation. A wrong sale is undone with "Cancelar venda" on the result screen (a reversal before clearing, [02 §4.6](02-api-reference.md#46-capture-cancel-refund)), which is faster than confirming every right one.
+- Nothing in the flow asks for confirmation. A wrong sale is undone with "Cancelar venda" on the result screen (a reversal before clearing, [02 §4.6](02-api-reference.md#46-capture-cancel-refund)), which is faster than confirming every right one. A Pix or crypto sale cannot be reversed, so "Cancelar venda" refunds it to the payer; app sessions may refund their own merchant's sales only.
+- A bar under the result shows the 4 seconds before the keypad returns, so the return is never a surprise; tapping the receipt QR (the customer is scanning it) keeps the result on screen.
+- Quick amounts (R$ 10, 20, 50, 100) sit above the keypad while it is empty.
+
+Implemented in both cores (`CheckoutController` in Kotlin and Swift) and unit-tested with the same cases: the method order, the long press, the auto-return and a failed cancellation that offers the sale again.
 
 ---
 
@@ -163,6 +167,8 @@ Rules that keep it at two taps:
 | Warning banner | Slides in 200 ms | None | None |
 
 With "reduce motion" on, the motions become cross-fades. Sounds follow the device's ring mode, except the approval tone, which the merchant can force on in settings because a busy counter often needs it.
+
+As built: Android uses `HapticFeedbackConstants.CONFIRM`/`REJECT`/`CLOCK_TICK`, `ToneGenerator` (two beeps for approval, one low note for a decline) and the system animator scale for "reduce motion"; the tone switch lives in Ajustes. iOS uses `sensoryFeedback` (.success, .error, a light impact on card read) and `accessibilityReduceMotion`, and plays no tones yet, because a tone that ignores the silent switch needs a bundled sound and an audio session.
 
 ---
 

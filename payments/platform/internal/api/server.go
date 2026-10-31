@@ -198,6 +198,7 @@ var sessionRoutes = map[string]bool{
 	"GET /v1/payment-intents/{id}":                       true,
 	"POST /v1/payment-intents/{id}/confirm":              true,
 	"POST /v1/payment-intents/{id}/cancel":               true,
+	"POST /v1/refunds":                                   true, // "Cancelar venda" of a Pix sale (docs/06 §5)
 	"POST /v1/terminal/authorizations":                   true,
 	"GET /v1/accounts/{id}/balance":                      true,
 	"GET /v1/accounts/{id}/entries":                      true,

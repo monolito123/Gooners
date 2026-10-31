@@ -31,6 +31,7 @@ object Tokens {
 
     val TouchMin = 48.dp
     val KeypadKey = 72.dp
+    val CtaHeight = 56.dp
 }
 
 private val Dark = darkColorScheme(

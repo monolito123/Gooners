@@ -205,6 +205,30 @@ public final class GoonersPayAPI: Sendable {
 
         public func cancel(_ id: String) async throws -> PaymentIntent { try await call("POST", "/v1/payment-intents/\(id)/cancel") }
 
+        public func confirmCrypto(_ id: String, asset: String, network: String) async throws -> PaymentIntent {
+            try await call("POST", "/v1/payment-intents/\(id)/confirm", body: encode(CryptoConfirm(asset: asset, network: network)))
+        }
+
+        /// Gives a captured Pix or crypto sale back to the payer ("Cancelar venda").
+        public func refund(_ intentID: String, amount: Int64) async throws -> Refund {
+            try await call("POST", "/v1/refunds", body: encode(RefundCreate(paymentIntentId: intentID, amount: amount)))
+        }
+
+        /// The sandbox only: the customer's transfer arrives.
+        public func simulateCryptoPayment(_ id: String) async throws -> PaymentIntent { try await call("POST", "/v1/sandbox/crypto/payments/\(id)") }
+
+        public func holdings() async throws -> Holdings { try await call("GET", "/v1/holdings") }
+
+        public func internationalAccounts() async throws -> InternationalAccounts { try await call("GET", "/v1/international/accounts") }
+
+        public func portfolio() async throws -> Portfolio { try await call("GET", "/v1/investments/positions") }
+
+        public func quoteConversion(_ req: ConversionRequest) async throws -> Conversion {
+            try await call("POST", "/v1/conversions", body: encode(req))
+        }
+
+        public func executeConversion(_ id: String) async throws -> Conversion { try await call("POST", "/v1/conversions/\(id)/execute") }
+
         /// Signs every card authorization with the App Attest key (iOS): `signer` gets
         /// SHA-256 of the exact request body and returns the assertion (DCAppAttestService).
         public func signAuthorizations(with signer: @escaping @Sendable (Data) async throws -> Data) {

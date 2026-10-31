@@ -30,6 +30,28 @@ value class Money(val centavos: Long) {
 
     val isZero: Boolean get() = centavos == 0L
 
+    /**
+     * The amount as words, for screen readers: "cento e vinte e nove reais e noventa centavos"
+     * (docs/06 §4). Digits read one by one are easy to mishear at a counter.
+     */
+    fun spoken(): String {
+        if (centavos < 0) return "menos " + Money(-centavos).spoken()
+        val reais = centavos / 100
+        val cents = centavos % 100
+        val r = when {
+            reais == 0L -> null
+            reais == 1L -> "um real"
+            reais % 1_000_000 == 0L -> Words.number(reais) + " de reais"
+            else -> Words.number(reais) + " reais"
+        }
+        val c = when (cents) {
+            0L -> null
+            1L -> "um centavo"
+            else -> Words.number(cents) + " centavos"
+        }
+        return listOfNotNull(r, c).joinToString(" e ").ifEmpty { "zero real" }
+    }
+
     /** API Pix and BR Code form: "129.90". */
     fun decimal(): String = "${centavos / 100}.${(centavos % 100).toString().padStart(2, '0')}"
 
@@ -50,5 +72,44 @@ value class Money(val centavos: Long) {
             val m = Regex("""^(\d{1,3}(?:\.\d{3})+|\d{1,10})(?:,(\d{1,2}))?$""").matchEntire(s.trim()) ?: return null
             return Money(m.groupValues[1].replace(".", "").toLong() * 100 + m.groupValues[2].padEnd(2, '0').toLong())
         }
+    }
+}
+
+/** Brazilian Portuguese number words, masculine (reais, centavos). */
+internal object Words {
+    private val units = listOf("zero", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove", "dez", "onze", "doze", "treze",
+        "catorze", "quinze", "dezesseis", "dezessete", "dezoito", "dezenove")
+    private val tens = listOf("", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa")
+    private val hundreds = listOf("", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos")
+    private val scales = listOf("" to "", "mil" to "mil", "milhão" to "milhões", "bilhão" to "bilhões")
+
+    /** 0..999. */
+    private fun group(n: Int): String = when {
+        n < 20 -> units[n]
+        n < 100 -> tens[n / 10] + if (n % 10 != 0) " e " + units[n % 10] else ""
+        n == 100 -> "cem"
+        else -> hundreds[n / 100] + if (n % 100 != 0) " e " + group(n % 100) else ""
+    }
+
+    fun number(n: Long): String {
+        require(n in 0..999_999_999_999L)
+        if (n == 0L) return "zero"
+        val groups = generateSequence(n) { it / 1000 }.takeWhile { it > 0 }.map { (it % 1000).toInt() }.toList() // lowest first
+        val parts = groups.withIndex().filter { it.value != 0 }.reversed()
+        val out = StringBuilder()
+        parts.forEachIndexed { i, (scale, g) ->
+            val words = when {
+                scale == 1 && g == 1 -> "mil" // "mil", never "um mil"
+                scale == 0 -> group(g)
+                else -> group(g) + " " + (if (g == 1) scales[scale].first else scales[scale].second)
+            }
+            if (i > 0) {
+                // "mil e cem", "mil e vinte", "dois milhões e quinhentos mil"; else just a space.
+                val last = i == parts.size - 1
+                out.append(if (last && (g < 100 || g % 100 == 0)) " e " else " ")
+            }
+            out.append(words)
+        }
+        return out.toString()
     }
 }

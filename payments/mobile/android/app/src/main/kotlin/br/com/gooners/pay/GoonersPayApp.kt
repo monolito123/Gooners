@@ -27,6 +27,7 @@ class AppContainer(context: Context) {
     val unlocker = Unlocker()
     val integrity: IntegrityProvider by lazy { KeyAttestationIntegrity(vault) }
     val posture = AndroidPosture(context)
+    val feedback = br.com.gooners.pay.ui.Feedback(context, settings)
 
     fun api(url: String = settings.apiUrl): GoonersPayApi {
         val pins = BuildConfig.API_PINS.split(',').map { it.trim() }.filter { it.startsWith("sha256/") }

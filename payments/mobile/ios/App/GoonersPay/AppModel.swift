@@ -14,11 +14,11 @@ enum Screen: Equatable {
 }
 
 enum HomeTab: Hashable {
-    case charge, money, devices, settings
+    case charge, money, assets, devices, settings
 }
 
 enum AppError: LocalizedError {
-    case loggedOut, noReader, noScreenLock, notHTTPS, alreadyListed, removeSelf
+    case loggedOut, noReader, noScreenLock, notHTTPS, alreadyListed, removeSelf, notAnAmount
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +28,7 @@ enum AppError: LocalizedError {
         case .notHTTPS: "O endereço da plataforma precisa começar com https://."
         case .alreadyListed: "Este aparelho já está autorizado."
         case .removeSelf: "Para remover este aparelho, use Ajustes › Desparear."
+        case .notAnAmount: "Digite o valor em reais, por exemplo 150,00."
         }
     }
 }
@@ -80,6 +81,14 @@ final class AppModel {
     var statement: Statement?
     var devices: [DeviceList.Entry]
 
+    // Crypto, foreign currency and B3 (docs/09).
+    var holdings: [Holding] = []
+    var accounts: [InternationalAccount] = []
+    var portfolio = Portfolio()
+    /// A conversion quoted and waiting for confirmation; prices before commitment.
+    var conversion: Conversion?
+    var conversionDone: String?
+
     @ObservationIgnored let settings: AppSettings
     @ObservationIgnored let vault = KeyVault()
     @ObservationIgnored private let integrity: IntegrityProvider = AppAttestIntegrity()
@@ -102,7 +111,9 @@ final class AppModel {
             },
             stan: settings.stan,
             journal: { box.journal.journal },
-            risk: RiskMonitor(posture: IOSPosture())
+            risk: RiskMonitor(posture: IOSPosture()),
+            memory: StoredMethods(settings),
+            cryptoOffer: { settings.acceptsCrypto ? CryptoChoice() : nil }
         )
     }
 
@@ -164,7 +175,9 @@ final class AppModel {
                 screen = .setup
                 message = VaultError.invalidated.errorDescription
             } catch let e as APIError {
-                message = e.message
+                message = Wording.calm(status: e.status, detail: e.problem?.detail ?? e.problem?.title)
+            } catch is URLError {
+                message = Wording.calm(status: 0, detail: nil)
             } catch {
                 message = error.localizedDescription
             }
@@ -346,6 +359,61 @@ final class AppModel {
         }
     }
 
+    // MARK: crypto, foreign currency and B3
+
+    func refreshAssets() {
+        run { [self] in
+            guard let a = box.authed else { return }
+            // Each part stands alone: a platform without B3 still shows the crypto and the accounts.
+            if let h = try? await a.holdings().data { holdings = h }
+            if let x = try? await a.internationalAccounts().data { accounts = x }
+            if let p = try? await a.portfolio() { portfolio = p }
+        }
+    }
+
+    /// Buy spends reais (amount in reais); sell spends the asset (amount in the asset).
+    func quoteConversion(side: String, asset: String, amount: String) {
+        run { [self] in
+            guard let a = box.authed else { return }
+            let req: ConversionRequest
+            if side == "buy" {
+                guard let brl = Money.parseReais(amount) else { throw AppError.notAnAmount }
+                req = ConversionRequest(side: side, asset: asset, brlAmount: brl.centavos)
+            } else {
+                req = ConversionRequest(side: side, asset: asset, amount: amount.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "."))
+            }
+            conversion = try await a.quoteConversion(req)
+            conversionDone = nil
+        }
+    }
+
+    func cancelConversion() { conversion = nil }
+
+    /// Executes the quoted conversion after a fresh Face ID confirmation, as a payout.
+    func confirmConversion() {
+        run { [self] in
+            guard let a = box.authed, let q = conversion else { return }
+            try await vault.confirm("Confirmar: \(q.side == "buy" ? "comprar" : "vender") \(q.amount) \(q.asset)")
+            let x = try await a.executeConversion(q.id)
+            conversion = nil
+            conversionDone = (x.side == "buy" ? "Comprado: " : "Vendido: ") + "\(x.amount) \(x.asset)"
+            if let h = try? await a.holdings().data { holdings = h }
+            if let acc = try? await a.internationalAccounts().data { accounts = acc }
+        }
+    }
+
+    /// The sandbox's stand-in for the customer's wallet.
+    func simulateCrypto(_ intentID: String) {
+        run { [self] in _ = try await box.authed?.simulateCryptoPayment(intentID) }
+    }
+
+    var isSandbox: Bool { !settings.sandboxCardKey.isEmpty }
+
+    func setAcceptsCrypto(_ on: Bool) {
+        settings.acceptsCrypto = on
+        checkout.refresh() // the keypad's long press sees the change at once
+    }
+
     // MARK: devices (owner)
 
     /// Adds a phone by its npub: the root key signs a new device list naming it.
@@ -390,7 +458,7 @@ final class AppModel {
     func newEnrollmentCode() {
         run { [self] in
             guard let a = box.authed else { return }
-            message = "Código para o novo aparelho: \(try await a.createEnrollmentCode().code) (vale 15 minutos)"
+            message = "Código para o novo aparelho: \(try await a.createEnrollmentCode().code). Vale 15 minutos e uma única vez."
         }
     }
 
@@ -413,6 +481,10 @@ final class AppModel {
         balance = nil
         entries = []
         quote = nil
+        holdings = []
+        accounts = []
+        portfolio = Portfolio()
+        conversion = nil
     }
 
     /// The hardware model ("iPhone16,1"): what the device list and the platform record.

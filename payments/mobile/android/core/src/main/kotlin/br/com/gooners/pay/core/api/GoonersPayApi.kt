@@ -136,6 +136,27 @@ class GoonersPayApi(
 
         suspend fun cancel(id: String): PaymentIntent = call("POST", "/v1/payment-intents/$id/cancel", null, PaymentIntent.serializer())
 
+        suspend fun confirmCrypto(id: String, asset: String, network: String): PaymentIntent =
+            call("POST", "/v1/payment-intents/$id/confirm", json.encodeToString(CryptoConfirm.serializer(), CryptoConfirm(asset, network)), PaymentIntent.serializer())
+
+        /** Gives a captured Pix or crypto sale back to the payer ("Cancelar venda"). */
+        suspend fun refund(intentId: String, amount: Long): Refund =
+            call("POST", "/v1/refunds", json.encodeToString(RefundCreate.serializer(), RefundCreate(intentId, amount)), Refund.serializer())
+
+        /** The sandbox only: the customer's transfer arrives. */
+        suspend fun simulateCryptoPayment(id: String): PaymentIntent = call("POST", "/v1/sandbox/crypto/payments/$id", null, PaymentIntent.serializer())
+
+        suspend fun holdings(): Holdings = call("GET", "/v1/holdings", null, Holdings.serializer())
+
+        suspend fun internationalAccounts(): InternationalAccounts = call("GET", "/v1/international/accounts", null, InternationalAccounts.serializer())
+
+        suspend fun portfolio(): Portfolio = call("GET", "/v1/investments/positions", null, Portfolio.serializer())
+
+        suspend fun quoteConversion(req: ConversionRequest): Conversion =
+            call("POST", "/v1/conversions", json.encodeToString(ConversionRequest.serializer(), req), Conversion.serializer())
+
+        suspend fun executeConversion(id: String): Conversion = call("POST", "/v1/conversions/$id/execute", null, Conversion.serializer())
+
         suspend fun authorize(req: TerminalAuthorization): TerminalResult =
             call("POST", "/v1/terminal/authorizations", json.encodeToString(TerminalAuthorization.serializer(), req), TerminalResult.serializer())
 

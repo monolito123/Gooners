@@ -22,7 +22,7 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 
 /** A QR code, always dark on white with a quiet zone so any camera reads it. */
 @Composable
-fun QrCode(text: String, description: String, size: Dp = 260.dp) {
+fun QrCode(text: String, description: String, modifier: Modifier = Modifier, size: Dp = 260.dp) {
     val bitmap = remember(text) {
         val m = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0,
             mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M, EncodeHintType.MARGIN to 2))
@@ -30,5 +30,5 @@ fun QrCode(text: String, description: String, size: Dp = 260.dp) {
         Bitmap.createBitmap(px, m.width, m.height, Bitmap.Config.ARGB_8888).asImageBitmap()
     }
     Image(bitmap, null, filterQuality = FilterQuality.None,
-        modifier = Modifier.size(size).background(Color.White).padding(4.dp).semantics { contentDescription = description })
+        modifier = modifier.size(size).background(Color.White).padding(4.dp).semantics { contentDescription = description })
 }

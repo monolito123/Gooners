@@ -78,10 +78,11 @@ final class SandboxIntegrationTests: XCTestCase {
         checkout.charge()
         checkout.card(.credit)
         let sale = try await settled()
-        guard case let .approved(amount, method, claim, _, _, _) = sale else { return XCTFail("\(sale)") }
-        XCTAssertEqual(amount, Money(12990))
-        XCTAssertTrue(method.contains("5555") || method.contains("4444"), method)
-        XCTAssertTrue(claim?.contains("#k=") ?? false)
+        guard case let .approved(paid) = sale else { return XCTFail("\(sale)") }
+        XCTAssertEqual(paid.amount, Money(12990))
+        XCTAssertTrue(paid.method.contains("5555") || paid.method.contains("4444"), paid.method)
+        XCTAssertTrue(paid.claimURL?.contains("#k=") ?? false)
+        XCTAssertEqual(paid.returnsIn, .seconds(4)) // back to the keypad by itself (docs/06 §5)
 
         // Pix: a dynamic QR whose amount the app checks before showing it.
         checkout.nextSale()

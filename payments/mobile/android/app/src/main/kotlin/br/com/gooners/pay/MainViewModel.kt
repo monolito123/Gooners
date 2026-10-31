@@ -17,13 +17,20 @@ import br.com.gooners.pay.core.api.PixDestination
 import br.com.gooners.pay.core.api.Quote
 import br.com.gooners.pay.core.auth.DeviceList
 import br.com.gooners.pay.core.auth.KeyAttestation
+import br.com.gooners.pay.core.api.Conversion
+import br.com.gooners.pay.core.api.ConversionRequest
+import br.com.gooners.pay.core.api.Holding
+import br.com.gooners.pay.core.api.InternationalAccount
+import br.com.gooners.pay.core.api.Portfolio
 import br.com.gooners.pay.core.checkout.CheckoutController
+import br.com.gooners.pay.core.checkout.CryptoChoice
 import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.nostr.Bech32
 import br.com.gooners.pay.core.nostr.Event
 import br.com.gooners.pay.core.nostr.NostrKeys
 import br.com.gooners.pay.core.risk.RiskMonitor
 import br.com.gooners.pay.core.toHex
+import br.com.gooners.pay.core.wording.Wording
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.UnlockCancelled
 import br.com.gooners.pay.security.UnlockReason
@@ -45,7 +52,7 @@ sealed interface Screen {
     data object Home : Screen
 }
 
-enum class Tab(val label: String) { CHARGE("Cobrar"), MONEY("Recebíveis"), DEVICES("Aparelhos"), SETTINGS("Ajustes") }
+enum class Tab(val label: String) { CHARGE("Cobrar"), MONEY("Dinheiro"), ASSETS("Ativos"), DEVICES("Aparelhos"), SETTINGS("Ajustes") }
 
 data class MoneyState(
     val balance: Balance? = null,
@@ -56,6 +63,16 @@ data class MoneyState(
     val settlements: List<Settlement> = emptyList(),
     /** The statement open on screen, checked on the phone. */
     val statement: Statement? = null,
+)
+
+/** Crypto, foreign currency and B3 (docs/09). */
+data class AssetsState(
+    val holdings: List<Holding> = emptyList(),
+    val accounts: List<InternationalAccount> = emptyList(),
+    val portfolio: Portfolio = Portfolio(),
+    /** A conversion quoted and waiting for confirmation; prices before commitment. */
+    val quote: Conversion? = null,
+    val done: String? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -73,6 +90,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val message: StateFlow<String?> = _message.asStateFlow()
     private val _money = MutableStateFlow(MoneyState())
     val money: StateFlow<MoneyState> = _money.asStateFlow()
+    private val _assets = MutableStateFlow(AssetsState())
+    val assets: StateFlow<AssetsState> = _assets.asStateFlow()
     private val _devices = MutableStateFlow(settings.deviceList)
     val devices: StateFlow<List<DeviceList.Entry>> = _devices.asStateFlow()
 
@@ -86,7 +105,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         scope = viewModelScope,
         journal = { journal },
         risk = RiskMonitor(c.posture),
+        memory = settings.methods,
+        cryptoOffer = { if (settings.acceptsCrypto) CryptoChoice() else null },
     )
+
+    val feedback = c.feedback
 
     /** The journal, once the merchant's root key is known (it names it in every entry). */
     private fun journal(): Journal? {
@@ -110,6 +133,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun select(t: Tab) {
         _tab.value = t
         if (t == Tab.MONEY) refreshMoney()
+        if (t == Tab.ASSETS) refreshAssets()
     }
 
     fun dismissMessage() {
@@ -127,7 +151,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             forget()
             _message.value = "As chaves deste aparelho foram invalidadas por uma mudança no bloqueio de tela. Pareie novamente."
         } catch (e: ApiException) {
-            _message.value = e.problem?.detail ?: e.problem?.title ?: "Erro ${e.status}"
+            _message.value = Wording.calm(e.status, e.problem?.detail ?: e.problem?.title)
+        } catch (e: java.io.IOException) {
+            _message.value = Wording.calm(0, null)
         } catch (e: Exception) {
             _message.value = e.message ?: e.toString()
         } finally {
@@ -298,6 +324,57 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshMoney()
     }
 
+    // ---- crypto, foreign currency and B3 ----
+
+    fun refreshAssets() = run {
+        val a = authed ?: return@run
+        // Each part stands alone: a platform without B3 still shows the crypto and the accounts.
+        val holdings = runCatching { a.holdings().data }.getOrDefault(_assets.value.holdings)
+        val accounts = runCatching { a.internationalAccounts().data }.getOrDefault(_assets.value.accounts)
+        val portfolio = runCatching { a.portfolio() }.getOrDefault(_assets.value.portfolio)
+        _assets.update { it.copy(holdings = holdings, accounts = accounts, portfolio = portfolio) }
+    }
+
+    /** Buy spends reais (amount in reais); sell spends the asset (amount in the asset). */
+    fun quoteConversion(side: String, asset: String, amount: String) = run {
+        val a = authed ?: return@run
+        val req = if (side == "buy") {
+            val brl = Money.parseReais(amount) ?: error("Digite o valor em reais, por exemplo 150,00.")
+            ConversionRequest(side, asset, brlAmount = brl.centavos)
+        } else {
+            ConversionRequest(side, asset, amount = amount.trim().replace(',', '.'))
+        }
+        _assets.update { it.copy(quote = a.quoteConversion(req), done = null) }
+    }
+
+    /** The sandbox's stand-in for the customer's wallet. */
+    fun simulateCrypto(intentId: String) = run {
+        authed?.simulateCryptoPayment(intentId)
+    }
+
+    fun cancelConversion() = _assets.update { it.copy(quote = null) }
+
+    /** Executes the quoted conversion after a fresh biometric confirmation, as a payout. */
+    fun confirmConversion() = run {
+        val a = authed ?: return@run
+        val q = _assets.value.quote ?: return@run
+        unlocker.confirm(UnlockReason.PAYOUT)
+        val x = a.executeConversion(q.id)
+        _assets.update { it.copy(quote = null, done = (if (x.side == "buy") "Comprado: " else "Vendido: ") + "${x.amount} ${x.asset}") }
+        refreshAssets()
+    }
+
+    // ---- settings ----
+
+    fun setApprovalTone(on: Boolean) {
+        settings.approvalTone = on
+    }
+
+    fun setAcceptsCrypto(on: Boolean) {
+        settings.acceptsCrypto = on
+        checkout.refresh() // the keypad's long press sees the change at once
+    }
+
     // ---- devices (owner) ----
 
     /** Adds a phone by its npub: the root key signs a new device list naming it. */
@@ -335,7 +412,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newEnrollmentCode() = run {
         val a = authed ?: return@run
-        _message.value = "Código para o novo aparelho: ${a.createEnrollmentCode().code} (vale 15 minutos)"
+        _message.value = "Código para o novo aparelho: ${a.createEnrollmentCode().code}. Vale 15 minutos e uma única vez."
     }
 
     // ---- settings ----
@@ -353,5 +430,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         settings.clear()
         _devices.value = emptyList()
         _money.value = MoneyState()
+        _assets.value = AssetsState()
     }
 }
