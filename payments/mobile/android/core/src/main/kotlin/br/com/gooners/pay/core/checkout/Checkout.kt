@@ -15,12 +15,14 @@ import br.com.gooners.pay.core.sandbox.CardReader
 import br.com.gooners.pay.core.sandbox.EmvApplication
 import br.com.gooners.pay.core.sandbox.base64Ciphertext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.OffsetDateTime
@@ -98,6 +100,7 @@ class CheckoutController(
 
     fun nextSale() {
         job?.cancel()
+        risk.cleared()
         _state.value = CheckoutState.Entering()
     }
 
@@ -115,7 +118,8 @@ class CheckoutController(
                 val r = reader()
                 _state.value = CheckoutState.WaitingForCard(amount, r.name)
                 val card = r.read(amount, application)
-                val report = risk.tapped(amount)
+                // Posture reads files (root, hooks): off the main thread.
+                val report = withContext(Dispatchers.Default) { risk.tapped(amount) }
                 _state.value = CheckoutState.Authorizing(amount)
                 val stanValue = stan.next()
                 val tap = journal()?.let { runCatching { it.append("tap_started", JsonObject(mapOf("payment_intent_id" to JsonPrimitive(intent.id),

@@ -40,13 +40,27 @@ func ParseRevocationList(b []byte) (*RevocationList, error) {
 	if l.Entries == nil {
 		return nil, errors.New("revocation list: no entries object")
 	}
+	// Keys compare as numbers: lowercase, without leading zeros.
+	norm := make(map[string]RevocationEntry, len(l.Entries))
+	for k, e := range l.Entries {
+		norm[serialKey(k)] = e
+	}
+	l.Entries = norm
 	return &l, nil
+}
+
+func serialKey(hex string) string {
+	k := strings.TrimLeft(strings.ToLower(strings.TrimSpace(hex)), "0")
+	if k == "" {
+		return "0"
+	}
+	return k
 }
 
 // Check refuses a chain any of whose certificates the list names, revoked or suspended.
 func (l *RevocationList) Check(chain []*x509.Certificate) error {
 	for i, c := range chain {
-		if e, ok := l.Entries[strings.ToLower(c.SerialNumber.Text(16))]; ok {
+		if e, ok := l.Entries[serialKey(c.SerialNumber.Text(16))]; ok {
 			return fmt.Errorf("certificate %d (serial %x) is %s: %s", i, c.SerialNumber, strings.ToLower(e.Status), e.Reason)
 		}
 	}

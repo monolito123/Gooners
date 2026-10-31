@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -75,7 +75,6 @@ func (s *Service) assessRisk(ctx context.Context, tenantID string, pi *Intent, m
 	f := risk.Features{ATC: card.atc, LastATC: -1, Amount: pi.Amount}
 	var lastATC *int
 	var outcomes []string
-	var median *float64
 	var merchantCreated time.Time
 	err := s.pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM risk_assessments WHERE card_fingerprint = $1 AND created_at > $3::timestamptz - interval '10 minutes' AND payment_intent_id <> $6),
@@ -85,23 +84,22 @@ func (s *Service) assessRisk(ctx context.Context, tenantID string, pi *Intent, m
 		(SELECT max(atc) FROM risk_assessments WHERE card_fingerprint = $1 AND card_instance = $7 AND atc IS NOT NULL AND payment_intent_id <> $6),
 		(SELECT COALESCE(array_agg(outcome ORDER BY created_at DESC), '{}') FROM (SELECT outcome, created_at FROM risk_assessments
 			WHERE terminal_id = $2 AND outcome IS NOT NULL ORDER BY created_at DESC LIMIT 10) recent),
-		(SELECT count(*) FROM payment_intents WHERE tenant_id = $8 AND merchant_id = $5 AND channel = 'card_present' AND amount_captured > 0 AND captured_at > $3::timestamptz - interval '30 days'),
-		(SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY amount) FROM payment_intents
-			WHERE tenant_id = $8 AND merchant_id = $5 AND channel = 'card_present' AND amount_captured > 0 AND captured_at > $3::timestamptz - interval '30 days'),
 		(SELECT created_at FROM merchants WHERE id = $5)`,
-		card.fingerprint, terminalID, now, card.bin, m.ID, pi.ID, card.instance, tenantID).
-		Scan(&f.CardAttempts10m, &f.CardMerchants1h, &f.TerminalCards10m, &f.TerminalBINs10m, &lastATC, &outcomes, &f.MerchantSales30d, &median, &merchantCreated)
+		card.fingerprint, terminalID, now, card.bin, m.ID, pi.ID, card.instance).
+		Scan(&f.CardAttempts10m, &f.CardMerchants1h, &f.TerminalCards10m, &f.TerminalBINs10m, &lastATC, &outcomes, &merchantCreated)
 	if err != nil {
 		return nil, fmt.Errorf("risk features: %w", err)
 	}
+	b, err := s.merchantBaseline(ctx, tenantID, m.ID, now)
+	if err != nil {
+		return nil, fmt.Errorf("risk baseline: %w", err)
+	}
+	f.MerchantSales30d, f.MerchantMedian30d = b.sales, b.median
 	f.CardMerchants1h++  // this merchant
 	f.TerminalCards10m++ // this card
 	f.TerminalBINs10m++  // this BIN
 	if lastATC != nil {
 		f.LastATC = *lastATC
-	}
-	if median != nil {
-		f.MerchantMedian30d = int64(*median)
 	}
 	f.MerchantAgeDays = int(now.Sub(merchantCreated).Hours() / 24)
 	// Issuer declines in a row. The platform's own risk outcomes neither count nor break the
@@ -154,6 +152,42 @@ func nonNil(s []string) []string {
 	return s
 }
 
+// baseline is a merchant's card-present sales over 30 days: how many, and the median amount.
+type baseline struct {
+	sales  int
+	median int64
+	at     time.Time
+}
+
+// baselineTTL is how long a replica reuses a merchant's baseline. It moves slowly, and
+// computing it sorts the month's sales, too much for every tap of a busy merchant.
+const baselineTTL = 10 * time.Minute
+
+func (s *Service) merchantBaseline(ctx context.Context, tenantID, merchantID string, now time.Time) (baseline, error) {
+	key := tenantID + "/" + merchantID
+	if v, ok := s.baselines.Load(key); ok {
+		if b := v.(baseline); now.Sub(b.at) < baselineTTL && !now.Before(b.at) {
+			return b, nil
+		}
+	}
+	var b baseline
+	var median *float64
+	// created_at bounds the scan to the index's last weeks: a payment is captured within days
+	// of its creation, so one captured in the last 30 days was created in the last 38.
+	if err := s.pool.QueryRow(ctx, `SELECT count(*), percentile_cont(0.5) WITHIN GROUP (ORDER BY amount) FROM payment_intents
+		WHERE tenant_id = $1 AND merchant_id = $2 AND created_at > $3::timestamptz - interval '38 days'
+			AND channel = 'card_present' AND amount_captured > 0 AND captured_at > $3::timestamptz - interval '30 days'`,
+		tenantID, merchantID, now).Scan(&b.sales, &median); err != nil {
+		return baseline{}, err
+	}
+	if median != nil {
+		b.median = int64(*median)
+	}
+	b.at = now
+	s.baselines.Store(key, b)
+	return b, nil
+}
+
 // riskOutcome records how the attempt ended, for the next assessment's decline streak.
 func (s *Service) riskOutcome(ctx context.Context, a *assessment, outcome string) {
 	if a == nil {
@@ -161,6 +195,37 @@ func (s *Service) riskOutcome(ctx context.Context, a *assessment, outcome string
 	}
 	if _, err := s.pool.Exec(ctx, `UPDATE risk_assessments SET outcome = $2 WHERE id = $1`, a.id, outcome); err != nil {
 		s.log.Error("record risk outcome", "assessment", a.id, "err", err)
+	}
+}
+
+// RiskRetention is how long assessments nobody reviews (or that a review cleared) are kept:
+// long enough for the fraud shield's history and a chargeback's window, no longer, since a
+// card fingerprint is personal data (docs/07 §3.5, LGPD).
+const RiskRetention = 400 * 24 * time.Hour
+
+// PurgeRiskAssessments deletes assessments older than RiskRetention, a batch at a time so
+// no lock is held long; those under review or confirmed as fraud stay.
+func (s *Service) PurgeRiskAssessments(ctx context.Context, now time.Time) (int64, error) {
+	var total int64
+	for {
+		tag, err := s.pool.Exec(ctx, `DELETE FROM risk_assessments WHERE id IN (SELECT id FROM risk_assessments
+			WHERE created_at < $1 AND review_status IN ('none', 'released') LIMIT 5000)`, now.Add(-RiskRetention))
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < 5000 {
+			return total, nil
+		}
+	}
+}
+
+// releaseHold lets a held sale's receivables settle once its loss is charged to the merchant
+// (a refund or a chargeback): the hold guaranteed exactly that, and keeping it would charge
+// the merchant twice and leave the payable on the books for good.
+func (s *Service) releaseHold(ctx context.Context, tenantID, paymentIntentID string) {
+	if _, err := s.pool.Exec(ctx, `UPDATE receivables SET held = false WHERE tenant_id = $1 AND payment_intent_id = $2 AND held`, tenantID, paymentIntentID); err != nil {
+		s.log.Error("release held receivables", "payment_intent", paymentIntentID, "err", err)
 	}
 }
 
@@ -349,6 +414,5 @@ func DeviceRisk(score float64, model string, signals []string) (risk.Device, err
 	if len(model) > 40 {
 		return risk.Device{}, invalid("device_risk.model is too long")
 	}
-	milli, _ := strconv.Atoi(strconv.FormatFloat(score*1000, 'f', 0, 64))
-	return risk.Device{Present: true, Milli: milli, Model: model, Signals: risk.CleanSignals(signals)}, nil
+	return risk.Device{Present: true, Milli: int(math.Round(score * 1000)), Model: model, Signals: risk.CleanSignals(signals)}, nil
 }

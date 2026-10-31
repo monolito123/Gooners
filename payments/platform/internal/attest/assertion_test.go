@@ -103,6 +103,11 @@ func TestRevocationList(t *testing.T) {
 	if err := clean.Refresh(t.Context()); err == nil {
 		t.Fatal("a missing list must be an error")
 	}
+	// Serials match as numbers, whatever the case or leading zeros in the list.
+	padded, err := attest.ParseRevocationList([]byte(`{"entries":{"00` + strings.ToUpper(inter.SerialNumber.Text(16)) + `":{"status":"REVOKED"}}}`))
+	if err != nil || padded.Check([]*x509.Certificate{inter}) == nil {
+		t.Fatalf("a zero-padded uppercase serial: %v", err)
+	}
 	if _, err := attest.ParseRevocationList([]byte(`{"no":"entries"}`)); err == nil {
 		t.Fatal("a list without entries must be refused")
 	}

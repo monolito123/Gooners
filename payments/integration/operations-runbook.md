@@ -155,7 +155,7 @@ platform recon-pix -tenant T -date $(TZ=America/Sao_Paulo date +%F)
 The fraud shield ([07 §3](../docs/07-enhancements.md#3-autonomous-fraud-shield)) holds the money of a sale it doubts, or freezes a terminal it believes compromised, and opens a review. List them with `GET /v1/risk/reviews` (key with `risk:read`). Each shows the action, both scores and the signal codes; the payment, its journal entries (`GET /v1/payment-intents/{id}/journal`) and the merchant's history give the rest. Call the merchant when in doubt: a till that sold to the same card five times may be a regular customer.
 
 - Genuine: `POST /v1/risk/reviews/{id}/resolve` with `{"resolution": "release", "note": "…"}`. The held money settles on its schedule; a terminal frozen by the review sells again.
-- Fraud: `{"resolution": "fraud", "note": "…"}`. The money stays held to cover the chargeback; a terminal frozen by the review is revoked (the merchant re-enrolls the phone after a check, §4.4). Refund the cardholder when the issuer asks, and consider restricting the merchant (§4.2).
+- Fraud: `{"resolution": "fraud", "note": "…"}`. The money stays held to cover the chargeback (the refund or chargeback, once booked, releases it to settle on schedule); a terminal frozen by the review is revoked (the merchant re-enrolls the phone after a check, §4.4). Refund the cardholder when the issuer asks, and consider restricting the merchant (§4.2).
 
 Both are audited. A step-up (the card asked for its PIN) and a plain decline need no review: no money moved.
 

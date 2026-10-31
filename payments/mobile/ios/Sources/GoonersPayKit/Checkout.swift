@@ -100,6 +100,7 @@ public final class CheckoutController {
 
     public func nextSale() {
         task?.cancel()
+        risk.cleared()
         state = .entering(.zero)
     }
 

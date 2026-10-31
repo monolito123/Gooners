@@ -497,9 +497,11 @@ func attestor(ctx context.Context, c *config.Config) (payments.Attestor, error) 
 			// Google's certificate status list, refreshed hourly; attestations are refused
 			// while it is missing or older than three days.
 			src := &attest.RevocationSource{Location: c.AndroidAttestationStatus}
-			if err := src.Refresh(ctx); err != nil {
+			first, cancel := context.WithTimeout(ctx, 15*time.Second) // never hold the start for long
+			if err := src.Refresh(first); err != nil {
 				log.Error("attestation status list", "location", src.Location, "err", err)
 			}
+			cancel()
 			go func() {
 				t := time.NewTicker(time.Hour)
 				defer t.Stop()

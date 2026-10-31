@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -73,6 +74,7 @@ type Service struct {
 	transparency nostr.Author
 	registrar    registrar.Registrar
 	log          *slog.Logger
+	baselines    sync.Map // tenant/merchant → baseline (risk.go)
 }
 
 // Deps are the service's collaborators. Pix, Payout, Receipts and Publisher are optional.

@@ -860,6 +860,7 @@ func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amoun
 			return nil, err
 		}
 	}
+	s.releaseHold(ctx, tenantID, piID)
 	newStatus := StatusPartiallyRefunded
 	if pi.AmountRefunded+amount == pi.AmountCaptured {
 		newStatus = StatusRefunded

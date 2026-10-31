@@ -71,6 +71,12 @@ class RiskMonitor(
         if (typingStartedAt == null) typingStartedAt = clock()
     }
 
+    /** A new sale starts: its amount-to-tap time counts from its own first digit. */
+    @Synchronized
+    fun cleared() {
+        typingStartedAt = null
+    }
+
     /** A sale was abandoned before its card was sent. */
     @Synchronized
     fun cancelled() {

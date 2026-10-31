@@ -37,6 +37,15 @@ class RiskMonitorTest {
         assertEquals(emptyList<String>(), sale(12_00))
     }
 
+    @Test fun aNewSaleRestartsTheAmountTimer() {
+        monitor.typing() // a sale typed and then paid by Pix: no card read
+        now += 60_000
+        monitor.cleared()
+        monitor.typing()
+        now += 300
+        assertTrue("fast_amount_to_tap" in monitor.tapped(Money(10_00)).signals)
+    }
+
     @Test fun sessionSignals() {
         repeat(3) { sale(10_00L + it); monitor.result("declined") }
         assertTrue("decline_streak" in sale(20_00))

@@ -86,6 +86,11 @@ public final class RiskMonitor: @unchecked Sendable {
         lock.withLock { if typingStartedAt == nil { typingStartedAt = clock() } }
     }
 
+    /// A new sale starts: its amount-to-tap time counts from its own first digit.
+    public func cleared() {
+        lock.withLock { typingStartedAt = nil }
+    }
+
     /// A sale was abandoned before its card was sent.
     public func cancelled() {
         lock.withLock {

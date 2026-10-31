@@ -289,4 +289,19 @@ func TestMerchantAppProtocol(t *testing.T) {
 	if terminalStatus != "revoked" {
 		t.Fatalf("a removed device's terminal is %s", terminalStatus)
 	}
+
+	// Removing and re-adding a phone revives the terminal that the removal revoked, never one
+	// revoked or frozen for another reason (a lost phone, a forked journal, a risk review).
+	st.call("POST", "/v1/terminals/"+cashier.terminal+"/revoke", map[string]any{"reason": "device lost"}, 200)
+	ownerBack := deviceList(t, root, merchant, time.Now().Add(4*time.Second), owner)
+	st.call("POST", "/v1/merchants/"+merchant+"/devices", map[string]any{"device_npub": npub, "platform": "android", "authorization_event": ownerBack}, 201)
+	both = deviceList(t, root, merchant, time.Now().Add(5*time.Second), owner, cashier)
+	st.call("POST", "/v1/merchants/"+merchant+"/devices", map[string]any{"device_npub": cashierNpub, "platform": "android", "authorization_event": both}, 201)
+	for id, want := range map[string]string{owner.terminal: "active|", cashier.terminal: "revoked|device lost"} {
+		var status, reason string
+		_ = st.pool.QueryRow(context.Background(), `SELECT status, COALESCE(revoked_reason, '') FROM terminals WHERE id = $1`, id).Scan(&status, &reason)
+		if status+"|"+reason != want {
+			t.Errorf("terminal %s after remove and re-add: %s|%s, want %s", id, status, reason, want)
+		}
+	}
 }

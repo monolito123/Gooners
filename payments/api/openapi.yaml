@@ -710,8 +710,9 @@ paths:
       description: >
         release: the sale was genuine; its money settles on schedule and a terminal frozen by
         this review sells again. fraud: the money stays held for the chargeback and a terminal
-        frozen by this review is revoked. Recorded in the audit trail; sends
-        risk.review_resolved. Needs the risk:write scope.
+        frozen by this review is revoked; a refund or chargeback of the sale later releases
+        the hold. Recorded in the audit trail; sends risk.review_resolved. Needs the
+        risk:write scope.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"

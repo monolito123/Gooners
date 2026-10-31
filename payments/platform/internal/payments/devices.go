@@ -174,7 +174,9 @@ func (s *Service) RegisterDevice(ctx context.Context, tenantID, merchantID strin
 				return err
 			}
 			if g.terminal != "" {
-				if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'device removed from the device list' WHERE id = $1`, g.terminal); err != nil {
+				// Only an active terminal: one already revoked (lost, forked journal) or frozen
+				// by a risk review keeps its state, which re-adding the phone must not undo.
+				if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'device removed from the device list' WHERE id = $1 AND status = 'active'`, g.terminal); err != nil {
 					return err
 				}
 			}

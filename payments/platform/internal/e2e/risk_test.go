@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 )
@@ -164,6 +165,15 @@ func TestFraudShield(t *testing.T) {
 	if rv["status"] != "fraud" || len(reviews("fraud")) != 1 {
 		t.Fatalf("fraud: %v", rv)
 	}
+	// The money stays held until the loss is charged to the merchant; then it settles as usual,
+	// or the merchant would pay twice.
+	if num(st.balance(account)["held"]) == 0 {
+		t.Fatal("a confirmed fraud keeps the sale held")
+	}
+	st.call("POST", "/v1/refunds", map[string]any{"payment_intent_id": pi}, 201)
+	if h := num(st.balance(account)["held"]); h != 0 {
+		t.Fatalf("held after the refund: %d", h)
+	}
 
 	// The API refuses a score outside [0, 1], and drops signal codes it does not know.
 	st.tapWith(tapOpts{pi: intent(10_00), terminal: terminal, pan: card, aid: visa, app: "credit", atc: 40, deviceRisk: map[string]any{"score": 1.5}, want: 422})
@@ -176,6 +186,33 @@ func TestFraudShield(t *testing.T) {
 	}
 	if !slices.Equal(stored, []string{"screen_captured"}) {
 		t.Errorf("stored signals %v", stored)
+	}
+}
+
+// Assessments past retention go, except those a review still needs.
+func TestRiskRetention(t *testing.T) {
+	st := newStack(t, func(c *payments.Config) { c.RiskMode = payments.RiskShadow })
+	_, m := st.call("POST", "/v1/merchants", map[string]any{
+		"legal": map[string]any{"document": map[string]any{"type": "cnpj", "number": cnpj("223344580001")}, "legal_name": "Loja Antiga", "trade_name": "Loja", "mcc": "5812", "city": "Recife"},
+		"plan":  map[string]any{"CreditBps": 319, "DebitBps": 137, "InstallmentBps": 499, "PixBps": 0, "Tier": "A", "Instant": true},
+	}, 201)
+	_, term := st.call("POST", "/v1/terminals", map[string]any{"merchant_id": m["id"], "type": "mpoc_cots"}, 201)
+	for i := range 3 {
+		_, pi := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 10_00 + i, "channel": "card_present"}, 201)
+		st.tapWith(tapOpts{pi: pi["id"].(string), terminal: term["terminal_id"].(string), pan: luhnPAN("411111111150000"), aid: "A0000000031010", app: "credit", atc: i + 1, want: 200})
+	}
+	// Age them: one cleared, one still under review, one under nobody's review.
+	if _, err := st.pool.Exec(t.Context(), `UPDATE risk_assessments SET created_at = now() - interval '500 days',
+		review_status = (ARRAY['none', 'open', 'released'])[1 + (amount % 3)]`); err != nil {
+		t.Fatal(err)
+	}
+	n, err := st.svc.PurgeRiskAssessments(t.Context(), time.Now())
+	if err != nil || n != 2 {
+		t.Fatalf("purged %d: %v", n, err)
+	}
+	var left string
+	if err := st.pool.QueryRow(t.Context(), `SELECT review_status FROM risk_assessments`).Scan(&left); err != nil || left != "open" {
+		t.Fatalf("left %q: %v", left, err)
 	}
 }
 
@@ -200,5 +237,51 @@ func TestFraudShieldShadow(t *testing.T) {
 	}
 	if action != "step_up_hold" || enforced {
 		t.Errorf("recorded %s enforced=%v", action, enforced)
+	}
+}
+
+// A sale far above what the merchant usually sells is held for review (the merchant's
+// 30-day baseline, docs/07 §3.9).
+func TestFraudShieldMerchantBaseline(t *testing.T) {
+	st := newStack(t)
+	newMerchant := func(doc string) (string, string, string) {
+		_, m := st.call("POST", "/v1/merchants", map[string]any{
+			"legal": map[string]any{"document": map[string]any{"type": "cnpj", "number": cnpj(doc)}, "legal_name": "Loja " + doc, "trade_name": "Loja", "mcc": "5812", "city": "Recife"},
+			"plan":  map[string]any{"CreditBps": 319, "DebitBps": 137, "InstallmentBps": 499, "PixBps": 0, "Tier": "A", "Instant": true},
+		}, 201)
+		_, term := st.call("POST", "/v1/terminals", map[string]any{"merchant_id": m["id"], "type": "mpoc_cots"}, 201)
+		return m["id"].(string), m["account_id"].(string), term["terminal_id"].(string)
+	}
+	sell := func(merchant, terminal, pan string, amount int) map[string]any {
+		_, pi := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": merchant, "amount": amount, "channel": "card_present"}, 201)
+		_, r := st.tapWith(tapOpts{pi: pi["id"].(string), terminal: terminal, pan: pan, aid: "A0000000031010", app: "credit", atc: 1, want: 200,
+			deviceRisk: map[string]any{"score": 0.0, "model": "gp-device-1", "signals": []string{}}})
+		return r
+	}
+	a, _, ta := newMerchant("334455660001")
+	first := sell(a, ta, luhnPAN("411111111140001"), 50_00)
+	if first["status"] != "approved" {
+		t.Fatalf("first sale: %v", first)
+	}
+	// Another merchant with a month of R$ 50,00 sales behind it.
+	b, _, tb := newMerchant("334455670001")
+	if _, err := st.pool.Exec(t.Context(), `INSERT INTO payment_intents
+		SELECT (jsonb_populate_record(p, jsonb_build_object('id', p.id || '_' || g, 'merchant_id', $2::text, 'receipt_event_id', NULL))).*
+		FROM payment_intents p, generate_series(1, 25) g WHERE p.id = $1`, first["payment_intent_id"], b); err != nil {
+		t.Fatal(err)
+	}
+	if r := sell(b, tb, luhnPAN("411111111140002"), 40_00); r["status"] != "approved" || r["settlement"].(map[string]any)["held"] == true {
+		t.Fatalf("an ordinary sale: %v", r)
+	}
+	r := sell(b, tb, luhnPAN("411111111140003"), 600_00)
+	if r["status"] != "approved" || r["settlement"].(map[string]any)["held"] != true {
+		t.Fatalf("twelve times the median: %v", r)
+	}
+	var signals []string
+	if err := st.pool.QueryRow(t.Context(), `SELECT server_signals FROM risk_assessments WHERE payment_intent_id = $1`, r["payment_intent_id"]).Scan(&signals); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(signals, []string{"amount_above_baseline"}) {
+		t.Errorf("signals %v", signals)
 	}
 }

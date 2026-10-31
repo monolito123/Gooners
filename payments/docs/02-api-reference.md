@@ -553,7 +553,7 @@ A sale the fraud shield approved but held, and a terminal it froze, open a revie
 }
 ```
 
-`POST /v1/risk/reviews/{id}/resolve` with `{"resolution": "release", "note": "…"}` (scope `risk:write`) lets the held money settle on its schedule and a terminal frozen by the review sell again; `"fraud"` keeps the money held for the chargeback and revokes a frozen terminal. A note is required, the call is audited and sends `risk.review_resolved`. `GET /v1/accounts/{id}/balance` shows held money apart from `pending`, as `held`.
+`POST /v1/risk/reviews/{id}/resolve` with `{"resolution": "release", "note": "…"}` (scope `risk:write`) lets the held money settle on its schedule and a terminal frozen by the review sell again; `"fraud"` keeps the money held for the chargeback and revokes a frozen terminal. A refund or chargeback of a held sale releases its hold: the loss is then charged to the merchant, and the money settles on its schedule. A note is required, the call is audited and sends `risk.review_resolved`. `GET /v1/accounts/{id}/balance` shows held money apart from `pending`, as `held`.
 
 ---
 

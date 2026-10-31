@@ -40,6 +40,15 @@ final class RiskMonitorTests: XCTestCase {
         XCTAssertEqual(sale(12_00), [])
     }
 
+    func testANewSaleRestartsTheAmountTimer() {
+        monitor.typing() // a sale typed and then paid by Pix: no card read
+        clock.now += 60
+        monitor.cleared()
+        monitor.typing()
+        clock.now += 0.3
+        XCTAssertTrue(monitor.tapped(Money(10_00)).signals.contains("fast_amount_to_tap"))
+    }
+
     func testSessionSignals() {
         for i in 0..<3 {
             _ = sale(10_00 + Int64(i))

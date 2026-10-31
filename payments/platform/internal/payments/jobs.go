@@ -66,6 +66,13 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	if err := s.PurgeAuthState(ctx); err != nil {
 		s.log.Error("purge auth state", "err", err)
 	}
+	if b := now.In(brt); b.Hour() == 3 && b.Minute() == 17 { // once a night, off peak
+		if n, err := s.PurgeRiskAssessments(ctx, now); err != nil {
+			s.log.Error("purge risk assessments", "err", err)
+		} else if n > 0 {
+			s.log.Info("risk assessments past retention deleted", "count", n)
+		}
+	}
 	if n, err := s.RecoverShortfalls(ctx); err != nil {
 		s.log.Error("recover shortfalls", "err", err)
 	} else if n > 0 {
