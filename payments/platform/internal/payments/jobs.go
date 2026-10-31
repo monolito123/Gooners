@@ -66,6 +66,25 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	if err := s.PurgeAuthState(ctx); err != nil {
 		s.log.Error("purge auth state", "err", err)
 	}
+	// Digital assets and international accounts (docs/09).
+	if n, err := s.PollCryptoDeposits(ctx); err != nil {
+		s.log.Error("crypto deposits", "err", err)
+	} else if n > 0 {
+		s.log.Info("crypto payments settled", "count", n)
+	}
+	if _, err := s.ExpireCryptoCharges(ctx, now); err != nil {
+		s.log.Error("expire crypto charges", "err", err)
+	}
+	if n, err := s.PollFXCredits(ctx, now.Add(-72*time.Hour)); err != nil {
+		s.log.Error("international credits", "err", err)
+	} else if n > 0 {
+		s.log.Info("international credits received", "count", n)
+	}
+	if n, err := s.SettleInvestments(ctx, now); err != nil {
+		s.log.Error("settle investments", "err", err)
+	} else if n > 0 {
+		s.log.Info("investment trades settled", "count", n)
+	}
 	if b := now.In(brt); b.Hour() == 3 && b.Minute() == 17 { // once a night, off peak
 		if n, err := s.PurgeRiskAssessments(ctx, now); err != nil {
 			s.log.Error("purge risk assessments", "err", err)

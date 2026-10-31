@@ -143,11 +143,11 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 		return nil, invalid("currency %s is not supported", in.Currency)
 	}
 	switch in.Channel {
-	case "card_present", "pix", "ecommerce":
+	case "card_present", "pix", "ecommerce", "crypto":
 	case "":
 		in.Channel = "card_present"
 	default:
-		return nil, invalid("channel must be card_present, pix or ecommerce")
+		return nil, invalid("channel must be card_present, pix, crypto or ecommerce")
 	}
 	if in.Installments < 1 {
 		in.Installments = 1
@@ -188,7 +188,11 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 
 // GetIntent loads a payment intent.
 func (s *Service) GetIntent(ctx context.Context, tenantID, id string) (*Intent, error) {
-	return scanIntent(s.pool.QueryRow(ctx, `SELECT `+intentCols+` FROM payment_intents WHERE tenant_id = $1 AND id = $2`, tenantID, id))
+	in, err := scanIntent(s.pool.QueryRow(ctx, `SELECT `+intentCols+` FROM payment_intents WHERE tenant_id = $1 AND id = $2`, tenantID, id))
+	if err == nil && in.Channel == "crypto" {
+		s.cryptoAction(ctx, in) // the address, amount and price the customer pays with
+	}
+	return in, err
 }
 
 // claim moves an intent from one of `from` to `to`; ErrConflict if it is in another state.

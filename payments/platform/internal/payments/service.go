@@ -15,7 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
@@ -52,6 +55,11 @@ type Config struct {
 	// RiskMode is how the fraud shield acts on card-present sales: enforce (default),
 	// shadow (assess and record only) or off.
 	RiskMode string
+	// Crypto and FX pricing in basis points (docs/09); zero takes the defaults.
+	CryptoFeeBps, CryptoSpreadBps int
+	FXFeeBps, FXSpreadBps         int
+	// IOF on foreign exchange, in basis points: reais going abroad, currency coming in.
+	IOFOutBps, IOFInBps int
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -75,6 +83,10 @@ type Service struct {
 	registrar    registrar.Registrar
 	log          *slog.Logger
 	baselines    sync.Map // tenant/merchant → baseline (risk.go)
+	exchanges    *exchange.Router
+	fx           fx.Provider
+	broker       brokerage.Broker
+	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
 // Deps are the service's collaborators. Pix, Payout, Receipts and Publisher are optional.
@@ -95,7 +107,13 @@ type Deps struct {
 	// Registrar registers receivable units and the platform's contract effects before any
 	// advance (docs/07 §1.6). Required in production; the sandbox uses an in-memory one.
 	Registrar registrar.Registrar
-	Logger    *slog.Logger
+	// Exchanges trade and hold crypto-assets (docs/09); nil turns crypto off.
+	Exchanges *exchange.Router
+	// FX converts currency and holds merchants' international accounts; nil turns it off.
+	FX fx.Provider
+	// Broker routes merchants' orders to B3; nil turns investments off.
+	Broker brokerage.Broker
+	Logger *slog.Logger
 }
 
 // New returns the service.
@@ -122,7 +140,8 @@ func New(cfg Config, d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
-		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger}
+		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker}
 }
 
 // Errors surfaced to the API as problem details.

@@ -154,6 +154,23 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/disputes/{id}", "disputes:write", false, s.getDispute)
 	route("POST /v1/disputes/{id}/evidence", "disputes:write", true, s.disputeEvidence)
 	route("POST /v1/disputes/{id}/accept", "disputes:write", true, s.acceptDispute)
+	route("GET /v1/crypto/markets", "assets:read", false, s.cryptoMarkets)
+	route("POST /v1/crypto/withdrawals", "payouts:write", true, s.cryptoWithdrawal)
+	route("GET /v1/holdings", "assets:read", false, s.holdings)
+	route("POST /v1/conversions", "assets:write", true, s.quoteConversion)
+	route("GET /v1/conversions/{id}", "assets:read", false, s.getConversion)
+	route("POST /v1/conversions/{id}/execute", "assets:write", true, s.executeConversion)
+	route("GET /v1/international/accounts", "assets:read", false, s.internationalAccounts)
+	route("POST /v1/international/payouts", "payouts:write", true, s.internationalPayout)
+	route("GET /v1/investments/quotes/{ticker}", "assets:read", false, s.investmentQuote)
+	route("GET /v1/investments/profile", "assets:read", false, s.investorProfile)
+	route("PUT /v1/investments/profile", "assets:write", false, s.investorProfile) // PUT is idempotent by itself
+	route("POST /v1/investments/orders", "assets:write", true, s.investmentOrder)
+	route("GET /v1/investments/positions", "assets:read", false, s.investmentPositions)
+	if s.cfg.Env != "production" {
+		route("POST /v1/sandbox/crypto/payments/{id}", "payments:write", false, s.sandboxCryptoPayment)
+		route("POST /v1/sandbox/international/credits", "payments:write", false, s.sandboxInternationalCredit)
+	}
 	route("GET /v1/risk/reviews", "risk:read", false, s.listRiskReviews)
 	route("GET /v1/risk/reviews/{id}", "risk:read", false, s.getRiskReview)
 	route("POST /v1/risk/reviews/{id}/resolve", "risk:write", true, s.resolveRiskReview)
@@ -189,6 +206,20 @@ var sessionRoutes = map[string]bool{
 	"POST /v1/terminal/journal":                          true,
 	"GET /v1/terminal/journal":                           true,
 	"GET /v1/payment-intents/{id}/journal":               true,
+	"GET /v1/crypto/markets":                             true,
+	"POST /v1/crypto/withdrawals":                        true,
+	"GET /v1/holdings":                                   true,
+	"POST /v1/conversions":                               true,
+	"GET /v1/conversions/{id}":                           true,
+	"POST /v1/conversions/{id}/execute":                  true,
+	"GET /v1/international/accounts":                     true,
+	"POST /v1/international/payouts":                     true,
+	"GET /v1/investments/quotes/{ticker}":                true,
+	"GET /v1/investments/profile":                        true,
+	"PUT /v1/investments/profile":                        true,
+	"POST /v1/investments/orders":                        true,
+	"GET /v1/investments/positions":                      true,
+	"POST /v1/sandbox/crypto/payments/{id}":              true,
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a

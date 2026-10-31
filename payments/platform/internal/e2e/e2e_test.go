@@ -24,7 +24,10 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/dialects"
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
@@ -147,6 +150,7 @@ func newStack(t *testing.T, opts ...any) *stack {
 	deps := payments.Deps{
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
 		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
+		Exchanges: &exchange.Router{Venues: []exchange.Exchange{exchange.NewMemory("simex")}}, FX: fx.NewMemory(), Broker: brokerage.NewMemory(),
 	}
 	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
 	for _, o := range opts {

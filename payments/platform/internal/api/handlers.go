@@ -302,11 +302,22 @@ func (s *Server) confirmIntent(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		PaymentMethodType string `json:"payment_method_type"`
 		PaymentMethod     string `json:"payment_method"`
+		Asset             string `json:"asset"`   // crypto
+		Network           string `json:"network"` // crypto
 	}
 	if r.ContentLength != 0 && !decode(w, r, &in) {
 		return
 	}
 	if !s.ownIntent(w, r, r.PathValue("id")) {
+		return
+	}
+	if in.PaymentMethodType == "crypto" {
+		pi, err := s.svc.ConfirmCrypto(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in.Asset, in.Network)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, pi)
 		return
 	}
 	if in.PaymentMethodType != "" && in.PaymentMethodType != "pix" {
