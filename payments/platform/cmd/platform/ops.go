@@ -19,18 +19,23 @@ import (
 
 // opsCommands are the operator commands (see the package comment and the runbook).
 var opsCommands = map[string]func(context.Context, []string) error{
-	"merchant-status":  merchantStatus,
-	"terminal-revoke":  terminalRevoke,
-	"apikey-list":      apikeyList,
-	"apikey-revoke":    apikeyRevoke,
-	"disputes-import":  disputesImport,
-	"disputes-list":    disputesList,
-	"write-off":        writeOff,
-	"recon-card":       reconCard,
-	"recon-pix":        reconPix,
-	"recon-exceptions": reconExceptions,
-	"recon-resolve":    reconResolve,
-	"recon-allocate":   reconAllocate,
+	"merchant-status":   merchantStatus,
+	"terminal-revoke":   terminalRevoke,
+	"apikey-list":       apikeyList,
+	"apikey-revoke":     apikeyRevoke,
+	"disputes-import":   disputesImport,
+	"disputes-list":     disputesList,
+	"write-off":         writeOff,
+	"recon-card":        reconCard,
+	"recon-pix":         reconPix,
+	"recon-exceptions":  reconExceptions,
+	"recon-resolve":     reconResolve,
+	"recon-allocate":    reconAllocate,
+	"recon-custody":     reconCustody,
+	"decripto":          deCripto,
+	"decripto-filed":    deCriptoFiled,
+	"compliance-cases":  complianceCases,
+	"compliance-decide": complianceDecide,
 }
 
 type opsFlags struct {
@@ -329,5 +334,131 @@ func reconAllocate(ctx context.Context, args []string) error {
 	}
 	return withService(ctx, func(svc *payments.Service) error {
 		return svc.AllocateSuspense(ctx, *o.tenant, amount, account, *o.reason, *o.actor)
+	})
+}
+
+// withPlatform builds the service as serve does, from the environment, for the commands
+// that need the venues or the platform's identity.
+func withPlatform(ctx context.Context, f func(*payments.Service) error) error {
+	c, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return withDB(ctx, func(pool *pgxpool.Pool) error {
+		if err := requireMigrated(ctx, pool); err != nil {
+			return err
+		}
+		ex, err := exchanges(c)
+		if err != nil {
+			return err
+		}
+		return f(payments.New(payments.Config{Env: c.Env, PlatformDocument: c.PlatformDocument, ReportingName: c.ReportingName, ReportingURL: c.ReportingURL},
+			payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Exchanges: ex, Logger: log}))
+	})
+}
+
+// reconCustody compares each exchange's balances with the ledger's custody now (the job does
+// it every night). Exceptions go to the platform tenant: recon-exceptions -tenant 00000000-0000-0000-0000-000000000000.
+func reconCustody(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("recon-custody", flag.ExitOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return withPlatform(ctx, func(svc *payments.Service) error {
+		run, err := svc.ReconcileCustody(ctx, time.Now())
+		if err != nil {
+			return err
+		}
+		return printJSON(run)
+	})
+}
+
+// deCripto writes a month's DeCripto to -out (default decripto-YYYY-MM.txt) for filing at the
+// Coleta Nacional, and prints its totals, warnings and SHA-256.
+func deCripto(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("decripto", flag.ExitOnError)
+	month := fs.String("month", time.Now().AddDate(0, -1, 0).Format("2006-01"), "the month reported, YYYY-MM")
+	out := fs.String("out", "", "file to write (default decripto-YYYY-MM.txt)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	m, err := time.Parse("2006-01", *month)
+	if err != nil {
+		return fmt.Errorf("-month: %w", err)
+	}
+	m = time.Date(m.Year(), m.Month(), 15, 12, 0, 0, 0, time.FixedZone("BRT", -3*3600))
+	return withPlatform(ctx, func(svc *payments.Service) error {
+		rep, err := svc.BuildDeCripto(ctx, m)
+		if err != nil {
+			return err
+		}
+		name := *out
+		if name == "" {
+			name = "decripto-" + rep.Period + ".txt"
+		}
+		if err := os.WriteFile(name, rep.Content, 0o600); err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"file": name, "report": rep})
+	})
+}
+
+// deCriptoFiled records that a month's file was filed, with the Coleta Nacional's receipt.
+func deCriptoFiled(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("decripto-filed", flag.ExitOnError)
+	month := fs.String("month", "", "the month reported, YYYY-MM")
+	sha := fs.String("sha256", "", "SHA-256 of the file filed (as decripto printed it)")
+	receipt := fs.String("receipt", "", "the receipt number the Coleta Nacional gave")
+	actor := fs.String("actor", "", "operator's SSO identity")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	m, err := time.Parse("2006-01", *month)
+	if err != nil {
+		return fmt.Errorf("-month: %w", err)
+	}
+	m = time.Date(m.Year(), m.Month(), 15, 12, 0, 0, 0, time.FixedZone("BRT", -3*3600))
+	return withPlatform(ctx, func(svc *payments.Service) error {
+		return svc.MarkDeCriptoFiled(ctx, m, *sha, *receipt, *actor)
+	})
+}
+
+// complianceCases lists a tenant's compliance cases: held deposits and travel-rule reviews.
+// Deposits no charge matches are the platform's: -tenant 00000000-0000-0000-0000-000000000000.
+func complianceCases(ctx context.Context, args []string) error {
+	var status *string
+	o, err := newOps("compliance-cases", args, func(fs *flag.FlagSet) { status = fs.String("status", "open", "open, released, blocked, closed or all") })
+	if err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		cs, _, err := svc.ListCases(ctx, *o.tenant, *status, "", 100)
+		if err != nil {
+			return err
+		}
+		return printJSON(cs)
+	})
+}
+
+// complianceDecide releases or blocks a held deposit, or closes a review (runbook §4.12).
+// A release sells a deposit whose charge waited, so it needs the venues: it builds the
+// service from the environment as serve does.
+func complianceDecide(ctx context.Context, args []string) error {
+	var id, action *string
+	o, err := newOps("compliance-decide", args, func(fs *flag.FlagSet) {
+		id, action = fs.String("case", "", "the case id (cc_…)"), fs.String("action", "", "release, block or close")
+	})
+	if err != nil {
+		return err
+	}
+	if err := o.requireActor(); err != nil {
+		return err
+	}
+	return withPlatform(ctx, func(svc *payments.Service) error {
+		c, err := svc.DecideCase(ctx, *o.tenant, *id, *action, *o.reason, "ops:"+*o.actor)
+		if err != nil {
+			return err
+		}
+		return printJSON(c)
 	})
 }

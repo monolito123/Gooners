@@ -26,11 +26,18 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.tls)
 }
 
 tasks.test {
     systemProperty("conformance.vectors", rootProject.file("../conformance/vectors.json").absolutePath)
     systemProperty("nostr.examples", rootProject.file("../../nostr/examples").absolutePath)
+    // Against a live sandbox (GOONERSPAY_SANDBOX) the tests talk to a server: never reuse a
+    // result, cached or up to date, from another run.
+    val sandbox = providers.environmentVariable("GOONERSPAY_SANDBOX")
+    inputs.property("sandbox", sandbox.orElse(""))
+    outputs.cacheIf { !sandbox.isPresent }
+    outputs.upToDateWhen { !sandbox.isPresent }
 }
 
 // The desktop native secp256k1 used by the JVM tests (not shipped in the app) needs Java 21;

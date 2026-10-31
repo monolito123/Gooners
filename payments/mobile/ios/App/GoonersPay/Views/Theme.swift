@@ -31,6 +31,8 @@ enum Theme {
 
     static let touchMin: CGFloat = 48
     static let keypadKey: CGFloat = 72
+    /// The primary action's height, in the bottom quarter of the screen (docs/06 §4).
+    static let ctaHeight: CGFloat = 56
 }
 
 /// The full-width primary action.
@@ -48,4 +50,22 @@ struct PrimaryButtonStyle: ButtonStyle {
 
 extension ButtonStyle where Self == PrimaryButtonStyle {
     static var primary: PrimaryButtonStyle { PrimaryButtonStyle() }
+}
+
+/// A full-width second choice: outlined, so only one button per screen is filled.
+struct SecondaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .frame(maxWidth: .infinity, minHeight: Theme.touchMin)
+            .foregroundStyle(Theme.action.opacity(enabled ? 1 : 0.4))
+            .background(Theme.surface.opacity(configuration.isPressed ? 0.6 : 1), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.action.opacity(enabled ? 1 : 0.4), lineWidth: 1.5))
+    }
+}
+
+extension ButtonStyle where Self == SecondaryButtonStyle {
+    static var secondary: SecondaryButtonStyle { SecondaryButtonStyle() }
 }

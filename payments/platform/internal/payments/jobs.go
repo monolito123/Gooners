@@ -50,8 +50,78 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	} else if n > 0 {
 		s.log.Info("disputes accepted at their deadline", "count", n)
 	}
+	if n, err := s.SyncReceivableUnits(ctx, now); err != nil {
+		s.log.Error("register receivable units", "err", err)
+	} else if n > 0 {
+		s.log.Info("receivable units registered", "count", n)
+	}
+	if n, err := s.CloseDueDays(ctx, now); err != nil {
+		s.log.Error("close days", "err", err)
+	} else if n > 0 {
+		s.log.Info("days closed into statements", "count", n)
+	}
+	if !renew() {
+		return
+	}
 	if err := s.PurgeAuthState(ctx); err != nil {
 		s.log.Error("purge auth state", "err", err)
+	}
+	// Digital assets and international accounts (docs/09).
+	if n, err := s.PollCryptoDeposits(ctx); err != nil {
+		s.log.Error("crypto deposits", "err", err)
+	} else if n > 0 {
+		s.log.Info("crypto payments settled", "count", n)
+	}
+	if _, err := s.ExpireCryptoCharges(ctx, now); err != nil {
+		s.log.Error("expire crypto charges", "err", err)
+	}
+	// Deposits held because screening could not be completed are asked about again.
+	if n, err := s.RescreenHeldDeposits(ctx); err != nil {
+		s.log.Error("re-screen held deposits", "err", err)
+	} else if n > 0 {
+		s.log.Info("held deposits re-screened", "settled", n)
+	}
+	if n, err := s.PollFXCredits(ctx, now.Add(-72*time.Hour)); err != nil {
+		s.log.Error("international credits", "err", err)
+	} else if n > 0 {
+		s.log.Info("international credits received", "count", n)
+	}
+	if n, err := s.SettleInvestments(ctx, now); err != nil {
+		s.log.Error("settle investments", "err", err)
+	} else if n > 0 {
+		s.log.Info("investment trades settled", "count", n)
+	}
+	// The exchanges' balances against the ledger's custody, once a night (docs/09 §8).
+	if due, err := s.custodyReconDue(ctx, now); err != nil {
+		s.log.Error("custody reconciliation", "err", err)
+	} else if due && renew() {
+		if run, err := s.ReconcileCustody(ctx, now); err != nil {
+			s.log.Error("custody reconciliation", "err", err)
+		} else {
+			s.log.Info("custody reconciliation", "date", run.Date, "status", run.Status, "exceptions", len(run.Exceptions))
+		}
+	}
+	// Last month's DeCripto, written early in the month for operations to review and file.
+	if month, due, err := s.deCriptoDue(ctx, now); err != nil {
+		s.log.Error("decripto", "err", err)
+	} else if due && renew() {
+		if rep, err := s.BuildDeCripto(ctx, month); err != nil {
+			s.log.Error("decripto", "period", month.Format("2006-01"), "err", err)
+		} else {
+			s.log.Info("decripto written", "period", rep.Period, "due_by", rep.DueBy, "records", rep.Records, "warnings", len(rep.Warnings))
+		}
+	}
+	if b := now.In(brt); b.Hour() == 3 && b.Minute() == 17 { // once a night, off peak
+		if n, err := s.PurgeRiskAssessments(ctx, now); err != nil {
+			s.log.Error("purge risk assessments", "err", err)
+		} else if n > 0 {
+			s.log.Info("risk assessments past retention deleted", "count", n)
+		}
+		if n, err := s.RedactTravelRule(ctx, now); err != nil {
+			s.log.Error("redact travel-rule data", "err", err)
+		} else if n > 0 {
+			s.log.Info("travel-rule data past retention redacted", "count", n)
+		}
 	}
 	if n, err := s.RecoverShortfalls(ctx); err != nil {
 		s.log.Error("recover shortfalls", "err", err)
@@ -133,12 +203,27 @@ func (s *Service) RegisterMetrics(r *metrics.Registry) {
 	count("goonerspay_reversal_queue_depth", "Reversals waiting for store-and-forward delivery.", `SELECT count(*) FROM reversal_queue WHERE NOT done`)
 	count("goonerspay_webhook_backlog", "Webhook deliveries not yet delivered.", `SELECT count(*) FROM webhook_deliveries WHERE delivered_at IS NULL AND abandoned_at IS NULL`)
 	count("goonerspay_webhook_abandoned", "Webhook deliveries abandoned after 72 hours.", `SELECT count(*) FROM webhook_deliveries WHERE abandoned_at IS NOT NULL`)
+	count("goonerspay_risk_reviews_open", "Fraud shield reviews waiting for an analyst.", `SELECT count(*) FROM risk_assessments WHERE review_status = 'open'`)
+	count("goonerspay_terminals_frozen", "Terminals the fraud shield froze, pending review.", `SELECT count(*) FROM terminals WHERE status = 'frozen'`)
 	count("goonerspay_payouts_processing", "Payouts whose outcome is not known yet.", `SELECT count(*) FROM payouts WHERE status = 'processing'`)
 	grouped("goonerspay_disputes_open", "Open disputes by status.", "status",
 		`SELECT status, count(*) FROM disputes WHERE status IN ('evidence_required', 'represented', 'pre_arbitration') GROUP BY status`)
 	grouped("goonerspay_recon_exceptions_open", "Unresolved reconciliation exceptions by kind.", "kind",
 		`SELECT kind, count(*) FROM recon_exceptions WHERE resolved_at IS NULL GROUP BY kind`)
 	grouped("goonerspay_merchants", "Merchants by status.", "status", `SELECT status, count(*) FROM merchants GROUP BY status`)
+	count("goonerspay_decripto_unfiled", "DeCripto files written and not yet marked filed.", `SELECT count(*) FROM decripto_reports WHERE filed_at IS NULL`)
+	grouped("goonerspay_address_screening_hits_24h", "Addresses sanctions screening matched in the last 24 hours, by purpose (withdrawal, deposit_sender).", "purpose",
+		`SELECT purpose, count(*) FROM address_screenings WHERE result = 'hit' AND created_at > now() - interval '24 hours' GROUP BY purpose`)
+	grouped("goonerspay_api_keys_expiring_14d", "API keys that stop working within 14 days, per tenant.", "tenant",
+		`SELECT tenant_id::text, count(*) FROM api_clients WHERE revoked_at IS NULL AND expires_at > now() AND expires_at < now() + interval '14 days' GROUP BY tenant_id`)
+	grouped("goonerspay_compliance_cases_open", "Compliance cases waiting for a decision, by reason.", "reason",
+		`SELECT reason, count(*) FROM compliance_cases WHERE status = 'open' GROUP BY reason`)
+	count("goonerspay_compliance_held_deposits", "Crypto deposits held for compliance (open cases holding funds).",
+		`SELECT count(*) FROM compliance_cases WHERE status = 'open' AND holds_funds`)
+	count("goonerspay_deposits_unscreened", "Crypto deposits whose screening never finished (stuck in pending for over 15 minutes).",
+		`SELECT count(*) FROM crypto_deposits WHERE screening = 'pending' AND created_at < now() - interval '15 minutes'`)
+	grouped("goonerspay_travel_rule_refusals_24h", "Withdrawals refused on travel-rule grounds in the last 24 hours, by status (rejected, unreachable).", "status",
+		`SELECT status, count(*) FROM travel_rule_messages WHERE direction = 'outbound' AND status IN ('rejected', 'unreachable') AND created_at > now() - interval '24 hours' GROUP BY status`)
 	// L5 headroom: safeguarding reserve minus client money. Alert well before it reaches zero.
 	grouped("goonerspay_safeguarding_headroom_centavos", "Safeguarding reserve minus client liabilities, per tenant.", "tenant",
 		`SELECT tenant_id::text, COALESCE(SUM(CASE WHEN account_id = '`+ledger.AccSafeguardingReserve+`' THEN balance ELSE -balance END), 0)

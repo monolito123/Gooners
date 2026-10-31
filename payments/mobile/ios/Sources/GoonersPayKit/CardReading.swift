@@ -105,6 +105,11 @@ public final class SandboxCardReader: CardReader, @unchecked Sendable {
     private let lock = NSLock()
     private var counter = 0
     private var selected: TestCard
+    /// Each reader holds its own copy of each test card: the test card's BIN and last four
+    /// digits around random middle digits, and its own transaction counter (ATC, EMV tag
+    /// 9F36). The platform's card-level fraud rules (velocity, counter continuity) then see one
+    /// customer's card, not a number every sandbox user shares.
+    private var issued: [TestCard: (pan: String, atc: Int)] = [:]
 
     public init(devKey: Data, card: TestCard = .visaCredit) {
         self.devKey = devKey
@@ -116,10 +121,43 @@ public final class SandboxCardReader: CardReader, @unchecked Sendable {
         set { lock.withLock { selected = newValue } }
     }
 
+    /// This reader's PAN for `c`.
+    public func pan(of c: TestCard) -> String {
+        lock.withLock { issue(c).pan }
+    }
+
+    private func issue(_ c: TestCard) -> (pan: String, atc: Int) {
+        if let x = issued[c] { return x }
+        let x = (Self.personalize(c.pan), 0)
+        issued[c] = x
+        return x
+    }
+
     public func read(amount: Money, application: EmvApplication) async throws -> EncryptedCard {
-        let (n, c) = lock.withLock { counter += 1; return (counter, selected) }
+        let (n, c, pan, atc) = lock.withLock {
+            counter += 1
+            let c = selected
+            var x = issue(c)
+            x.atc += 1
+            issued[c] = x
+            return (counter, c, x.pan, x.atc)
+        }
         let ksn = "FFFF9876543210E" + String(repeating: "0", count: max(0, 5 - String(n).count)) + String(n)
-        let dev = DevCard(pan: c.pan, expiry: "2911", emv: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100", aid: c.aid)
+        let dev = DevCard(pan: pan, expiry: "2911", emv: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F3602" + String(format: "%04X", atc & 0xFFFF) + "9A032610299C0100", aid: c.aid)
         return EncryptedCard(format: DevFormat.name, ksn: ksn, ciphertext: try DevFormat.encrypt(key: devKey, ksn: ksn, card: dev))
+    }
+
+    /// Keeps `testPAN`'s first six and last four digits, randomizes the rest and fixes the Luhn digit.
+    public static func personalize(_ testPAN: String) -> String {
+        let middle = (0..<(testPAN.count - 11)).map { _ in String(Int.random(in: 0...9)) }.joined()
+        return (0...9).map { String(testPAN.prefix(6)) + middle + String($0) + String(testPAN.suffix(4)) }.first(where: luhn)!
+    }
+
+    public static func luhn(_ pan: String) -> Bool {
+        let sum = pan.reversed().enumerated().reduce(0) { acc, x in
+            let d = Int(String(x.element))!
+            return acc + (x.offset % 2 == 1 ? (d * 2 > 9 ? d * 2 - 9 : d * 2) : d)
+        }
+        return sum % 10 == 0
     }
 }

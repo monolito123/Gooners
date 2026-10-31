@@ -36,6 +36,12 @@ final class AppSettings: @unchecked Sendable {
         set { defaults.set(newValue, forKey: "device_pubkey") }
     }
 
+    /// The merchant's root key (hex), which every journal entry names.
+    var merchantRootPub: String {
+        get { string("merchant_root_pub") }
+        set { defaults.set(newValue, forKey: "merchant_root_pub") }
+    }
+
     var tradeName: String {
         get { string("trade_name") }
         set { defaults.set(newValue, forKey: "trade_name") }
@@ -59,6 +65,24 @@ final class AppSettings: @unchecked Sendable {
         set { defaults.set(Int(newValue), forKey: "device_list_at") }
     }
 
+    /// The last payment method, first on the sheet next time (docs/06 §5).
+    var lastMethod: String {
+        get { string("last_method") }
+        set { defaults.set(newValue, forKey: "last_method") }
+    }
+
+    /// The approval tone plays even in silent mode: a busy counter often needs it (docs/06 §7).
+    var approvalTone: Bool {
+        get { defaults.bool(forKey: "approval_tone") }
+        set { defaults.set(newValue, forKey: "approval_tone") }
+    }
+
+    /// The merchant takes stablecoins at the counter, settled in reais (docs/09).
+    var acceptsCrypto: Bool {
+        get { defaults.bool(forKey: "accepts_crypto") }
+        set { defaults.set(newValue, forKey: "accepts_crypto") }
+    }
+
     /// The terminal's trace numbers, 000001..999999, kept across launches.
     var stan: StanSource { StanCounter(settings: self) }
 
@@ -72,8 +96,8 @@ final class AppSettings: @unchecked Sendable {
     }
 
     func clear() {
-        for k in ["api_url", "sandbox_card_key", "merchant_id", "device_id", "device_pubkey", "trade_name", "root_backed_up",
-                  "device_list", "device_list_at", "stan"] {
+        for k in ["api_url", "sandbox_card_key", "merchant_id", "device_id", "device_pubkey", "merchant_root_pub", "trade_name", "root_backed_up",
+                  "device_list", "device_list_at", "stan", "last_method", "accepts_crypto", "approval_tone"] {
             defaults.removeObject(forKey: k)
         }
     }
@@ -82,4 +106,16 @@ final class AppSettings: @unchecked Sendable {
 private struct StanCounter: StanSource {
     let settings: AppSettings
     func next() -> String { settings.nextStan() }
+}
+
+/// The checkout's memory of the last method, kept in the settings.
+@MainActor
+final class StoredMethods: MethodMemory {
+    private let settings: AppSettings
+    init(_ settings: AppSettings) { self.settings = settings }
+
+    var last: PayMethod? {
+        get { PayMethod(rawValue: settings.lastMethod) }
+        set { settings.lastMethod = newValue?.rawValue ?? "" }
+    }
 }

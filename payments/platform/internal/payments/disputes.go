@@ -336,6 +336,7 @@ func (s *Service) openDispute(ctx context.Context, tenantID string, n DisputeNot
 	if err != nil {
 		return nil, err
 	}
+	s.releaseHold(ctx, tenantID, d.PaymentIntentID)
 	mDisputes.Inc(d.Scheme)
 	return s.GetDispute(ctx, tenantID, d.ID)
 }

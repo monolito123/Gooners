@@ -8,18 +8,25 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/big"
 	"os"
+	"sort"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
+	"github.com/monolito123/Gooners/payments/platform/internal/risk"
 	"github.com/monolito123/Gooners/payments/platform/pkg/brcode"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
@@ -120,6 +127,101 @@ func main() {
 	must(list.Sign(root, &da))
 	v["device_list"] = map[string]any{"aux": hex.EncodeToString(da[:]), "event": list}
 
+	// Canonical JSON (docs/03 §2.2): sorted keys, no whitespace, integers only, the escaping
+	// of NIP-01. Values arrive in any key order; the canonical string is the same.
+	var canon []map[string]any
+	for _, raw := range []string{
+		`{"v":1,"b":[3,1,2],"a":{"z":null,"y":true,"x":false}}`,
+		`{"seq":-7,"text":"aspas \" barra \\ nova\nlinha \t tab \u0001 ctl","ação":"São Paulo – R$ 1.299,90"}`,
+		`{"nested":{"k2":{"b":2,"a":1},"k1":[{"d":4,"c":3}]},"empty_obj":{},"empty_arr":[]}`,
+	} {
+		var val any
+		must(json.Unmarshal([]byte(raw), &val))
+		c, err := nostr.CanonicalJSON(val)
+		must(err)
+		canon = append(canon, map[string]any{"json": raw, "canonical": c})
+	}
+	v["canonical_json"] = canon
+
+	// A terminal journal (kind 7714): two hash-chained entries signed by the device key.
+	var chain []map[string]any
+	prev := any(nil)
+	for i, f := range []map[string]any{
+		{"v": 1, "seq": 1, "type": "session_start", "local_time": "2026-10-29T14:30:00-03:00", "app": map[string]any{"version": "0.1.0"}},
+		{"v": 1, "seq": 2, "type": "tap_started", "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0", "terminal_id": "TP000418",
+			"amount": map[string]any{"value": 12990, "currency": "BRL", "exponent": 2}, "local_time": "2026-10-29T14:42:09-03:00", "app": map[string]any{"version": "0.1.0"}},
+	} {
+		f["prev"] = prev
+		content, err := nostr.CanonicalJSON(f)
+		must(err)
+		ev := &nostr.Event{CreatedAt: int64(1793295000 + 60*i), Kind: 7714, Tags: [][]string{{"merchant", root.PubHex}}, Content: content}
+		var a [32]byte
+		copy(a[:], det(fmt.Sprintf("journal/%d", i+1)))
+		must(ev.Sign(device, &a))
+		chain = append(chain, map[string]any{"fields": f, "aux": hex.EncodeToString(a[:]), "event": ev})
+		prev = ev.ID
+	}
+	// Certificate pins: SHA-256 of the SubjectPublicKeyInfo, from the key as Apple's Security
+	// framework exports it (X9.63 point for EC, PKCS#1 for RSA).
+	var pins []map[string]any
+	for _, k := range []struct {
+		typ  string
+		bits int
+		seed string
+	}{{"ec", 256, "pin/p256"}, {"ec", 384, "pin/p384"}, {"rsa", 2048, "pin/rsa2048"}} {
+		var pub any
+		var external []byte
+		switch k.typ {
+		case "ec":
+			// A fixed scalar: ecdsa.GenerateKey is deliberately not reproducible.
+			curve, scalar := ecdh.P256(), det(k.seed)
+			if k.bits == 384 {
+				curve, scalar = ecdh.P384(), append(det(k.seed), det(k.seed + "/2")[:16]...)
+			}
+			key, err := curve.NewPrivateKey(scalar)
+			must(err)
+			pub = key.PublicKey()
+			external = key.PublicKey().Bytes()
+		case "rsa":
+			// A fixed modulus: RSA generation is not reproducible from a seed in Go.
+			n := new(big.Int).SetBytes(append([]byte{0xc0}, det(k.seed + "/modulus")[1:]...))
+			for i := 1; i < 8; i++ {
+				n = n.Lsh(n, 256).Or(n, new(big.Int).SetBytes(det(fmt.Sprintf("%s/modulus/%d", k.seed, i))))
+			}
+			rpub := &rsa.PublicKey{N: n, E: 65537}
+			pub = rpub
+			external = x509.MarshalPKCS1PublicKey(rpub)
+		}
+		spki, err := x509.MarshalPKIXPublicKey(pub)
+		must(err)
+		sum := sha256.Sum256(spki)
+		pins = append(pins, map[string]any{"type": k.typ, "bits": k.bits, "external": hex.EncodeToString(external), "pin": "sha256/" + base64.StdEncoding.EncodeToString(sum[:])})
+	}
+	v["spki_pins"] = pins
+
+	// The challenge an Android app passes to setAttestationChallenge for its DPoP key.
+	v["key_attestation_challenge"] = map[string]any{"device_pubkey": device.PubHex, "challenge": hex.EncodeToString(attest.Challenge(device.PubHex))}
+
+	v["journal"] = map[string]any{"device_role": "merchant-device-android", "root_role": "merchant-root", "entries": chain}
+
+	// The on-device fraud model (docs/07 §3): its weights and scores, which the platform
+	// recomputes from the signal codes.
+	all := make([]string, 0, len(risk.DeviceWeights))
+	for k := range risk.DeviceWeights {
+		all = append(all, k)
+	}
+	sort.Strings(all)
+	var riskCases []map[string]any
+	for _, sigs := range [][]string{
+		{}, {"not_a_signal"}, {"debugger", "debugger"}, {"debugger", "root_indicators"}, {"just_under_limit", "repeated_amount"},
+		{"developer_options", "adb_enabled", "repeated_amount", "just_under_limit"}, {"fast_amount_to_tap", "tap_burst", "decline_streak"},
+		{"accessibility_service", "overlay_active", "screen_captured", "unknown"}, all,
+	} {
+		m, top := risk.DeviceScore(sigs)
+		riskCases = append(riskCases, map[string]any{"signals": nonNil(sigs), "score_milli": m, "sent": nonNil(top)})
+	}
+	v["device_risk"] = map[string]any{"model": risk.DeviceModel, "max_signals": risk.MaxDeviceSignals, "weights": risk.DeviceWeights, "cases": riskCases}
+
 	// The sandbox card format (carddata.DevFormat) with a fixed nonce.
 	key, nonce := det("dev-card/key"), det("dev-card/nonce")[:12]
 	card := carddata.Card{PAN: "4111111111111111", Expiry: "2911", AID: "A0000000031010", EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE11"}
@@ -174,6 +276,13 @@ func formatBRL(c int64) string {
 	s := fmt.Sprintf("R$ %s,%02d", grouped, c%100)
 	if neg {
 		s = "-" + s
+	}
+	return s
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
 	}
 	return s
 }

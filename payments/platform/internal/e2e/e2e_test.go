@@ -24,7 +24,10 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/dialects"
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
@@ -34,8 +37,10 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/schemesim"
+	"github.com/monolito123/Gooners/payments/platform/internal/screening"
 	"github.com/monolito123/Gooners/payments/platform/internal/testpg"
 	"github.com/monolito123/Gooners/payments/platform/internal/testpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -66,6 +71,11 @@ type stack struct {
 	pool     *pgxpool.Pool
 	vault    *vault.Vault
 	logs     *syncBuffer // everything every component logged, at debug level
+	// travelSecret signs what the travel-rule adapter posts to /v1/travel-rule/inbound.
+	travelSecret string
+	compKey      string // see complianceKey
+
+	receiptsKey, transparencyKey nostr.Keys
 }
 
 // syncBuffer collects logs from concurrent goroutines.
@@ -89,7 +99,10 @@ type delivered struct {
 
 func rnd(n int) []byte { b := make([]byte, n); _, _ = rand.Read(b); return b }
 
-func newStack(t *testing.T) *stack {
+// newStack starts the platform, the simulators and PostgreSQL; opts adjust the service's
+// dependencies (func(*payments.Deps): a strict attestor, for instance) or its configuration
+// (func(*payments.Config)).
+func newStack(t *testing.T, opts ...any) *stack {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -138,16 +151,42 @@ func newStack(t *testing.T) *stack {
 
 	dec, _ := carddata.NewDev(st.devKey)
 	signer, _ := nostr.GenerateKeys()
-	svc := payments.New(payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example"}, payments.Deps{
+	st.transparencyKey, _ = nostr.GenerateKeys()
+	deps := payments.Deps{
 		Pool: pool, Ledger: ledger.New(pool, log), Switch: st.sw, Vault: v, Decryptor: dec, Pix: pix, Payout: sender,
-		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Logger: log,
-	})
+		Receipts: &receipts.Issuer{Author: signer, ClaimBase: "https://r.goonerspay.example/c"}, Transparency: st.transparencyKey, Logger: log,
+		Exchanges: &exchange.Router{Venues: []exchange.Exchange{exchange.NewMemory("simex")}}, FX: fx.NewMemory(), Broker: brokerage.NewMemory(),
+		Screener: screening.Set{screening.SandboxAddresses, screening.SandboxNames}, TravelRule: travelrule.Sandbox{},
+	}
+	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
+	for _, o := range opts {
+		switch o := o.(type) {
+		case func(*payments.Deps):
+			o(&deps)
+		case func(*payments.Config):
+			o(&cfg)
+		default:
+			t.Fatalf("newStack: option %T", o)
+		}
+	}
+	if deps.Senders == nil && deps.Exchanges != nil {
+		// The sandbox exchange knows who sent its simulated deposits.
+		for _, v := range deps.Exchanges.Venues {
+			if m, ok := v.(*exchange.Memory); ok {
+				deps.Senders = m
+				break
+			}
+		}
+	}
+	svc := payments.New(cfg, deps)
+	st.receiptsKey = signer
 	st.ledger = ledger.New(pool, log)
 	st.svc, st.pool, st.vault = svc, pool, v
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {
 		t.Fatal(err)
 	}
-	srv := api.New(api.Config{Env: "sandbox"}, svc, pool, log)
+	st.travelSecret = webhooks.NewSecret()
+	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret}, svc, pool, log)
 	apiServer := httptest.NewServer(srv.Handler())
 	t.Cleanup(apiServer.Close)
 	st.api = apiServer.URL
@@ -176,6 +215,19 @@ func newStack(t *testing.T) *stack {
 	st.hookSec = we["secret"].(string)
 	st.dispatch = &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	return st
+}
+
+// complianceKey is a key holding compliance:write, which "*" does not include; made on first use.
+func (st *stack) complianceKey() string {
+	st.t.Helper()
+	if st.compKey == "" {
+		k, err := api.NewAPIKey(context.Background(), st.pool, tenant, "compliance", []string{"compliance:read", "compliance:write", "travel_rule:read"}, false)
+		if err != nil {
+			st.t.Fatal(err)
+		}
+		st.compKey = k
+	}
+	return st.compKey
 }
 
 func (st *stack) call(method, path string, body any, want int) (int, map[string]any) {
@@ -223,7 +275,7 @@ func (st *stack) pspControl(path string) {
 	}
 }
 
-var stan int
+var stan, atc int
 
 func (st *stack) tap(pi, terminal string, pan, aid, app string) map[string]any {
 	st.t.Helper()
@@ -235,17 +287,40 @@ func (st *stack) tap(pi, terminal string, pan, aid, app string) map[string]any {
 // tapWithSTAN sends a terminal authorization with an explicit terminal STAN.
 func (st *stack) tapWithSTAN(pi, terminal, pan, aid, app, terminalSTAN string, want int) (int, map[string]any) {
 	st.t.Helper()
-	ksn := fmt.Sprintf("FFFF9876543210E%05d", len(terminalSTAN)+int(time.Now().UnixNano()%90000))
-	blob, err := carddata.DevEncrypt(st.devKey, ksn, carddata.Card{PAN: pan, Expiry: "2911", AID: aid,
-		EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100"})
+	atc++
+	return st.tapWith(tapOpts{pi: pi, terminal: terminal, pan: pan, aid: aid, app: app, stan: terminalSTAN, atc: atc, want: want})
+}
+
+// tapOpts is one tap in full: the card's transaction counter (ATC, EMV tag 9F36) and the
+// phone's own risk report included.
+type tapOpts struct {
+	pi, terminal, pan, aid, app, stan string
+	atc, want                         int // want 0: any HTTP status
+	deviceRisk                        map[string]any
+	pinBlock                          string // an online PIN block, as a terminal that asked for the PIN sends it
+}
+
+func (st *stack) tapWith(o tapOpts) (int, map[string]any) {
+	st.t.Helper()
+	if o.stan == "" {
+		stan++
+		o.stan = fmt.Sprintf("%06d", stan)
+	}
+	ksn := fmt.Sprintf("FFFF9876543210E%05d", len(o.stan)+int(time.Now().UnixNano()%90000))
+	blob, err := carddata.DevEncrypt(st.devKey, ksn, carddata.Card{PAN: o.pan, Expiry: "2911", AID: o.aid, PINBlockHex: o.pinBlock,
+		EMVHex: fmt.Sprintf("9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F3602%04X9A032610299C0100", o.atc&0xFFFF)})
 	if err != nil {
 		st.t.Fatal(err)
 	}
-	return st.call("POST", "/v1/terminal/authorizations", map[string]any{
-		"payment_intent_id": pi, "terminal_id": terminal, "stan": terminalSTAN, "emv_application": app,
+	body := map[string]any{
+		"payment_intent_id": o.pi, "terminal_id": o.terminal, "stan": o.stan, "emv_application": o.app,
 		"local_time": time.Now().Format(time.RFC3339),
 		"sred":       map[string]any{"format": carddata.DevFormat, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
-	}, want)
+	}
+	if o.deviceRisk != nil {
+		body["device_risk"] = o.deviceRisk
+	}
+	return st.call("POST", "/v1/terminal/authorizations", body, o.want)
 }
 
 func (st *stack) balance(acc string) map[string]any {

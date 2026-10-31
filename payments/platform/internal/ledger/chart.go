@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,44 @@ func MerchantReserve(m string) string { return "liability.merchant_reserve." + m
 
 // MerchantRecoverable is owed by the merchant (for example a chargeback larger than its balance).
 func MerchantRecoverable(m string) string { return "asset.merchant_recoverable." + m }
+
+// Custody is the platform's holding of an asset at a venue (an exchange, an FX provider),
+// in that asset's currency.
+func Custody(venue, asset string) string {
+	return "asset.custody." + venue + "." + strings.ToLower(asset)
+}
+
+// MerchantHolding is a merchant's balance in an asset other than reais, held in custody.
+// It is not e-money in reais, so it stays out of the safeguarding reserve (L5); L6 holds the
+// holdings to the custody balances, asset by asset.
+func MerchantHolding(m, asset string) string {
+	return "liability.merchant_holding." + m + "." + strings.ToLower(asset)
+}
+
+// VenueFees are fees a venue charged in an asset other than reais.
+func VenueFees(asset string) string { return "expense.venue_fees." + strings.ToLower(asset) }
+
+// BrokerSettlement is owed to a broker for purchases until they settle at B3 (D+2).
+func BrokerSettlement(broker string) string { return "liability.broker_settlement." + broker }
+
+// AssetClearing carries an asset between its arrival and its sale (a crypto payment).
+func AssetClearing(asset string) string { return "liability.asset_clearing." + strings.ToLower(asset) }
+
+// ComplianceHold holds a crypto deposit compliance has not cleared: its sender is on a
+// sanctions list or could not be screened. A block keeps it here, frozen.
+func ComplianceHold(asset string) string {
+	return "liability.compliance_hold." + strings.ToLower(asset)
+}
+
+// Accounts of conversions between reais and other assets.
+const (
+	AccRevenueConversionFees = "revenue.conversion_fees"
+	// AccConversionResult is the difference between the price promised and the price the
+	// venue gave: positive when the platform did better than quoted.
+	AccConversionResult = "revenue.conversion_result"
+	// AccIOFPayable is IOF withheld on foreign exchange, owed to the Receita Federal.
+	AccIOFPayable = "liability.iof_payable"
+)
 
 // Brands with scheme accounts.
 var Brands = []string{"visa", "mastercard", "elo"}

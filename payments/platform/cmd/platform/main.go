@@ -24,12 +24,18 @@
 //	platform recon-exceptions -tenant UUID
 //	platform recon-resolve -tenant UUID -id N -resolution R -actor A
 //	platform recon-allocate -tenant UUID -amount CENTS -to ACCOUNT -reason R -actor A
+//	platform recon-custody                  compare the exchanges' balances with the ledger now
+//	platform decripto [-month YYYY-MM] [-out FILE]   write a month's DeCripto for filing
+//	platform decripto-filed -month YYYY-MM -sha256 H -receipt N -actor A
+//	platform compliance-cases -tenant T [-status open|all]   held deposits and travel-rule reviews
+//	platform compliance-decide -tenant T -case C -action release|block|close -reason R -actor A
 package main
 
 import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -37,6 +43,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -45,17 +52,25 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/dialects"
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/chain"
 	"github.com/monolito123/Gooners/payments/platform/internal/config"
 	"github.com/monolito123/Gooners/payments/platform/internal/db"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
+	"github.com/monolito123/Gooners/payments/platform/internal/screening"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -67,7 +82,7 @@ var log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
+		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,6 +101,8 @@ func main() {
 		err = releaseDue(ctx, os.Args[2:])
 	case "settle":
 		err = settle(ctx, os.Args[2:])
+	case "close-day":
+		err = closeDay(ctx, os.Args[2:])
 	default:
 		if cmd, ok := opsCommands[os.Args[1]]; ok {
 			err = cmd(ctx, os.Args[2:])
@@ -118,12 +135,17 @@ func apikey(ctx context.Context, args []string) error {
 	name := fs.String("name", "default", "key name")
 	scopes := fs.String("scopes", "*", "comma-separated scopes")
 	live := fs.Bool("live", false, "issue a sk_live_ key")
+	expires := fs.Duration("expires", 365*24*time.Hour, "how long the key works (0: until revoked)")
 	_ = fs.Parse(args)
 	if *tenant == "" {
 		return errors.New("-tenant is required")
 	}
+	var until time.Time
+	if *expires > 0 {
+		until = time.Now().Add(*expires)
+	}
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
-		key, err := api.NewAPIKey(ctx, pool, *tenant, *name, strings.Split(*scopes, ","), *live)
+		key, err := api.NewAPIKeyUntil(ctx, pool, *tenant, *name, strings.Split(*scopes, ","), *live, until)
 		if err == nil {
 			fmt.Println(key)
 		}
@@ -297,7 +319,122 @@ func serve(ctx context.Context) error {
 		npub, _ := nostr.EncodeNpub(k.PubHex)
 		log.Info("receipts signer", "npub", npub)
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount}, deps)
+	if deps.Attestor, err = attestor(ctx, c); err != nil {
+		return err
+	}
+	switch {
+	case c.RegistrarURL != "":
+		deps.Registrar = &registrar.Client{BaseURL: c.RegistrarURL}
+	case c.Env == config.Sandbox:
+		deps.Registrar = registrar.NewMemory() // the sandbox's own registrar: advances still register first
+	}
+	if deps.Exchanges, err = exchanges(c); err != nil {
+		return err
+	}
+	switch {
+	case c.FXProvider == "wise":
+		deps.FX = &fx.Wise{BaseURL: c.WiseURL, Token: c.WiseToken, ProfileID: c.WiseProfile}
+	case c.FXProvider == "sandbox" || (c.FXProvider == "" && c.Env == config.Sandbox):
+		deps.FX = fx.NewMemory()
+	}
+	switch {
+	case c.BrokerURL != "":
+		cl := &brokerage.Client{BaseURL: c.BrokerURL, Token: c.BrokerToken, BrokerName: c.BrokerName}
+		if c.BrapiToken != "" {
+			cl.Quotes = &brokerage.Brapi{Token: c.BrapiToken}
+		}
+		deps.Broker = cl
+	case c.Env == config.Sandbox:
+		deps.Broker = brokerage.NewMemory()
+	}
+	if deps.Exchanges != nil {
+		var set screening.Set
+		if len(c.SanctionsLists) > 0 {
+			l := &screening.List{Sources: c.SanctionsLists}
+			if err := l.Load(ctx); err != nil {
+				// Withdrawals are refused (fail closed) until a refresh succeeds.
+				log.Error("sanctions lists not loaded", "err", err)
+			} else {
+				log.Info("sanctions lists loaded", "addresses", l.Size())
+			}
+			go l.Refresh(ctx, 6*time.Hour, log.Error)
+			set = append(set, l)
+		}
+		if c.ScreeningURL != "" {
+			set = append(set, &screening.Service{URL: c.ScreeningURL, Token: c.ScreeningToken})
+		}
+		if len(set) == 0 && c.Env == config.Sandbox {
+			set = screening.Set{screening.SandboxAddresses, screening.SandboxNames}
+		}
+		if len(set) > 0 {
+			deps.Screener = set
+		}
+		// Who sent each deposit, read from each network (docs/09 §6.5).
+		lookups := chain.Router{}
+		for network, urls := range c.SenderLookups {
+			// Several URLs, comma-separated, are independent sources asked together (chain.All).
+			var all chain.All
+			for _, u := range strings.Split(urls, ",") {
+				if u = strings.TrimSpace(u); u == "" {
+					continue
+				}
+				switch network {
+				case "bitcoin":
+					all = append(all, &chain.Esplora{URL: u})
+				case "ethereum", "polygon":
+					all = append(all, &chain.EVM{URL: u})
+				case "tron":
+					all = append(all, &chain.Tron{URL: u, APIKey: c.TronAPIKey})
+				}
+			}
+			if len(all) == 1 {
+				lookups[network] = all[0]
+			} else if len(all) > 1 {
+				lookups[network] = all
+			}
+		}
+		if c.SenderLookupURL != "" {
+			svc := &chain.Service{URL: c.SenderLookupURL, Token: c.SenderLookupToken}
+			for _, network := range []string{"bitcoin", "ethereum", "polygon", "tron", "solana"} {
+				if _, ok := lookups[network]; !ok {
+					lookups[network] = svc
+				}
+			}
+		}
+		if c.Env == config.Sandbox {
+			// The sandbox exchange knows who sent its simulated deposits.
+			for _, v := range deps.Exchanges.Venues {
+				if m, ok := v.(*exchange.Memory); ok {
+					for _, network := range []string{"bitcoin", "ethereum", "polygon", "tron", "solana"} {
+						if _, ok := lookups[network]; !ok {
+							lookups[network] = m
+						}
+					}
+				}
+			}
+		}
+		if len(lookups) > 0 {
+			deps.Senders = lookups
+		}
+		switch {
+		case c.TravelRuleURL != "":
+			deps.TravelRule = &travelrule.Service{URL: c.TravelRuleURL, Token: c.TravelRuleToken}
+		case c.Env == config.Sandbox:
+			deps.TravelRule = travelrule.Sandbox{}
+		}
+	}
+	if len(c.TransparencySecret) == 32 {
+		k, err := nostr.KeysFromSecret(c.TransparencySecret)
+		if err != nil {
+			return err
+		}
+		deps.Transparency = k
+		npub, _ := nostr.EncodeNpub(k.PubHex)
+		log.Info("transparency signer", "npub", npub)
+	}
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
+		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview, TravelRuleRetention: c.TravelRuleRetention,
+		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)
@@ -309,7 +446,7 @@ func serve(ctx context.Context) error {
 		}
 	}
 
-	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy, PublicURL: c.PublicURL}, svc, pool, log)
+	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret}, svc, pool, log)
 	disp := &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	go disp.Run(ctx, time.Second)
 	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])
@@ -435,6 +572,136 @@ func settle(ctx context.Context, args []string) error {
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
+	})
+}
+
+// attestor builds the device attestation verifier from the configured roots; nil keeps the
+// sandbox behaviour (evidence recorded, not verified).
+// exchanges builds the crypto venues EXCHANGES names; the sandbox runs its own when none is.
+func exchanges(c *config.Config) (*exchange.Router, error) {
+	names := c.Exchanges
+	if len(names) == 0 && c.Env == config.Sandbox {
+		names = []string{"sandbox"}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	r := &exchange.Router{}
+	for _, n := range names {
+		switch n {
+		case "sandbox":
+			r.Venues = append(r.Venues, exchange.NewMemory("simex"))
+		case "binance":
+			r.Venues = append(r.Venues, &exchange.Binance{APIKey: c.BinanceKey, SecretKey: c.BinanceSecret})
+		case "kraken":
+			r.Venues = append(r.Venues, &exchange.Kraken{APIKey: c.KrakenKey, SecretKey: c.KrakenSecret, WithdrawKeys: c.KrakenWithdrawKeys})
+		case "coinbase":
+			k, err := exchange.ParseCoinbaseKey(c.CoinbaseKeyPEM)
+			if err != nil {
+				return nil, err
+			}
+			r.Venues = append(r.Venues, &exchange.Coinbase{KeyName: c.CoinbaseKeyName, Key: k})
+		default:
+			return nil, fmt.Errorf("EXCHANGES: unknown venue %q (binance, kraken, coinbase, sandbox)", n)
+		}
+	}
+	log.Info("crypto venues", "venues", names)
+	return r, nil
+}
+
+func attestor(ctx context.Context, c *config.Config) (payments.Attestor, error) {
+	if c.AppAttestRoots == "" && c.AndroidAttestationRoots == "" {
+		return nil, nil
+	}
+	pool := func(file string) (*x509.CertPool, error) {
+		pem, err := os.ReadFile(file) // #nosec G304 -- a path the operator configures
+		if err != nil {
+			return nil, err
+		}
+		p := x509.NewCertPool()
+		if !p.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("%s holds no PEM certificates", file)
+		}
+		return p, nil
+	}
+	var a payments.VerifyingAttestor
+	if c.AppAttestRoots != "" {
+		roots, err := pool(c.AppAttestRoots)
+		if err != nil {
+			return nil, err
+		}
+		a.AppAttest = &attest.AppAttestConfig{Roots: roots, AppID: c.AppAttestAppID, Production: c.AppAttestProduction}
+	}
+	if c.AndroidAttestationRoots != "" {
+		roots, err := pool(c.AndroidAttestationRoots)
+		if err != nil {
+			return nil, err
+		}
+		a.KeyAttestation = &attest.KeyAttestationConfig{Roots: roots, PackageName: c.AndroidPackage, SigningDigests: c.AndroidSigningDigests}
+		if c.AndroidAttestationStatus != "off" {
+			// Google's certificate status list, refreshed hourly; attestations are refused
+			// while it is missing or older than three days.
+			src := &attest.RevocationSource{Location: c.AndroidAttestationStatus}
+			first, cancel := context.WithTimeout(ctx, 15*time.Second) // never hold the start for long
+			if err := src.Refresh(first); err != nil {
+				log.Error("attestation status list", "location", src.Location, "err", err)
+			}
+			cancel()
+			go func() {
+				t := time.NewTicker(time.Hour)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						if err := src.Refresh(ctx); err != nil {
+							log.Error("attestation status list", "location", src.Location, "err", err)
+						}
+					}
+				}
+			}()
+			a.KeyAttestation.Revocations = src.Current
+		}
+	}
+	log.Info("device attestation", "app_attest", a.AppAttest != nil, "android_key_attestation", a.KeyAttestation != nil,
+		"android_status_list", a.KeyAttestation != nil && a.KeyAttestation.Revocations != nil)
+	return a, nil
+}
+
+// closeDay closes a Brasília business day into statements and a transparency root by hand
+// (the serve process does it every night after StatementHour). Closing a day twice is a no-op.
+func closeDay(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("close-day", flag.ExitOnError)
+	date := fs.String("date", time.Now().In(payments.BRT).AddDate(0, 0, -1).Format("2006-01-02"), "Brasília business day to close")
+	_ = fs.Parse(args)
+	day, err := time.ParseInLocation("2006-01-02", *date, payments.BRT)
+	if err != nil {
+		return err
+	}
+	keys := map[string]nostr.Keys{}
+	for _, name := range []string{"RECEIPTS_SECRET_HEX", "TRANSPARENCY_SECRET_HEX"} {
+		raw, err := hex.DecodeString(os.Getenv(name))
+		if err != nil || len(raw) != 32 {
+			return fmt.Errorf("%s (32 bytes, hex) is required", name)
+		}
+		if keys[name], err = nostr.KeysFromSecret(raw); err != nil {
+			return err
+		}
+	}
+	padTo, _ := strconv.Atoi(os.Getenv("TRANSPARENCY_PAD_TO"))
+	return withDB(ctx, func(pool *pgxpool.Pool) error {
+		deps := payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log, Transparency: keys["TRANSPARENCY_SECRET_HEX"],
+			Receipts: &receipts.Issuer{Author: keys["RECEIPTS_SECRET_HEX"]}}
+		if r := os.Getenv("RELAYS"); r != "" {
+			deps.Publisher = &receipts.Publisher{Relays: strings.Split(r, ",")}
+		}
+		root, err := payments.New(payments.Config{RelayURL: firstOr(strings.Split(os.Getenv("RELAYS"), ","), ""), TransparencyPadTo: padTo}, deps).CloseDay(ctx, day)
+		if err != nil {
+			return err
+		}
+		log.Info("day closed", "date", root.Date, "root", root.Root, "tree_size", root.TreeSize, "root_event", root.Event.ID)
+		return nil
 	})
 }
 

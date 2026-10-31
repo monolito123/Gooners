@@ -78,5 +78,15 @@ func (l *Ledger) Verify(ctx context.Context, opt VerifyOptions) ([]Violation, er
 			return nil, err
 		}
 	}
+	// L6: in each asset other than the base currency, merchants' holdings never exceed what
+	// the platform holds in custody for them.
+	if err := q("L6 custody covers holdings", `SELECT h.tenant_id::text || ' ' || h.currency || ' holdings ' || h.n::text || ' > custody ' || COALESCE(c.n, 0)::text
+		FROM (SELECT b.tenant_id, a.currency, SUM(b.balance) AS n FROM balances b JOIN ledger_accounts a USING (tenant_id, account_id)
+				WHERE b.account_id LIKE 'liability.merchant\_holding.%' GROUP BY 1, 2) h
+		LEFT JOIN (SELECT b.tenant_id, a.currency, SUM(b.balance) AS n FROM balances b JOIN ledger_accounts a USING (tenant_id, account_id)
+				WHERE b.account_id LIKE 'asset.custody.%' GROUP BY 1, 2) c USING (tenant_id, currency)
+		WHERE h.n > COALESCE(c.n, 0)`); err != nil {
+		return nil, err
+	}
 	return out, nil
 }

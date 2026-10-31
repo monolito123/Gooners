@@ -118,8 +118,12 @@ func (s *Service) RegisterDevice(ctx context.Context, tenantID, merchantID strin
 	if err != nil {
 		return nil, err
 	}
-	integrity, caps, err := att.Verify(ctx, in.Platform, pub, in.Attestation)
-	if err != nil {
+	var integrity map[string]any
+	var caps []string
+	if len(in.Attestation) == 0 && s.strictAttestation() {
+		// A phone the owner adds by its npub sends nothing here: it attests at its first login.
+		integrity, caps = map[string]any{"verdict": "pending", "reason": "attests at its first login"}, []string{}
+	} else if integrity, caps, err = att.Verify(ctx, in.Platform, pub, in.Attestation); err != nil {
 		return nil, invalid("attestation: %v", err)
 	}
 	evJSON, _ := json.Marshal(in.AuthorizationEvent)
@@ -170,7 +174,9 @@ func (s *Service) RegisterDevice(ctx context.Context, tenantID, merchantID strin
 				return err
 			}
 			if g.terminal != "" {
-				if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'device removed from the device list' WHERE id = $1`, g.terminal); err != nil {
+				// Only an active terminal: one already revoked (lost, forked journal) or frozen
+				// by a risk review keeps its state, which re-adding the phone must not undo.
+				if _, err := tx.Exec(ctx, `UPDATE terminals SET status = 'revoked', revoked_at = now(), revoked_reason = 'device removed from the device list' WHERE id = $1 AND status = 'active'`, g.terminal); err != nil {
 					return err
 				}
 			}
@@ -181,7 +187,7 @@ func (s *Service) RegisterDevice(ctx context.Context, tenantID, merchantID strin
 		err = tx.QueryRow(ctx, `INSERT INTO devices (id, tenant_id, merchant_id, pubkey, platform, label, model, integrity, attestation)
 			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, $9)
 			ON CONFLICT (merchant_id, pubkey) DO UPDATE SET status = 'active', revoked_at = NULL, platform = EXCLUDED.platform, label = EXCLUDED.label,
-				model = EXCLUDED.model, integrity = EXCLUDED.integrity, attestation = EXCLUDED.attestation
+				model = EXCLUDED.model, integrity = EXCLUDED.integrity, attestation = EXCLUDED.attestation, app_attest_counter = NULL
 			RETURNING id`, ids.New("dev"), tenantID, m.ID, pub, tag.Platform, tag.Label, in.Model, integrityJSON, attJSON).Scan(&deviceID)
 		if err != nil {
 			return err
@@ -363,7 +369,7 @@ type Session struct {
 }
 
 // SessionScopes are what a merchant app may do.
-var SessionScopes = []string{"payments:write", "payments:read", "accounts:read", "payouts:write"}
+var SessionScopes = []string{"payments:write", "payments:read", "refunds:write", "accounts:read", "settlements:read", "payouts:write", "assets:read", "assets:write"}
 
 // SessionTTL is a session's lifetime.
 const SessionTTL = 15 * time.Minute
@@ -377,7 +383,7 @@ func (s *Service) ConsumeNonce(ctx context.Context, nonce string, ttl time.Durat
 
 // Login turns a verified NIP-98 login event into a session bound to the DPoP key. The
 // signer must be an active, registered device of a merchant that is not closed.
-func (s *Service) Login(ctx context.Context, ev *nostr.Event, deviceID string, jwk mobileauth.JWK) (*Session, error) {
+func (s *Service) Login(ctx context.Context, ev *nostr.Event, deviceID string, jwk mobileauth.JWK, evidence map[string]any) (*Session, error) {
 	if _, err := jwk.PublicKey(); err != nil {
 		return nil, err
 	}
@@ -387,15 +393,41 @@ func (s *Service) Login(ctx context.Context, ev *nostr.Event, deviceID string, j
 		}
 		return nil, fmt.Errorf("%w: this login event was already used", mobileauth.ErrUnauthorized)
 	}
-	var tenantID, merchantID, terminal, account string
-	err := s.pool.QueryRow(ctx, `SELECT d.id, d.tenant_id::text, d.merchant_id, COALESCE(d.terminal_id, ''), m.account_id FROM devices d JOIN merchants m ON m.id = d.merchant_id
+	var tenantID, merchantID, terminal, account, platform string
+	var integrityJSON []byte
+	err := s.pool.QueryRow(ctx, `SELECT d.id, d.tenant_id::text, d.merchant_id, COALESCE(d.terminal_id, ''), m.account_id, d.platform, d.integrity
+		FROM devices d JOIN merchants m ON m.id = d.merchant_id
 		WHERE d.pubkey = $1 AND ($2 = '' OR d.id = $2) AND d.status = 'active' AND m.status <> 'closed' ORDER BY d.created_at DESC LIMIT 1`,
-		ev.PubKey, deviceID).Scan(&deviceID, &tenantID, &merchantID, &terminal, &account)
+		ev.PubKey, deviceID).Scan(&deviceID, &tenantID, &merchantID, &terminal, &account, &platform, &integrityJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("%w: the signing key is not an active device", mobileauth.ErrUnauthorized)
 	}
 	if err != nil {
 		return nil, err
+	}
+	var stored struct {
+		Verdict map[string]any `json:"verdict"`
+	}
+	_ = json.Unmarshal(integrityJSON, &stored)
+	if s.strictAttestation() && stored.Verdict["verdict"] != "verified" {
+		if len(evidence) == 0 {
+			return nil, fmt.Errorf("%w: attestation_required: this device has not attested yet; send its attestation with the login", mobileauth.ErrUnauthorized)
+		}
+		verdict, caps, err := s.attest.Verify(ctx, platform, ev.PubKey, evidence)
+		if err != nil {
+			return nil, fmt.Errorf("%w: attestation: %v", mobileauth.ErrUnauthorized, err)
+		}
+		b, _ := json.Marshal(map[string]any{"verdict": verdict, "capabilities": caps})
+		ab, _ := json.Marshal(evidence)
+		if _, err := s.pool.Exec(ctx, `UPDATE devices SET integrity = $2, attestation = $3, app_attest_counter = NULL WHERE id = $1`, deviceID, b, ab); err != nil {
+			return nil, err
+		}
+		stored.Verdict = verdict
+	}
+	// A device whose DPoP key was attested in hardware logs in with that key only: a copied
+	// device key alone cannot open a session from another phone.
+	if jkt, _ := stored.Verdict["dpop_jkt"].(string); jkt != "" && jkt != jwk.Thumbprint() {
+		return nil, fmt.Errorf("%w: the DPoP key is not the device's attested hardware key", mobileauth.ErrUnauthorized)
 	}
 	token := randomToken(s.cfg.Env)
 	if _, err := s.pool.Exec(ctx, `INSERT INTO sessions (token_hash, id, tenant_id, merchant_id, device_id, jkt, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,

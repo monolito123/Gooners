@@ -62,21 +62,27 @@ data class Event(
     fun tag(name: String): List<String>? = tags.firstOrNull { it.isNotEmpty() && it[0] == name }
 
     private fun StringBuilder.appendJson(s: String) {
-        append('"')
-        for (ch in s) {
-            when (ch) {
-                '"' -> append("\\\"")
-                '\\' -> append("\\\\")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                '\b' -> append("\\b")
-                '\u000c' -> append("\\f")
-                else -> if (ch.code < 0x20) append("\\u00").append("0123456789abcdef"[ch.code ushr 4]).append("0123456789abcdef"[ch.code and 0xf]) else append(ch)
-            }
-        }
-        append('"')
+        append(jsonString(s))
     }
+
+}
+
+/** A JSON string literal escaped as JSON.stringify and the platform do (NIP-01). */
+internal fun jsonString(s: String): String = buildString {
+    append('"')
+    for (ch in s) {
+        when (ch) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            '\b' -> append("\\b")
+            '\u000c' -> append("\\f")
+            else -> if (ch.code < 0x20) append("\\u00").append("0123456789abcdef"[ch.code ushr 4]).append("0123456789abcdef"[ch.code and 0xf]) else append(ch)
+        }
+    }
+    append('"')
 }
 
 /**

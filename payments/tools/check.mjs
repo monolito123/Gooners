@@ -254,7 +254,9 @@ oas.addSchema({ $id: 'oas', components: openapi.components });
 const schemaFor = (v) => {
   const byObject = {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
-    transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement',
+    transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
+    conversion: 'Conversion', crypto_withdrawal: 'CryptoWithdrawal', international_payout: 'InternationalPayout', investment_order: 'InvestmentOrder', portfolio: 'Portfolio',
+    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';
@@ -267,7 +269,15 @@ const schemaFor = (v) => {
   if ('legal' in v && 'root_npub' in v) return 'MerchantCreate';
   if (v.type === 'card' && v.card?.number) return 'PaymentMethodCreate';
   if ('payment_method_types' in v && !('id' in v)) return 'PaymentIntentCreate';
-  if ('three_ds' in v && !('id' in v)) return 'PaymentIntentConfirm';
+  if (('three_ds' in v || v.payment_method_type === 'crypto') && !('id' in v)) return 'PaymentIntentConfirm';
+  if ('ivms101' in v && 'originator_vasp' in v) return 'TravelRuleInbound';
+  if ('address' in v && 'network' in v && !('id' in v)) return 'CryptoWithdrawalCreate';
+  if ('beneficiary' in v && !('id' in v)) return 'InternationalPayoutCreate';
+  if ('side' in v && 'asset' in v && !('id' in v) && !('address' in v)) return 'ConversionCreate';
+  if (('accepted' === v.status || 'rejected' === v.status) && 'reference' in v && !('object' in v)) return 'TravelRuleAnswer';
+  if ('profile' in v && 'answers' in v) return 'InvestorProfile';
+  if ('ticker' in v && 'lot' in v && 'market_open' in v) return 'InstrumentQuote';
+  if ('receive' in v && 'currency' in v) return 'InternationalAccount';
   return null;
 };
 let apiChecked = 0;
@@ -402,6 +412,14 @@ if (existsSync(vecFile)) {
   const nip98 = JSON.parse(Buffer.from(vec.nip98.authorization_header.slice(6), 'base64').toString());
   check(nip98.id === vec.nip98.event.id && verifyEventStrict(nip98).length === 0 && nip98.tags.find((t) => t[0] === 'payload')[1] === bytesToHex(sha256(utf8ToBytes(vec.nip98.body))), 'NIP-98 login vector');
   check(verifyEventStrict(vec.device_list.event).length === 0, 'kind 17710 device list vector');
+  check(vec.canonical_json.every((c) => canonicalJson(JSON.parse(c.json)) === c.canonical), `${vec.canonical_json.length} canonical JSON vectors match JavaScript's canonicalJson`);
+  {
+    const entries = vec.journal.entries;
+    const chained = entries.every((e, i) =>
+      verifyEventStrict(e.event).length === 0 && e.event.kind === 7714 && e.event.content === canonicalJson(e.fields) &&
+      JSON.parse(e.event.content).prev === (i === 0 ? null : entries[i - 1].event.id) && e.event.pubkey === testKey(vec.journal.device_role).pk);
+    check(chained, 'kind 7714 journal vector: canonical content, signatures and the prev chain');
+  }
   const j = vec.jwk_thumbprint.jwk;
   check(Buffer.from(sha256(utf8ToBytes(`{"crv":"${j.crv}","kty":"${j.kty}","x":"${j.x}","y":"${j.y}"}`))).toString('base64url') === vec.jwk_thumbprint.thumbprint, 'JWK thumbprint (RFC 7638)');
   const { createDecipheriv } = await import('node:crypto');
@@ -411,6 +429,42 @@ if (existsSync(vecFile)) {
   dc.setAuthTag(blob.subarray(blob.length - 16));
   check(Buffer.concat([dc.update(blob.subarray(12, blob.length - 16)), dc.final()]).toString() === vec.dev_card.plaintext, 'sandbox card blob decrypts');
   check(vec.brcode.every((b) => crc16(b.code.slice(0, -4)) === b.code.slice(-4)), 'BR Code CRCs');
+  // The on-device fraud model (07 §3.3), a third time: heaviest signals first, a noisy OR in
+  // integer thousandths truncated at every step.
+  const dr = vec.device_risk;
+  const deviceScore = (signals) => {
+    const known = [...new Set(signals.filter((s) => s in dr.weights))].sort((a, b) => dr.weights[b] - dr.weights[a] || (a < b ? -1 : a > b ? 1 : 0));
+    let clean = 1000;
+    for (const s of known) clean = Math.trunc((clean * (1000 - dr.weights[s])) / 1000);
+    return [1000 - clean, known.slice(0, dr.max_signals)];
+  };
+  check(dr.cases.every((c) => { const [m, sent] = deviceScore(c.signals); return m === c.score_milli && JSON.stringify(sent) === JSON.stringify(c.sent); }),
+    `${dr.cases.length} device risk vectors (model ${dr.model}) match JavaScript's scoring`);
+  const signalDocs = d07;
+  check(Object.keys(dr.weights).every((s) => signalDocs.includes('`' + s + '`')), 'every device signal code is documented in 07 §3.3');
+}
+
+// ---------------------------------------------------------------- 6c. Web console verifier
+// The console verifies statements in the browser with its own BIP-340 and RFC 6962 code
+// (platform/internal/console/static/verify.js); it is held to the signed examples here.
+const consoleVerify = join(root, 'platform', 'internal', 'console', 'static', 'verify.js');
+if (existsSync(consoleVerify)) {
+  section('6c. Web console verifier (browser code, run in Node)');
+  const cv = await import(consoleVerify);
+  const st = examples['7713-settlement-statement.json'];
+  const rt = examples['7715-transparency-root.json'];
+  const mid = JSON.parse(st.content).merchant_id;
+  const keys = [K['platform-receipts'], K['platform-transparency']];
+  const good = await cv.verifyStatement(st, rt, mid, keys);
+  check(good.check.ok, 'the console verifies the example statement against the published root and keys');
+  const forged = { ...st, content: st.content.replace(/"gross":\d+/, '"gross":1') };
+  check(!(await cv.verifyStatement(forged, rt, mid, keys)).check.ok, 'the console rejects a statement with altered totals');
+  check(!(await cv.verifyStatement(st, rt, mid, [K['platform-receipts']])).check.ok, 'the console rejects a root signed by a key not on the list');
+  check(!(await cv.verifyStatement(st, rt, 'mer_someone_else', keys)).check.ok, "the console rejects another merchant's statement");
+  check(await cv.receiptIncluded(good.statement, examples['proof-receipt-0.json']), 'the console proves a receipt is in the statement');
+  const events = Object.values(examples).filter((e) => e && typeof e.sig === 'string');
+  const verified = await Promise.all(events.map((e) => cv.verifyEvent(e)));
+  check(verified.every(Boolean), `the console's BIP-340 code verifies all ${events.length} example events`);
 }
 
 // ---------------------------------------------------------------- 7. External tools

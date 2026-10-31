@@ -89,6 +89,15 @@ fun derToRaw(der: ByteArray): ByteArray {
     return int() + int()
 }
 
+/** Android key attestation (docs/05 §2.4). */
+object KeyAttestation {
+    /**
+     * What the app passes to setAttestationChallenge when it generates its DPoP key: binds
+     * the hardware-attested key to the device's Nostr key (conformance vector).
+     */
+    fun challenge(devicePubkeyHex: String): ByteArray = sha256("goonerspay/v1/key-attestation:$devicePubkeyHex")
+}
+
 /** The merchant root key's device authorization list (kind 17710, docs/03 §4.2). */
 object DeviceList {
     const val KIND = 17710

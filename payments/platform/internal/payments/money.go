@@ -16,6 +16,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/netguard"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 )
 
@@ -27,6 +28,7 @@ type Balance struct {
 	Pending         int64            `json:"pending"`
 	Reserved        int64            `json:"reserved"`
 	InstantEligible int64            `json:"instant_eligible"`
+	Held            int64            `json:"held"` // receivables waiting for a risk review; not in pending
 	PendingByDate   []map[string]any `json:"pending_by_date"`
 	AsOf            string           `json:"as_of"`
 }
@@ -46,7 +48,11 @@ func (s *Service) GetBalance(ctx context.Context, tenantID, accountID string) (*
 		return nil, err
 	}
 	b := &Balance{AccountID: accountID, Currency: s.cfg.Currency, Available: avail, Reserved: reserved, PendingByDate: []map[string]any{}, AsOf: s.cfg.Now().UTC().Format(time.RFC3339)}
-	rows, err := s.pool.Query(ctx, `SELECT settles_on, SUM(amount) FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending'
+	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount), 0) FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending' AND held`,
+		tenantID, m.ID).Scan(&b.Held); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT settles_on, SUM(amount) FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending' AND NOT held
 		GROUP BY settles_on ORDER BY settles_on`, tenantID, m.ID)
 	if err != nil {
 		return nil, err
@@ -171,28 +177,65 @@ func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, a
 		if !eligible {
 			return nil, fmt.Errorf("%w: available balance is %d and the merchant is not eligible for advances", ErrFunds, avail)
 		}
-		rows, err := s.pool.Query(ctx, `SELECT id, settles_on, amount FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending'
-			ORDER BY settles_on, id`, tenantID, m.ID)
+		type candidate struct {
+			id          int64
+			day         time.Time
+			amount      int64
+			arrangement string
+		}
+		rows, err := s.pool.Query(ctx, `SELECT id, settles_on, amount, COALESCE(arrangement, '') FROM receivables WHERE tenant_id = $1 AND merchant_id = $2 AND status = 'pending' AND NOT held
+			ORDER BY settles_on, id LIMIT 1000`, tenantID, m.ID)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() && advanced < need {
-			var l advanceLine
-			var d time.Time
-			if err := rows.Scan(&l.ReceivableID, &d, &l.Amount); err != nil {
+		var cands []candidate
+		for rows.Next() {
+			var c candidate
+			if err := rows.Scan(&c.id, &c.day, &c.amount, &c.arrangement); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			l.Date = d.Format("2006-01-02")
-			l.BusinessDays = pricing.BusinessDaysBetween(s.cfg.Now(), d)
-			l.Fee = pricing.AdvanceFee(l.Amount, annual, l.BusinessDays)
-			lines = append(lines, l)
-			advanced += l.Amount
-			fees += l.Fee
+			cands = append(cands, c)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, err
+		}
+		key := func(c candidate) registrar.UnitKey {
+			return registrar.UnitKey{Document: m.document, Arrangement: c.arrangement, SettlesOn: c.day.Format("2006-01-02")}
+		}
+		// Only receivables whose UR is free at the registrar can be advanced: another
+		// institution may hold a lien on them (docs/07 §1.6).
+		var free map[registrar.UnitKey]int64
+		if s.registrar != nil && len(cands) > 0 {
+			var keys []registrar.UnitKey
+			seen := map[registrar.UnitKey]bool{}
+			for _, c := range cands {
+				if k := key(c); !seen[k] {
+					seen[k] = true
+					keys = append(keys, k)
+				}
+			}
+			if free, err = s.freeAmounts(ctx, tenantID, m.ID, keys); err != nil {
+				return nil, fmt.Errorf("%w: the receivables registrar did not answer: %v", ErrUnavailable, err)
+			}
+		}
+		for _, c := range cands {
+			if advanced >= need {
+				break
+			}
+			if free != nil {
+				if free[key(c)] < c.amount {
+					continue
+				}
+				free[key(c)] -= c.amount
+			}
+			l := advanceLine{ReceivableID: c.id, Date: c.day.Format("2006-01-02"), Amount: c.amount}
+			l.BusinessDays = pricing.BusinessDaysBetween(s.cfg.Now(), c.day)
+			l.Fee = pricing.AdvanceFee(l.Amount, annual, l.BusinessDays)
+			lines = append(lines, l)
+			advanced += l.Amount
+			fees += l.Fee
 		}
 		// Whole receivables are advanced; anything above the request stays in the wallet.
 		if advanced < need {
@@ -273,8 +316,28 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 	var dest Destination
 	_ = json.Unmarshal(destJSON, &dest)
 
+	// The assignment of the advanced receivables is registered before any money moves; if the
+	// registrar refuses (a lien registered since the quote), the quote is given back.
+	if s.registrar != nil && len(lines) > 0 {
+		ids := make([]int64, len(lines))
+		for i, l := range lines {
+			ids[i] = l.ReceivableID
+		}
+		reg, err := s.receivableLines(ctx, tenantID, ids)
+		if err == nil {
+			err = s.commitAdvance(ctx, tenantID, merchantID, "advance:"+quoteID, "payout_advance", quoteID, reg)
+		}
+		if err != nil {
+			_, _ = s.pool.Exec(ctx, `UPDATE payout_quotes SET used = false WHERE tenant_id = $1 AND id = $2`, tenantID, quoteID)
+			if errors.Is(err, registrar.ErrUnavailable) {
+				return nil, fmt.Errorf("%w: the receivables are committed at the registrar; request a new quote", ErrConflict)
+			}
+			return nil, fmt.Errorf("%w: the receivables registrar did not answer: %v", ErrUnavailable, err)
+		}
+	}
+
 	for _, l := range lines {
-		tag, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $3 WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`, tenantID, l.ReceivableID, l.Fee)
+		tag, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $3 WHERE tenant_id = $1 AND id = $2 AND status = 'pending' AND NOT held`, tenantID, l.ReceivableID, l.Fee)
 		if err != nil {
 			return nil, err
 		}
@@ -368,7 +431,7 @@ func (s *Service) ReconcilePayouts(ctx context.Context) error {
 
 // ReleaseDue makes receivables available on their settlement date (standard settlement).
 func (s *Service) ReleaseDue(ctx context.Context, day time.Time) (int, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, tenant_id::text, merchant_id, amount FROM receivables WHERE status = 'pending' AND settles_on <= $1 ORDER BY id`, pricing.Date(day))
+	rows, err := s.pool.Query(ctx, `SELECT id, tenant_id::text, merchant_id, amount FROM receivables WHERE status = 'pending' AND NOT held AND settles_on <= $1 ORDER BY id`, pricing.Date(day))
 	if err != nil {
 		return 0, err
 	}
@@ -395,7 +458,7 @@ func (s *Service) ReleaseDue(ctx context.Context, day time.Time) (int, error) {
 		if err := s.post(ctx, x.tenant, fmt.Sprintf("release-scheduled:%d", x.id), "scheduled_release", fmt.Sprint(x.id), releaseScheduled(x.merch, x.amount)); err != nil {
 			return n, err
 		}
-		if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'released' WHERE id = $1 AND status = 'pending'`, x.id); err != nil {
+		if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'released' WHERE id = $1 AND status = 'pending' AND NOT held`, x.id); err != nil {
 			return n, err
 		}
 		n++
@@ -474,6 +537,44 @@ func (s *Service) CreateWebhookEndpoint(ctx context.Context, tenantID, url strin
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO webhook_endpoints (id, tenant_id, url, secret, events) VALUES ($1, $2, $3, $4, $5)`, e.ID, tenantID, url, stored, events)
 	return e, err
+}
+
+// RotatedSecret is a webhook endpoint's new signing secret, returned once.
+type RotatedSecret struct {
+	ID             string    `json:"id"`
+	Object         string    `json:"object"`
+	Secret         string    `json:"secret"`
+	PreviousExpiry time.Time `json:"previous_secret_expires_at"`
+}
+
+// RotateWebhookSecret gives an endpoint a new signing secret. The old one keeps signing
+// beside it for overlap (default 24 hours, at most 7 days), so the partner can deploy the new
+// secret without losing a delivery; a leaked secret is rotated with an overlap of zero.
+func (s *Service) RotateWebhookSecret(ctx context.Context, tenantID, endpointID string, overlap time.Duration) (*RotatedSecret, error) {
+	if overlap < 0 || overlap > 7*24*time.Hour {
+		return nil, invalid("overlap_hours is between 0 and 168")
+	}
+	secret := webhooks.NewSecret()
+	stored := secret
+	if s.vault != nil {
+		sealed, err := s.vault.SealSecret(ctx, secret, endpointID)
+		if err != nil {
+			return nil, err
+		}
+		stored = sealed
+	} else if s.cfg.Env == "production" {
+		return nil, fmt.Errorf("%w: the vault is required to store webhook secrets", ErrDisabled)
+	}
+	until := s.cfg.Now().Add(overlap)
+	tag, err := s.pool.Exec(ctx, `UPDATE webhook_endpoints SET previous_secret = secret, previous_until = $4, secret = $3 WHERE tenant_id = $1 AND id = $2`,
+		tenantID, endpointID, stored, until)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return &RotatedSecret{ID: endpointID, Object: "webhook_secret", Secret: secret, PreviousExpiry: until.UTC()}, nil
 }
 
 func pow(x, y float64) float64 { return math.Pow(x, y) }

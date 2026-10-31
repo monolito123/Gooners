@@ -41,7 +41,12 @@ data class Device(
 )
 
 @Serializable
-data class LoginBody(@SerialName("dpop_jwk") val dpopJwk: Jwk, @SerialName("device_id") val deviceId: String? = null)
+data class LoginBody(
+    @SerialName("dpop_jwk") val dpopJwk: Jwk,
+    @SerialName("device_id") val deviceId: String? = null,
+    /** Sent with a first login when the platform asks for it (attestation_required). */
+    val attestation: JsonObject? = null,
+)
 
 @Serializable
 data class Session(
@@ -70,10 +75,42 @@ data class IntentCreate(
     val channel: String? = null,
     @SerialName("payment_method_types") val paymentMethodTypes: List<String>? = null,
     val description: String? = null,
+    /** Credit in parcelas; one payment when null (docs/06 §5). */
+    val installments: Installments? = null,
+)
+
+/** Parcelas the merchant finances ("parcelado lojista"). */
+@Serializable
+data class Installments(val count: Int, val type: String = "merchant")
+
+@Serializable
+data class NextAction(
+    val type: String,
+    val txid: String? = null,
+    @SerialName("br_code") val brCode: String? = null,
+    // crypto_transfer: send exactly amount of asset on network to address (docs/09)
+    val asset: String? = null,
+    val network: String? = null,
+    val address: String? = null,
+    val memo: String? = null,
+    val amount: String? = null,
+    val price: String? = null,
+    val uri: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
 )
 
 @Serializable
-data class NextAction(val type: String, val txid: String? = null, @SerialName("br_code") val brCode: String? = null)
+data class CryptoConfirm(
+    val asset: String,
+    val network: String,
+    @SerialName("payment_method_type") val paymentMethodType: String = "crypto",
+)
+
+@Serializable
+data class RefundCreate(@SerialName("payment_intent_id") val paymentIntentId: String, val amount: Long)
+
+@Serializable
+data class Refund(val id: String, val status: String, val amount: Long)
 
 @Serializable
 data class PaymentIntent(
@@ -98,7 +135,14 @@ data class TerminalAuthorization(
     @SerialName("emv_application") val emvApplication: String,
     @SerialName("local_time") val localTime: String,
     val sred: Sred,
+    /** The device's tap_started journal entry; the receipt links to it (docs/03 §3.3). */
+    @SerialName("journal_event_id") val journalEventId: String? = null,
+    /** The phone's own risk score (docs/07 §3). */
+    @SerialName("device_risk") val deviceRisk: DeviceRisk? = null,
 )
+
+@Serializable
+data class DeviceRisk(val score: Double, val model: String, val signals: List<String>)
 
 @Serializable
 data class CardView(val brand: String = "", val last4: String = "", val funding: String = "")
@@ -117,6 +161,8 @@ data class SettlementView(
     @SerialName("advance_fee") val advanceFee: Long = 0,
     @SerialName("net_available") val netAvailable: Long = 0,
     @SerialName("settles_on") val settlesOn: String = "",
+    /** The sale waits for a risk review before it settles (docs/07 §3.6). */
+    val held: Boolean = false,
 )
 
 @Serializable
@@ -143,6 +189,8 @@ data class Balance(
     val pending: Long,
     val reserved: Long = 0,
     @SerialName("instant_eligible") val instantEligible: Long = 0,
+    /** Receivables a fraud shield review holds; not in [pending] (docs/07 §3.6). */
+    val held: Long = 0,
     @SerialName("pending_by_date") val pendingByDate: List<PendingDay> = emptyList(),
 )
 
@@ -192,4 +240,126 @@ data class Payout(
 )
 
 @Serializable
+data class JournalUpload(val entries: List<Event>)
+
+@Serializable
 data class EnrollmentCode(val code: String, @SerialName("merchant_id") val merchantId: String, @SerialName("expires_at") val expiresAt: String)
+
+@Serializable
+data class Settlement(
+    val id: String,
+    @SerialName("merchant_id") val merchantId: String = "",
+    val date: String,
+    val currency: String = "BRL",
+    val gross: Long = 0,
+    val fees: Long = 0,
+    val refunds: Long = 0,
+    val chargebacks: Long = 0,
+    val net: Long = 0,
+    @SerialName("transaction_count") val transactionCount: Int = 0,
+)
+
+@Serializable
+data class Settlements(val data: List<Settlement>, @SerialName("has_more") val hasMore: Boolean = false)
+
+@Serializable
+data class MerklePath(
+    @SerialName("leaf_index") val leafIndex: Long,
+    @SerialName("tree_size") val treeSize: Long,
+    @SerialName("audit_path") val auditPath: List<String>,
+    val root: String = "",
+)
+
+@Serializable
+data class InclusionProof(
+    @SerialName("receipt_event_id") val receiptEventId: String,
+    @SerialName("statement_inclusion") val statementInclusion: MerklePath,
+    @SerialName("transparency_inclusion") val transparencyInclusion: MerklePath? = null,
+)
+
+@Serializable
+data class TransparencyRoot(val date: String, @SerialName("tree_size") val treeSize: Long, val root: String, val event: Event)
+
+
+// ---- digital assets, international accounts and B3 (docs/09) ----
+
+@Serializable
+data class Holding(
+    val asset: String,
+    val kind: String,
+    val units: Long,
+    val amount: String,
+    /** At the best price to sell now; null when no venue quotes it. */
+    @SerialName("value_brl") val valueBrl: Long? = null,
+)
+
+@Serializable
+data class Holdings(val data: List<Holding> = emptyList())
+
+@Serializable
+data class ReceiveDetails(
+    val currency: String = "",
+    val holder: String = "",
+    val bank: String = "",
+    val iban: String? = null,
+    val bic: String? = null,
+    @SerialName("account_number") val accountNumber: String? = null,
+    @SerialName("routing_number") val routingNumber: String? = null,
+    @SerialName("sort_code") val sortCode: String? = null,
+    val reference: String = "",
+)
+
+@Serializable
+data class InternationalAccount(val currency: String, val units: Long, val amount: String, val receive: ReceiveDetails)
+
+@Serializable
+data class InternationalAccounts(val data: List<InternationalAccount> = emptyList())
+
+@Serializable
+data class Position(
+    val ticker: String,
+    val name: String = "",
+    val quantity: Long,
+    val cost: Long,
+    val last: String? = null,
+    val value: Long? = null,
+    val result: Long? = null,
+)
+
+@Serializable
+data class InvestmentOrder(
+    val id: String,
+    val ticker: String,
+    val side: String,
+    val quantity: Long,
+    val total: Long,
+    val status: String,
+    @SerialName("settles_on") val settlesOn: String = "",
+)
+
+@Serializable
+data class Portfolio(val positions: List<Position> = emptyList(), val orders: List<InvestmentOrder> = emptyList())
+
+@Serializable
+data class ConversionRequest(
+    val side: String,
+    val asset: String,
+    @SerialName("brl_amount") val brlAmount: Long? = null,
+    val amount: String? = null,
+)
+
+@Serializable
+data class Conversion(
+    val id: String,
+    val side: String,
+    val asset: String,
+    val amount: String,
+    @SerialName("brl_units") val brlUnits: Long,
+    val fee: Long,
+    val tax: Long = 0,
+    val total: Long,
+    val price: String,
+    val venue: String = "",
+    val status: String,
+    @SerialName("expires_at") val expiresAt: String,
+)

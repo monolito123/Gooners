@@ -56,13 +56,16 @@ final class SandboxIntegrationTests: XCTestCase {
         let bound = try await api.enroll(code: code, DeviceCreate(deviceNpub: device.npub, platform: "ios", model: "XCTest", attestation: ["type": "none"], authorizationEvent: list))
         XCTAssertNotNil(bound.terminalId)
         let secret = device.exportSecret()
-        let authed = api.authed(deviceKey: { try NostrKeys(secret: secret) }, dpop: dpop, session: try await api.login(device: device, dpop: dpop))
+        let journal = Journal(store: MemoryJournalStore(), devicePubkeyHex: device.publicKeyHex, merchantRootPubHex: root.publicKeyHex, appVersion: "test")
+        journal.append("session_start")
+        let authed = api.authed(deviceKey: { try NostrKeys(secret: secret) }, dpop: dpop, session: try await api.login(device: device, dpop: dpop),
+                                onKey: { _ = try? journal.signPending($0) })
         let merchant = try await authed.merchant()
         XCTAssertEqual(merchant.id, merchantID)
 
         // A card sale through the real checkout controller and the sandbox reader.
         let reader = SandboxCardReader(devKey: Data(hex: info.devCardKey)!, card: .mastercard)
-        let checkout = CheckoutController(api: { authed }, reader: { reader }, stan: Counter(), pixPoll: .milliseconds(200))
+        let checkout = CheckoutController(api: { authed }, reader: { reader }, stan: Counter(), pixPoll: .milliseconds(200), journal: { journal })
         func settled() async throws -> CheckoutState {
             for _ in 0..<300 {
                 if checkout.state.isFinal { return checkout.state }
@@ -75,10 +78,11 @@ final class SandboxIntegrationTests: XCTestCase {
         checkout.charge()
         checkout.card(.credit)
         let sale = try await settled()
-        guard case let .approved(amount, method, claim, _, _) = sale else { return XCTFail("\(sale)") }
-        XCTAssertEqual(amount, Money(12990))
-        XCTAssertTrue(method.contains("5555") || method.contains("4444"), method)
-        XCTAssertTrue(claim?.contains("#k=") ?? false)
+        guard case let .approved(paid) = sale else { return XCTFail("\(sale)") }
+        XCTAssertEqual(paid.amount, Money(12990))
+        XCTAssertTrue(paid.method.contains("5555") || paid.method.contains("4444"), paid.method)
+        XCTAssertTrue(paid.claimURL?.contains("#k=") ?? false)
+        XCTAssertEqual(paid.returnsIn, .seconds(4)) // back to the keypad by itself (docs/06 §5)
 
         // Pix: a dynamic QR whose amount the app checks before showing it.
         checkout.nextSale()
@@ -91,6 +95,45 @@ final class SandboxIntegrationTests: XCTestCase {
         XCTAssertTrue(decoded.dynamic && decoded.url != nil && (decoded.amount == nil || decoded.amount == "23.90"))
         checkout.nextSale()
 
+        // Crypto paid from a sanctioned wallet: held for compliance, neither approved nor declined.
+        let crypto = CheckoutController(api: { authed }, reader: { reader }, stan: Counter(), pixPoll: .milliseconds(200), journal: { journal },
+                                        cryptoOffer: { CryptoChoice(asset: "USDT", network: "tron") })
+        for d in [4, 5, 0, 0] { crypto.digit(d) }
+        crypto.charge()
+        crypto.crypto()
+        var charge: CryptoCharge?
+        for _ in 0..<100 where charge == nil {
+            if case let .cryptoQR(_, c) = crypto.state { charge = c } else { try await Task.sleep(for: .milliseconds(100)) }
+        }
+        let held = try await authed.simulateCryptoPayment(try XCTUnwrap(charge).intentID, from: "TSanctionedTestAddressForSandbox12")
+        XCTAssertEqual(held.status, "processing")
+        var reviewed = crypto.state
+        for _ in 0..<100 {
+            reviewed = crypto.state
+            if reviewed.isFinal { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(reviewed, .reviewing(Money(4500), message: CheckoutController.cryptoReview))
+        crypto.nextSale()
+
+        // The journal: signed with the key unwrapped for login, uploaded in order, linked from the sale.
+        try journal.signPending(device)
+        let sent = journal.toUpload()
+        let synced = try await authed.syncJournal(journal)
+        XCTAssertEqual(synced?.status, "consistent")
+        XCTAssertEqual(synced?.head?.seq, journal.lastSeq)
+        XCTAssertEqual(synced?.accepted, sent.count)
+        let state = try await authed.journalState()
+        XCTAssertEqual(state.status, "consistent")
+        let tap = try XCTUnwrap(sent.first { $0.content.contains("\"tap_started\"") })
+        guard case let .object(fields) = try JSONDecoder().decode(JSONValue.self, from: Data(tap.content.utf8)),
+              case let .string(saleID) = fields["payment_intent_id"] else { return XCTFail("tap_started without a payment") }
+        var req = URLRequest(url: URL(string: info.apiUrl + "/v1/payment-intents/\(saleID)/journal")!)
+        req.setValue("Bearer \(info.apiKey)", forHTTPHeaderField: "Authorization")
+        let (body, _) = try await URLSession.shared.data(for: req)
+        let evidence = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        XCTAssertEqual((evidence["data"] as? [Any])?.count, 2) // tap_started and auth_result
+
         // Balance and a payout to a Pix key.
         let balance = try await authed.balance()
         XCTAssertGreaterThan(balance.available, 0)
@@ -99,6 +142,9 @@ final class SandboxIntegrationTests: XCTestCase {
         XCTAssertEqual(payout.status, "paid")
         let entries = try await authed.entries(limit: 5)
         XCTAssertFalse(entries.data.isEmpty)
+        // Statements: the session sees only its own merchant's (today's closes after 01:00 tomorrow).
+        let settlements = try await authed.settlements()
+        XCTAssertTrue(settlements.data.allSatisfy { $0.merchantId == merchantID })
 
         // The owner's phone adds a cashier phone, then removes it: its session ends at once.
         let cashier = NostrKeys.generate()

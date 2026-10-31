@@ -104,7 +104,17 @@ func (p *phone) do(method, path string, body any) (int, map[string]any) {
 
 func (p *phone) login(t *testing.T) (int, map[string]any) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"dpop_jwk": mobileauth.PublicJWK(p.dpop)})
+	return p.loginWith(t, nil)
+}
+
+// loginWith logs in, sending attestation evidence with the login when given.
+func (p *phone) loginWith(t *testing.T, attestation map[string]any) (int, map[string]any) {
+	t.Helper()
+	req := map[string]any{"dpop_jwk": mobileauth.PublicJWK(p.dpop)}
+	if attestation != nil {
+		req["attestation"] = attestation
+	}
+	body, _ := json.Marshal(req)
 	auth, err := mobileauth.SignNIP98(p.device, "POST", p.st.api+"/v1/auth/nostr", body, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +240,7 @@ func TestMerchantAppProtocol(t *testing.T) {
 		{"GET", "/v1/accounts/" + otherAccount + "/balance", nil, 404},
 		{"POST", "/v1/payouts/quotes", map[string]any{"account_id": otherAccount, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "1"}}, 404},
 		{"POST", "/v1/merchants/" + other + "/enrollment-codes", nil, 404},
-		{"POST", "/v1/refunds", map[string]any{"payment_intent_id": pi["id"], "amount": 100}, 403},
+		{"POST", "/v1/refunds", map[string]any{"payment_intent_id": otherPI["id"], "amount": 100}, 404},
 		{"GET", "/v1/disputes", nil, 403},
 		{"POST", "/v1/merchants", map[string]any{}, 403},
 		{"POST", "/v1/webhook-endpoints", map[string]any{"url": "http://x"}, 403},
@@ -239,6 +249,10 @@ func TestMerchantAppProtocol(t *testing.T) {
 		if code, out := owner.do(c.method, c.path, c.body); code != c.want {
 			t.Errorf("session %s %s: HTTP %d (want %d) %v", c.method, c.path, code, c.want, out)
 		}
+	}
+	// A refund goes back to the payer only; the app may undo its own sales (docs/06 §5).
+	if c, out := owner.do("POST", "/v1/refunds", map[string]any{"payment_intent_id": pi["id"], "amount": 100}); c != 201 {
+		t.Fatalf("a session refunding its own sale: %d %v", c, out)
 	}
 	_, pi2 := owner.do("POST", "/v1/payment-intents", map[string]any{"amount": 700})
 	tapBody["payment_intent_id"], tapBody["terminal_id"], tapBody["stan"] = pi2["id"], "T0THER00", "000102"
@@ -278,5 +292,20 @@ func TestMerchantAppProtocol(t *testing.T) {
 	_ = st.pool.QueryRow(context.Background(), `SELECT status FROM terminals WHERE id = $1`, owner.terminal).Scan(&terminalStatus)
 	if terminalStatus != "revoked" {
 		t.Fatalf("a removed device's terminal is %s", terminalStatus)
+	}
+
+	// Removing and re-adding a phone revives the terminal that the removal revoked, never one
+	// revoked or frozen for another reason (a lost phone, a forked journal, a risk review).
+	st.call("POST", "/v1/terminals/"+cashier.terminal+"/revoke", map[string]any{"reason": "device lost"}, 200)
+	ownerBack := deviceList(t, root, merchant, time.Now().Add(4*time.Second), owner)
+	st.call("POST", "/v1/merchants/"+merchant+"/devices", map[string]any{"device_npub": npub, "platform": "android", "authorization_event": ownerBack}, 201)
+	both = deviceList(t, root, merchant, time.Now().Add(5*time.Second), owner, cashier)
+	st.call("POST", "/v1/merchants/"+merchant+"/devices", map[string]any{"device_npub": cashierNpub, "platform": "android", "authorization_event": both}, 201)
+	for id, want := range map[string]string{owner.terminal: "active|", cashier.terminal: "revoked|device lost"} {
+		var status, reason string
+		_ = st.pool.QueryRow(context.Background(), `SELECT status, COALESCE(revoked_reason, '') FROM terminals WHERE id = $1`, id).Scan(&status, &reason)
+		if status+"|"+reason != want {
+			t.Errorf("terminal %s after remove and re-add: %s|%s, want %s", id, status, reason, want)
+		}
 	}
 }
