@@ -28,6 +28,7 @@
 //	platform decripto [-month YYYY-MM] [-out FILE]   write a month's DeCripto for filing
 //	platform decripto-filed -month YYYY-MM -sha256 H -receipt N -actor A
 //	platform compliance-cases -tenant T [-status open|all]   held deposits and travel-rule reviews
+//	platform audit-verify                   check the audit trail's hash chain against the published heads
 //	platform compliance-decide -tenant T -case C -action release|block|close -reason R -actor A
 package main
 

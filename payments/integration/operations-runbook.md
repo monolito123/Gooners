@@ -238,4 +238,12 @@ SELECT at, actor, action, target, detail FROM ops_audit WHERE tenant_id = '…' 
 SELECT * FROM ops_audit WHERE target = 'mer_…' ORDER BY at;
 ```
 
-Journals are never edited. A correction is a new journal, and every manual posting (`recon-allocate`, `write-off`, `settle`) has an audit row naming the operator.
+Journals are never edited. A correction is a new journal, and every manual posting (`recon-allocate`, `write-off`, `settle`) has an audit row naming the operator. Compliance decisions (`compliance_case.release`, `.block`, `.close`) and webhook secret rotations are audited too.
+
+The trail is a hash chain and append-only: `UPDATE` and `DELETE` on `ops_audit` fail, and each row's hash covers the previous one ([03 §6.3a](../docs/03-nostr-layer.md#63a-the-operations-audit-trail)). Each day's signed transparency root publishes the chain's head. The nightly job verifies the whole chain against every published head; so does
+
+```bash
+platform audit-verify      # prints rows, head, anchors compared and any problem; exits 1 if the trail was altered
+```
+
+A failure (`goonerspay_audit_chain_failures_total` increases) is a security incident: the problems name the first row that no longer matches, or the published day whose head the trail no longer reproduces. Preserve the database as it is (a snapshot), compare it with the latest backup and the WORM export, and treat every operator action since the last good head as unverified until explained.

@@ -170,15 +170,32 @@ func (l *Log) Index(leaf []byte) int {
 
 // RootEvent is the unsigned kind 7715 root for date, chained to the previous root.
 func RootEvent(date string, l *Log, prevEventID, relay, padding string, at time.Time) (*nostr.Event, error) {
+	return RootEventWithAudit(date, l, prevEventID, relay, padding, at, nil)
+}
+
+// AuditHead is the last row of the operations audit trail's hash chain when a day closed:
+// publishing it in the signed root means the trail cannot be rewritten afterwards without
+// the published heads giving it away.
+type AuditHead struct {
+	Seq  int64  `json:"seq"`
+	Head string `json:"head"`
+}
+
+// RootEventWithAudit is RootEvent with the audit trail's head in the content ("audit").
+func RootEventWithAudit(date string, l *Log, prevEventID, relay, padding string, at time.Time, audit *AuditHead) (*nostr.Event, error) {
 	var prev any
 	tags := [][]string{{"log", LogName}, {"date", date}}
 	if prevEventID != "" {
 		prev = prevEventID
 		tags = append(tags, []string{"e", prevEventID, relay, "prev"})
 	}
-	content, err := nostr.CanonicalJSON(map[string]any{
+	c := map[string]any{
 		"v": 1, "log": LogName, "date": date, "tree_size": len(l.Leaves), "root": hex.EncodeToString(l.Root), "prev": prev, "padding": padding,
-	})
+	}
+	if audit != nil {
+		c["audit"] = map[string]any{"seq": audit.Seq, "head": audit.Head}
+	}
+	content, err := nostr.CanonicalJSON(c)
 	if err != nil {
 		return nil, err
 	}

@@ -580,7 +580,8 @@ func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 	if in.OverlapHours != nil {
 		overlap = time.Duration(*in.OverlapHours * float64(time.Hour))
 	}
-	rs, err := s.svc.RotateWebhookSecret(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), overlap)
+	p := from(r.Context())
+	rs, err := s.svc.RotateWebhookSecret(r.Context(), p.tenantID, r.PathValue("id"), p.actor(), overlap)
 	if err != nil {
 		s.fail(w, r, err)
 		return

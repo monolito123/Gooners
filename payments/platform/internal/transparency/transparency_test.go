@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,4 +230,23 @@ func toStrings(v any) []string {
 		out = append(out, x.(string))
 	}
 	return out
+}
+
+func TestRootCarriesTheAuditHead(t *testing.T) {
+	l, err := BuildLog(nil, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Repeat("ab", 32)
+	ev, err := RootEventWithAudit("2026-10-31", l, "", "", Padding(8), time.Unix(1793404800, 0), &AuditHead{Seq: 42, Head: head})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ev.Content, `"audit":{"head":"`+head+`","seq":42}`) {
+		t.Fatalf("content %s", ev.Content)
+	}
+	plain, _ := RootEvent("2026-10-31", l, "", "", Padding(8), time.Unix(1793404800, 0))
+	if strings.Contains(plain.Content, "audit") {
+		t.Fatalf("a root without a head: %s", plain.Content)
+	}
 }

@@ -182,7 +182,11 @@ func (s *Service) CloseDay(ctx context.Context, day time.Time) (*TransparencyRoo
 		return nil, err
 	}
 	now := s.cfg.Now()
-	rootEv, err := transparency.RootEvent(date, log, prev, s.cfg.RelayURL, transparency.Padding(padTo), now)
+	head, err := s.auditHead(ctx) // the audit trail's head, published with the day (runbook §6)
+	if err != nil {
+		return nil, err
+	}
+	rootEv, err := transparency.RootEventWithAudit(date, log, prev, s.cfg.RelayURL, transparency.Padding(padTo), now, head)
 	if err != nil {
 		return nil, err
 	}

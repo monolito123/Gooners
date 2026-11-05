@@ -347,6 +347,11 @@ func (s *Service) DecideCase(ctx context.Context, tenantID, id, action, note, ac
 	if tag.RowsAffected() == 0 {
 		return nil, fmt.Errorf("%w: the case was decided meanwhile", ErrConflict)
 	}
+	if err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		return audit(ctx, tx, tenantID, actor, "compliance_case."+action, id, map[string]any{"kind": c.Kind, "reason": c.Reason, "note": note})
+	}); err != nil {
+		return nil, err
+	}
 	s.log.Info("compliance case decided", "case", id, "decision", status, "by", actor)
 	s.notify(ctx, tenantID, "compliance.case_decided", map[string]any{"id": id, "kind": c.Kind, "status": status})
 	return s.GetCase(ctx, tenantID, id)

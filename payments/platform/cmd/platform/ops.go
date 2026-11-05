@@ -35,6 +35,7 @@ var opsCommands = map[string]func(context.Context, []string) error{
 	"decripto":          deCripto,
 	"decripto-filed":    deCriptoFiled,
 	"compliance-cases":  complianceCases,
+	"audit-verify":      auditVerify,
 	"compliance-decide": complianceDecide,
 }
 
@@ -460,5 +461,27 @@ func complianceDecide(ctx context.Context, args []string) error {
 			return err
 		}
 		return printJSON(c)
+	})
+}
+
+// auditVerify walks the audit trail's hash chain and compares it with the heads the signed
+// transparency roots published (runbook §6). It exits 1 when the trail was altered.
+func auditVerify(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("audit-verify", flag.ExitOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		c, err := svc.VerifyAuditChain(ctx)
+		if err != nil {
+			return err
+		}
+		if err := printJSON(c); err != nil {
+			return err
+		}
+		if !c.OK() {
+			return errors.New("the audit trail was altered")
+		}
+		return nil
 	})
 }

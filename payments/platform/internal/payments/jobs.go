@@ -117,6 +117,11 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 		} else if n > 0 {
 			s.log.Info("risk assessments past retention deleted", "count", n)
 		}
+		if c, err := s.VerifyAuditChain(ctx); err != nil {
+			s.log.Error("verify the audit trail", "err", err)
+		} else if c.OK() {
+			s.log.Info("audit trail verified", "rows", c.Rows, "anchors", c.Anchors)
+		}
 		if n, err := s.RedactTravelRule(ctx, now); err != nil {
 			s.log.Error("redact travel-rule data", "err", err)
 		} else if n > 0 {
