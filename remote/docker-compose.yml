@@ -1,0 +1,61 @@
+# OmniAssist on OCI Always Free (Ampere A1, ARM64).
+#
+# Two services: the signaling server and Coturn (STUN/TURN). Put a TLS-terminating
+# reverse proxy (Caddy/Nginx/Traefik) in front of the signaling server so the web
+# controller can reach it over wss://. Coturn uses host networking because it must
+# own its UDP relay port range directly.
+#
+# OCI networking checklist (easy to miss — sessions fail silently otherwise):
+#   * Security List / NSG ingress: TCP 443 (proxy), UDP+TCP 3478 (STUN/TURN),
+#     UDP 49160-49200 (relay range), optionally TCP 5349 (TURNS).
+#   * Oracle Linux also has iptables rules by default — open the same ports with
+#     firewall-cmd or the ports never actually reach the containers.
+#
+# Start:  docker compose up -d --build
+
+services:
+  signaling:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    restart: unless-stopped
+    env_file: ./server/.env
+    environment:
+      NODE_ENV: production
+    ports:
+      - "8080:8080"
+    # Modest caps: signaling is light. Leaves headroom for Coturn.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    platform: linux/arm64
+    restart: unless-stopped
+    network_mode: host # Coturn needs direct access to its UDP relay ports
+    volumes:
+      - ./server/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    environment:
+      TURN_PUBLIC_IP: ${TURN_PUBLIC_IP}
+      TURN_REALM: ${TURN_REALM}
+      TURN_STATIC_SECRET: ${TURN_STATIC_SECRET}
+    # Substitute env into the config at start (coturn doesn't expand ${...} itself).
+    # Uses sed so it works even on the minimal alpine image (no gettext/envsubst).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed -e "s|\$${TURN_PUBLIC_IP}|$${TURN_PUBLIC_IP}|g" \
+            -e "s|\$${TURN_REALM}|$${TURN_REALM}|g" \
+            -e "s|\$${TURN_STATIC_SECRET}|$${TURN_STATIC_SECRET}|g" \
+            /etc/coturn/turnserver.conf > /tmp/turnserver.conf && \
+        exec turnserver -c /tmp/turnserver.conf

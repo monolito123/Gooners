@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OmniAssist — Controller</title>
+    <meta name="description" content="Browser controller for OmniAssist transparent remote assistance." />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><span class="dot" aria-hidden="true"></span> OmniAssist <small>Controller</small></div>
+      <div id="conn-state" class="pill pill-idle">Not connected</div>
+    </header>
+
+    <!-- Connect panel -->
+    <main id="panel-connect" class="panel">
+      <h1>Connect to a device</h1>
+      <p class="muted">
+        Ask the person at the device to read you their <strong>session ID</strong>
+        and <strong>6-digit PIN</strong>. They must tap <em>Accept</em> on their
+        device before the session starts — you will see it waiting.
+      </p>
+
+      <label>Signaling server
+        <input id="server-url" type="text" value="ws://localhost:8080" spellcheck="false" />
+      </label>
+
+      <div class="row">
+        <label>Session ID
+          <input id="device-id" inputmode="numeric" autocomplete="off" placeholder="123 456 789" />
+        </label>
+        <label>PIN
+          <input id="pin" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="● ● ● ● ● ●" />
+        </label>
+      </div>
+
+      <label class="checkbox">
+        <input id="unattended" type="checkbox" />
+        Unattended access (device must have it enabled; you'll be asked for its password)
+      </label>
+
+      <button id="btn-connect" class="primary">Request session</button>
+      <p id="connect-msg" class="msg" role="status" aria-live="polite"></p>
+
+      <details class="legal">
+        <summary>Authorized use only</summary>
+        <p>
+          By connecting you confirm you have the device owner's informed consent
+          to access this device for a lawful support purpose. Covert monitoring is
+          prohibited and in many places illegal. See the Terms of Use.
+        </p>
+      </details>
+    </main>
+
+    <!-- Session view -->
+    <section id="panel-session" class="panel hidden">
+      <div class="session-banner" id="session-banner">
+        <span class="live" aria-hidden="true"></span>
+        <span id="session-banner-text">Connecting…</span>
+        <span class="spacer"></span>
+        <button id="btn-clipboard" class="ghost" title="Send clipboard text to device">Send clipboard</button>
+        <button id="btn-end" class="danger">End session</button>
+      </div>
+
+      <div class="stage">
+        <video id="remote-video" autoplay playsinline></video>
+        <div id="stage-overlay" class="stage-overlay">Waiting for the device's screen…</div>
+      </div>
+
+      <div class="statusline">
+        <span id="stat-latency">RTT — ms</span>
+        <span id="stat-res">— × —</span>
+        <span id="stat-fps">— fps</span>
+        <span id="stat-mode"></span>
+      </div>
+    </section>
+
+    <footer class="foot muted">
+      Media is end-to-end encrypted and peer-to-peer. The server relays signaling only.
+    </footer>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
