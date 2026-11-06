@@ -134,6 +134,10 @@ final class SandboxIntegrationTests: XCTestCase {
         let evidence = try JSONSerialization.jsonObject(with: body) as! [String: Any]
         XCTAssertEqual((evidence["data"] as? [Any])?.count, 2) // tap_started and auth_result
 
+        // The day at a glance counts the sale.
+        let day = try await authed.daySummary()
+        XCTAssertTrue(day.sales >= 1 && day.gross == day.hourly.reduce(0, +) && !day.recent.isEmpty)
+
         // Balance and a payout to a Pix key.
         let balance = try await authed.balance()
         XCTAssertGreaterThan(balance.available, 0)

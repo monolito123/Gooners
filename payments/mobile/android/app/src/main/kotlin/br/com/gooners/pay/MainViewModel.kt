@@ -10,6 +10,7 @@ import br.com.gooners.pay.core.statements.Statement
 import br.com.gooners.pay.core.api.Settlement
 import br.com.gooners.pay.core.api.ApiException
 import br.com.gooners.pay.core.api.Balance
+import br.com.gooners.pay.core.api.DaySummary
 import br.com.gooners.pay.core.api.DeviceCreate
 import br.com.gooners.pay.core.api.Entry
 import br.com.gooners.pay.core.api.GoonersPayApi
@@ -63,6 +64,8 @@ data class MoneyState(
     val settlements: List<Settlement> = emptyList(),
     /** The statement open on screen, checked on the phone. */
     val statement: Statement? = null,
+    /** The day at a glance; null until loaded, or from a platform without the summary. */
+    val today: DaySummary? = null,
 )
 
 /** Crypto, foreign currency and B3 (docs/09). */
@@ -291,9 +294,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshMoney() = run {
         val a = authed ?: return@run
         val balance = a.balance()
+        // An older platform has no day summary: the screen simply shows no "Hoje" card.
+        val today = try { a.daySummary() } catch (e: ApiException) { if (e.status == 404) null else throw e }
         val entries = a.entries(20).data
         val settlements = a.settlements().data
-        _money.update { it.copy(balance = balance, entries = entries, settlements = settlements) }
+        _money.update { it.copy(balance = balance, today = today, entries = entries, settlements = settlements) }
     }
 
     /** Opens a day's statement: fetched, then checked against the public root on the phone. */

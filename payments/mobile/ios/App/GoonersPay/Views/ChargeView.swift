@@ -199,7 +199,7 @@ private struct MethodSheet: View {
                         let label = n == 1 ? "À vista" : "\(n)× \(Money(amount.centavos / Int64(n)).format())"
                         Button(label) { parcelas = n }
                             .buttonStyle(.bordered)
-                            .tint(parcelas == n ? Theme.action : Theme.textSecondary)
+                            .tint(parcelas == n ? Theme.actionText : Theme.textSecondary)
                             .accessibilityAddTraits(parcelas == n ? .isSelected : [])
                     }
                 }
@@ -223,9 +223,9 @@ private struct TapTarget: View {
 
     var body: some View {
         Circle()
-            .stroke(Theme.action, lineWidth: 4)
+            .stroke(Theme.actionText, lineWidth: 4)
             .frame(width: 140, height: 140)
-            .overlay(Text("Aproxime\naqui").multilineTextAlignment(.center).font(.headline).foregroundStyle(Theme.action))
+            .overlay(Text("Aproxime\naqui").multilineTextAlignment(.center).font(.headline).foregroundStyle(Theme.actionText))
             .scaleEffect(pulse && !reduceMotion ? 1.12 : 1)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
             .onAppear { pulse = true }

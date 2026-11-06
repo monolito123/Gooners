@@ -363,3 +363,47 @@ data class Conversion(
     val status: String,
     @SerialName("expires_at") val expiresAt: String,
 )
+
+/** A merchant's day at a glance, in Brasília time (GET /v1/merchants/{id}/summary, docs/02 §8.5). */
+@Serializable
+data class DaySummary(
+    val date: String,
+    val sales: Long = 0,
+    val gross: Long = 0,
+    val refunded: Long = 0,
+    val fees: Long = 0,
+    val net: Long = 0,
+    @SerialName("average_ticket") val averageTicket: Long = 0,
+    @SerialName("by_method") val byMethod: List<MethodTotal> = emptyList(),
+    /** The gross captured in each hour, 0 to 23. */
+    val hourly: List<Long> = emptyList(),
+    @SerialName("last_week") val lastWeek: LastWeek? = null,
+    val waiting: WaitingTotal = WaitingTotal(),
+    val recent: List<RecentPayment> = emptyList(),
+)
+
+@Serializable
+data class MethodTotal(val method: String, val sales: Long = 0, val gross: Long = 0)
+
+@Serializable
+data class LastWeek(
+    val date: String,
+    val sales: Long = 0,
+    val gross: Long = 0,
+    /** Null when last week sold nothing: there is nothing to compare with. */
+    @SerialName("change_pct") val changePct: Double? = null,
+)
+
+@Serializable
+data class WaitingTotal(val count: Long = 0, val amount: Long = 0)
+
+@Serializable
+data class RecentPayment(
+    val id: String,
+    val amount: Long,
+    val method: String,
+    val status: String,
+    /** Brand and last four digits, for a card. */
+    val card: String? = null,
+    @SerialName("created_at") val createdAt: String,
+)

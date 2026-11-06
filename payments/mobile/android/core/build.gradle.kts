@@ -32,6 +32,7 @@ dependencies {
 tasks.test {
     systemProperty("conformance.vectors", rootProject.file("../conformance/vectors.json").absolutePath)
     systemProperty("nostr.examples", rootProject.file("../../nostr/examples").absolutePath)
+    systemProperty("api.reference", rootProject.file("../../docs/02-api-reference.md").absolutePath)
     // Against a live sandbox (GOONERSPAY_SANDBOX) the tests talk to a server: never reuse a
     // result, cached or up to date, from another run.
     val sandbox = providers.environmentVariable("GOONERSPAY_SANDBOX")

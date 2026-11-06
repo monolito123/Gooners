@@ -101,6 +101,20 @@ func (s *Server) getMerchant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 
+// merchantSummary is the merchant's day at a glance (?date=YYYY-MM-DD, Brasília; today by default).
+func (s *Server) merchantSummary(w http.ResponseWriter, r *http.Request) {
+	if !owns(from(r.Context()), r.PathValue("id")) {
+		notYours(w, r)
+		return
+	}
+	sum, err := s.svc.DaySummary(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), r.URL.Query().Get("date"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
+}
+
 func (s *Server) registerTerminal(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		MerchantID      string `json:"merchant_id"`

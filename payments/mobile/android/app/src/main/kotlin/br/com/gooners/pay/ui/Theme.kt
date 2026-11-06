@@ -1,62 +1,90 @@
 package br.com.gooners.pay.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 
-// payments/design/tokens: the primitives the app uses.
+// The app's theme, built from the generated tokens (DesignTokens.kt, from payments/design/tokens.json).
+
+/** Sizes the screens use, from the tokens. */
 object Tokens {
-    val Midnight950 = Color(0xFF0B0F19)
-    val Slate50 = Color(0xFFF8FAFC)
-    val Slate100 = Color(0xFFF1F5F9)
-    val Slate300 = Color(0xFFCBD5E1)
-    val Slate400 = Color(0xFF94A3B8)
-    val Slate600 = Color(0xFF475569)
-    val Slate700 = Color(0xFF334155)
-    val Slate800 = Color(0xFF1E293B)
-    val Slate900 = Color(0xFF111827)
-    val Mint400 = Color(0xFF34D399)
-    val Mint500 = Color(0xFF10B981)
-    val Mint700 = Color(0xFF047857)
-    val Amber500 = Color(0xFFF59E0B)
-    val Amber700 = Color(0xFFB45309)
-    val Coral400 = Color(0xFFFB7185)
-    val Coral700 = Color(0xFFBE123C)
-    val Indigo400 = Color(0xFF818CF8)
-    val Indigo700 = Color(0xFF4338CA)
-
-    val TouchMin = 48.dp
-    val KeypadKey = 72.dp
-    val CtaHeight = 56.dp
+    val TouchMin = Sizes.TouchMin
+    val KeypadKey = Sizes.KeypadKey
+    val CtaHeight = Sizes.CtaHeight
 }
 
-private val Dark = darkColorScheme(
-    primary = Tokens.Mint500, onPrimary = Tokens.Midnight950,
-    secondary = Tokens.Indigo400, onSecondary = Tokens.Midnight950,
-    background = Tokens.Midnight950, onBackground = Tokens.Slate50,
-    surface = Tokens.Slate900, onSurface = Tokens.Slate50,
-    surfaceVariant = Tokens.Slate800, onSurfaceVariant = Tokens.Slate300,
-    outline = Tokens.Slate600,
-    error = Tokens.Coral400, onError = Tokens.Midnight950,
-    tertiary = Tokens.Amber500,
+/** The semantic colours of the theme in use, for what Material's roles do not name. */
+val LocalSemantic = staticCompositionLocalOf { Themes.Dark }
+
+/** The semantic colours of the theme in use. */
+val semantic: SemanticColors
+    @Composable @ReadOnlyComposable get() = LocalSemantic.current
+
+// Material's primary is also a text colour (text buttons, the selected tab): in light it is
+// the action outline green, the shade that reads on white; filled buttons use action-fill.
+// Every container role is mapped too, or Material's own defaults (lavender containers, a
+// tinted elevation) would leak into the navigation bar, chips, cards and snackbars.
+private fun scheme(s: SemanticColors, dark: Boolean): ColorScheme {
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    val primary = if (dark) s.actionFill else s.actionBorder
+    val onStrong = if (dark) s.canvas else Palette.White
+    return base.copy(
+        primary = primary, onPrimary = if (dark) s.onAction else Palette.White,
+        primaryContainer = s.actionFill, onPrimaryContainer = s.onAction,
+        inversePrimary = if (dark) Palette.Mint700 else Palette.Mint400,
+        secondary = s.infoText, onSecondary = onStrong,
+        secondaryContainer = s.surfaceRaised, onSecondaryContainer = s.textPrimary,
+        tertiary = s.attentionText, onTertiary = onStrong,
+        tertiaryContainer = s.attentionFill, onTertiaryContainer = s.onAttention,
+        background = s.canvas, onBackground = s.textPrimary,
+        surface = s.surface, onSurface = s.textPrimary,
+        surfaceVariant = s.surfaceRaised, onSurfaceVariant = s.textSecondary,
+        surfaceTint = s.surface,
+        inverseSurface = s.textPrimary, inverseOnSurface = s.canvas,
+        surfaceBright = s.surface, surfaceDim = s.canvas,
+        surfaceContainerLowest = s.canvas, surfaceContainerLow = s.surface, surfaceContainer = s.surface,
+        surfaceContainerHigh = s.surfaceRaised, surfaceContainerHighest = s.surfaceRaised,
+        outline = s.border, outlineVariant = s.border,
+        error = s.alertText, onError = onStrong,
+        errorContainer = s.alertFill, onErrorContainer = s.onAlert,
+        scrim = Palette.Black,
+    )
+}
+
+private val type = Typography(
+    displayLarge = TypeScale.AmountDisplay,
+    displaySmall = TypeScale.Kpi,
+    headlineSmall = TypeScale.Headline,
+    titleLarge = TypeScale.Title,
+    bodyLarge = TypeScale.Body,
+    bodyMedium = TypeScale.Body.copy(fontSize = TypeScale.Label.fontSize, lineHeight = TypeScale.Label.lineHeight),
+    labelLarge = TypeScale.Label,
+    labelSmall = TypeScale.Overline,
+    bodySmall = TypeScale.Caption,
 )
 
-private val Light = lightColorScheme(
-    primary = Tokens.Mint700, onPrimary = Color.White,
-    secondary = Tokens.Indigo700, onSecondary = Color.White,
-    background = Tokens.Slate50, onBackground = Tokens.Slate900,
-    surface = Color.White, onSurface = Tokens.Slate900,
-    surfaceVariant = Tokens.Slate100, onSurfaceVariant = Tokens.Slate700,
-    outline = Tokens.Slate400,
-    error = Tokens.Coral700, onError = Color.White,
-    tertiary = Tokens.Amber700,
+private val shapes = Shapes(
+    extraSmall = RoundedCornerShape(Radius.Sm),
+    small = RoundedCornerShape(Radius.Sm),
+    medium = RoundedCornerShape(Radius.Md),
+    large = RoundedCornerShape(Radius.Lg),
+    extraLarge = RoundedCornerShape(Radius.Xl),
 )
 
 @Composable
 fun GoonersPayTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, content = content)
+    val dark = isSystemInDarkTheme()
+    val s = if (dark) Themes.Dark else Themes.Light
+    CompositionLocalProvider(LocalSemantic provides s) {
+        MaterialTheme(colorScheme = scheme(s, dark), typography = type, shapes = shapes, content = content)
+    }
 }

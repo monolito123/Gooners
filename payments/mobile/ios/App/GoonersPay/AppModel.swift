@@ -77,6 +77,8 @@ final class AppModel {
     var destination: PixDestination?
     var lastPayout: String?
     var settlements: [Settlement] = []
+    /// The day at a glance; nil until loaded, or from a platform without the summary.
+    var today: DaySummary?
     /// The statement open on screen, checked on the phone.
     var statement: Statement?
     var devices: [DeviceList.Entry]
@@ -321,6 +323,8 @@ final class AppModel {
         run { [self] in
             guard let a = box.authed else { return }
             balance = try await a.balance()
+            // An older platform has no day summary: the screen simply shows no "Hoje" section.
+            do { today = try await a.daySummary() } catch let e as APIError where e.status == 404 { today = nil }
             entries = try await a.entries(limit: 20).data
             settlements = try await a.settlements().data
         }
@@ -481,7 +485,9 @@ final class AppModel {
         settings.clear()
         devices = []
         balance = nil
+        today = nil
         entries = []
+        settlements = []
         quote = nil
         holdings = []
         accounts = []

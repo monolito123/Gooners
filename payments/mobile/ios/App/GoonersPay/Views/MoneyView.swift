@@ -17,15 +17,9 @@ struct MoneyView: View {
         List {
             // One number first (docs/06 §6).
             Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Disponível agora").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                    Text(model.balance.map { Money($0.available).format() } ?? "—")
-                        .font(.system(size: 40, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.positive)
-                        .minimumScaleFactor(0.6)
-                        .lineLimit(1)
-                        .accessibilityLabel(model.balance.map { "Disponível agora: " + Money($0.available).spoken() } ?? "Carregando")
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Kpi(label: "Disponível agora", value: model.balance.map { Money($0.available).format() } ?? "—", lead: true, color: Theme.positive,
+                        spoken: model.balance.map { Money($0.available).spoken() } ?? "carregando")
                     if !payingOut && model.quote == nil {
                         Button("Sacar por Pix") { payingOut = true }.buttonStyle(.primary).disabled((model.balance?.available ?? 0) <= 0)
                     }
@@ -33,6 +27,10 @@ struct MoneyView: View {
                 .padding(.vertical, 4)
             }
             if payingOut || model.quote != nil { payout }
+            if let day = model.today {
+                TodaySection(day: day)
+                if !day.recent.isEmpty { RecentSalesSection(rows: day.recent) }
+            }
             if let b = model.balance {
                 Section("A receber") {
                     LabeledContent("Total", value: Money(b.pending).format()).bold()

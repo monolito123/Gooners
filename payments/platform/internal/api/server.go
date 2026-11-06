@@ -140,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/merchants/{id}/enrollment-codes", "merchants:write", true, s.createEnrollmentCode)
 	route("POST /v1/merchants", "merchants:write", true, s.createMerchant)
 	route("GET /v1/merchants/{id}", "merchants:write", false, s.getMerchant)
+	route("GET /v1/merchants/{id}/summary", "payments:read", false, s.merchantSummary)
 	route("POST /v1/terminals", "merchants:write", true, s.registerTerminal)
 	route("POST /v1/terminals/{id}/revoke", "merchants:write", true, s.revokeTerminal)
 	route("POST /v1/payment-intents", "payments:write", true, s.createIntent)
@@ -207,6 +208,7 @@ var explicitOnly = map[string]bool{"compliance:write": true, "travel_rule:read":
 // holds the session to its own merchant (ownership checks in handlers.go).
 var sessionRoutes = map[string]bool{
 	"GET /v1/merchants/{id}":                             true,
+	"GET /v1/merchants/{id}/summary":                     true, // the apps' home screen
 	"POST /v1/merchants/{id}/devices":                    true,
 	"POST /v1/merchants/{id}/enrollment-codes":           true,
 	"POST /v1/payment-intents":                           true,

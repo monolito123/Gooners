@@ -62,7 +62,7 @@ The integration tests create a merchant and an enrollment code with the partner 
 
 ## Status and next steps
 
-Built and tested: pairing, the root key backup, NIP-98 login with DPoP sessions, attestation evidence (verified by the platform when it has the roots), card sales through the sandbox reader, Pix, crypto charges, the two-tap checkout with method memory, long-press repeat, parcelas, auto-return and Cancelar venda, spoken amounts, receivables, payouts with biometric step-up, crypto and foreign-currency conversions, accounts abroad, B3 positions, device management with QR scanning, the terminal journal, certificate pinning, the fraud shield's device score and statements checked on the phone, on both platforms. The checkout's behaviour, the spoken-amount table and the wording table are unit-tested in both cores against the same values. CI (`.github/workflows/payments-mobile.yml`) runs the conformance and sandbox tests of both cores, builds the Android app (debug, minified release, lint) and the iOS app for the simulator and for devices.
+Built and tested: pairing, the root key backup, NIP-98 login with DPoP sessions, attestation evidence (verified by the platform when it has the roots), card sales through the sandbox reader, Pix, crypto charges, the two-tap checkout with method memory, long-press repeat, parcelas, auto-return and Cancelar venda, spoken amounts, receivables, payouts with biometric step-up, crypto and foreign-currency conversions, accounts abroad, B3 positions, device management with QR scanning, the terminal journal, certificate pinning, the fraud shield's device score, statements checked on the phone, and the day at a glance ("Hoje" in Dinheiro: sales and what the merchant keeps against the same weekday last week, sales by hour and by method, what still waits, the latest sales with status chips), on both platforms. Colours, type, spacing and icons are generated from `payments/design` (`npm run tokens`, [06 §8](../docs/06-design-system.md#8-platform-mapping)): Android draws the line icons, iOS uses the matching SF Symbols. The checkout's behaviour, the spoken-amount table, the wording table and the day card's words and figures are unit-tested in both cores against the same values. CI (`.github/workflows/payments-mobile.yml`) runs the conformance and sandbox tests of both cores, builds the Android app (debug, minified release, lint) and the iOS app for the simulator and for devices.
 
 Not built yet, in the order they matter:
 
@@ -70,5 +70,5 @@ Not built yet, in the order they matter:
 2. **Play Integrity** at session start (it needs Google's decode API on the platform). iPhones already sign every sale with their attested key.
 3. **The mTLS terminal certificate** of docs/05 §2.4, issued after attestation.
 4. **Offline sales**: static Pix QR and cash sales recorded offline (the journal already queues; the sale screens need the network).
-5. Localization beyond pt-BR, and the sunlight theme.
+5. Localization beyond pt-BR, and switching the apps to the sunlight theme (its tokens are generated, and the web console already offers it).
 6. B3 orders from the phone (the web console places them today).

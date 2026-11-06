@@ -2,9 +2,9 @@ name: goonersPAY mobile (Android, iOS)
 
 on:
   push:
-    paths: ['payments/mobile/**', 'payments/platform/**', 'payments/nostr/examples/**', '.github/workflows/payments-mobile.yml']
+    paths: ['payments/mobile/**', 'payments/platform/**', 'payments/nostr/examples/**', 'payments/design/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-mobile.yml']
   pull_request:
-    paths: ['payments/mobile/**', 'payments/platform/**', 'payments/nostr/examples/**', '.github/workflows/payments-mobile.yml']
+    paths: ['payments/mobile/**', 'payments/platform/**', 'payments/nostr/examples/**', 'payments/design/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-mobile.yml']
   workflow_dispatch:
 
 permissions:

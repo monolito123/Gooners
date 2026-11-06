@@ -822,6 +822,39 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
 
 ---
 
+### 8.5 `GET /v1/merchants/{id}/summary`
+
+The merchant's day at a glance, in Brasília time (`?date=YYYY-MM-DD`; today by default): what the apps' and the console's home screens show first ([06 §6](06-design-system.md#6-zero-cognitive-friction-dashboard)). An app session reads its own merchant's; a partner key needs `payments:read`. Amounts are centavos.
+
+- `sales`, `gross`, `refunded`, `fees`, `net`, `average_ticket`: the payments captured that day.
+- `by_method`: how customers paid (`credit`, `debit`, `card` when the funding is unknown, `pix`, `crypto`), largest first.
+- `hourly`: the gross captured in each of the 24 hours.
+- `last_week`: the same weekday a week before, up to the same time of day when the date is today, and `change_pct` against it (null when it sold nothing).
+- `waiting`: charges shown and not yet paid (a Pix QR, a crypto transfer, a payment held for compliance).
+- `recent`: the day's eight latest payments, newest first, whatever their outcome.
+
+```json
+{
+  "object": "day_summary",
+  "merchant_id": "mer_01M69K0V3GC8TSECSX0HV48PR3",
+  "date": "2026-11-06",
+  "sales": 2,
+  "gross": 12000,
+  "refunded": 0,
+  "fees": 383,
+  "net": 11617,
+  "average_ticket": 6000,
+  "by_method": [{ "method": "credit", "sales": 2, "gross": 12000 }],
+  "hourly": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000, 10000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "last_week": { "date": "2026-10-30", "sales": 1, "gross": 8000, "change_pct": 50 },
+  "waiting": { "count": 1, "amount": 5000 },
+  "recent": [
+    { "id": "pi_01M69K1F0J7Q3ZB7Y2N8K4R5TW", "amount": 5000, "method": "crypto", "status": "requires_action", "created_at": "2026-11-06T14:21:09Z" },
+    { "id": "pi_01M69K0Z8S5D2C1X4V6B3N7M9Q", "amount": 2000, "method": "credit", "status": "captured", "card": "visa •••• 1111", "created_at": "2026-11-06T14:20:51Z" }
+  ]
+}
+```
+
 ## 9. Settlements and proofs
 
 `GET /v1/settlements/{id}`:
@@ -1348,6 +1381,7 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 | POST | `/v1/merchants/{id}/devices` | api | `merchants:write` or the owner's session | Key | Root-signed kind 17710 |
 | POST | `/v1/merchants/{id}/enrollment-codes` | api | `merchants:write` or the owner's session | Key | Single use, 15 minutes |
 | GET · POST | `/v1/enrollment` | api | enrollment code | — | The phone enrolls itself |
+| GET | `/v1/merchants/{id}/summary` | api | `payments:read` or the merchant's session | Yes | The day at a glance |
 | POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
 | POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
 | GET | `/v1/settlements` · `/{id}` · `/{id}/statement` · `/{id}/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | App sessions see their own merchant |

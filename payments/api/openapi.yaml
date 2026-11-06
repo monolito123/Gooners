@@ -960,6 +960,34 @@ paths:
         "4XX":
           $ref: "#/components/responses/Problem"
 
+  /v1/merchants/{id}/summary:
+    get:
+      tags: [merchants]
+      operationId: getMerchantSummary
+      summary: The merchant's day at a glance (payments:read, or the merchant's own app session)
+      description: >
+        Sales, gross, fees and net captured on a Brasília day, split by payment method and by
+        hour, against the same weekday a week before (up to the same time of day for today),
+        the charges still waiting, and the day's latest payments.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+        - name: date
+          in: query
+          description: The day, YYYY-MM-DD in Brasília time; today when absent.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The day
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DaySummary"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+
   /v1/merchants/{id}/devices:
     post:
       tags: [merchants]
@@ -3135,6 +3163,89 @@ components:
           description: Pricing (basis points per product, risk tier, instant settlement).
           additionalProperties: true
 
+    DaySummary:
+      type: object
+      required: [object, merchant_id, date, sales, gross, refunded, fees, net, average_ticket, by_method, hourly, last_week, waiting, recent]
+      properties:
+        object:
+          const: day_summary
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        date:
+          type: string
+          format: date
+        sales:
+          type: integer
+        gross:
+          $ref: "#/components/schemas/MinorUnits"
+        refunded:
+          $ref: "#/components/schemas/MinorUnits"
+        fees:
+          $ref: "#/components/schemas/MinorUnits"
+        net:
+          type: integer
+          description: Gross less refunds and fees, in centavos (negative on a day of refunds).
+        average_ticket:
+          $ref: "#/components/schemas/MinorUnits"
+        by_method:
+          type: array
+          items:
+            type: object
+            required: [method, sales, gross]
+            properties:
+              method:
+                type: string
+                enum: [credit, debit, card, pix, crypto, ecommerce]
+              sales:
+                type: integer
+              gross:
+                $ref: "#/components/schemas/MinorUnits"
+        hourly:
+          type: array
+          minItems: 24
+          maxItems: 24
+          items:
+            $ref: "#/components/schemas/MinorUnits"
+        last_week:
+          type: object
+          required: [date, sales, gross, change_pct]
+          properties:
+            date:
+              type: string
+              format: date
+            sales:
+              type: integer
+            gross:
+              $ref: "#/components/schemas/MinorUnits"
+            change_pct:
+              type: [number, "null"]
+        waiting:
+          type: object
+          required: [count, amount]
+          properties:
+            count:
+              type: integer
+            amount:
+              $ref: "#/components/schemas/MinorUnits"
+        recent:
+          type: array
+          items:
+            type: object
+            required: [id, amount, method, status, created_at]
+            properties:
+              id:
+                $ref: "#/components/schemas/Id"
+              amount:
+                $ref: "#/components/schemas/MinorUnits"
+              method:
+                type: string
+              status:
+                $ref: "#/components/schemas/PaymentIntentStatus"
+              card:
+                type: string
+              created_at:
+                type: string
+                format: date-time
     Merchant:
       type: object
       required: [id, object, status, root_npub]

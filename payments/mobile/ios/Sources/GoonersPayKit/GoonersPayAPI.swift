@@ -251,6 +251,11 @@ public final class GoonersPayAPI: Sendable {
 
         public func balance() async throws -> Balance { try await call("GET", "/v1/accounts/\(session.accountId)/balance") }
 
+        /// The day at a glance (docs/02 §8.5): today in Brasília, or `date` as YYYY-MM-DD.
+        public func daySummary(date: String? = nil) async throws -> DaySummary {
+            try await call("GET", "/v1/merchants/\(session.merchantId)/summary" + (date.map { "?date=\($0)" } ?? ""))
+        }
+
         public func entries(limit: Int = 20) async throws -> Entries {
             try await call("GET", "/v1/accounts/\(session.accountId)/entries?limit=\(limit)")
         }

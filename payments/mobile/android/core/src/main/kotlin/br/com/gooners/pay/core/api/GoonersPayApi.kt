@@ -164,6 +164,10 @@ class GoonersPayApi(
 
         suspend fun balance(): Balance = call("GET", "/v1/accounts/${session.accountId}/balance", null, Balance.serializer())
 
+        /** The day at a glance (docs/02 §8.5): today in Brasília, or [date] as YYYY-MM-DD. */
+        suspend fun daySummary(date: String? = null): DaySummary =
+            call("GET", "/v1/merchants/${session.merchantId}/summary" + (date?.let { "?date=$it" } ?: ""), null, DaySummary.serializer())
+
         suspend fun entries(limit: Int = 20): Entries = call("GET", "/v1/accounts/${session.accountId}/entries?limit=$limit", null, Entries.serializer())
 
         suspend fun quote(amount: Long, destination: PixDestination): Quote =

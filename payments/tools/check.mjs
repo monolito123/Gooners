@@ -256,7 +256,7 @@ const schemaFor = (v) => {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
     transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
     conversion: 'Conversion', crypto_withdrawal: 'CryptoWithdrawal', international_payout: 'InternationalPayout', investment_order: 'InvestmentOrder', portfolio: 'Portfolio',
-    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret',
+    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret', day_summary: 'DaySummary',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';
@@ -299,6 +299,11 @@ for (const p of tokens.$extensions['goonerspay.contrastPairs']) {
   if (c < p.min) bad(`${p.theme} ${p.fg} on ${p.bg}: ${fmt(c)} < ${p.min}`);
 }
 ok(`${tokens.$extensions['goonerspay.contrastPairs'].length} token pairs meet their WCAG minimum`);
+{
+  // The platforms' generated tokens (Kotlin, Swift, CSS) match tokens.json (docs/06 §8).
+  const gen = spawnSync(process.execPath, [join(root, 'tools', 'gen-tokens.mjs'), '--check'], { encoding: 'utf8' });
+  check(gen.status === 0, 'the Android, iOS and console tokens are generated from tokens.json' + (gen.status === 0 ? '' : ': ' + gen.stderr.trim()));
+}
 for (const p of tokens.$extensions['goonerspay.rejected']) if (contrast(p.fg, p.bg) >= p.min) bad(`rejected pair ${p.fg}/${p.bg} actually passes`);
 let rows = 0;
 for (const d of docs) {

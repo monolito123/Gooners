@@ -4,6 +4,7 @@
 // commitment, one primary action per card, calm errors that say what happened, what it means
 // for the money and what to do next.
 import * as verify from './verify.js';
+import { icon, sparkBars } from './icons.js';
 
 // ---------------------------------------------------------------- state and API
 
@@ -197,9 +198,11 @@ const nav = [
 views.overview = async () => {
   if (!S.merchant) return onboarding();
   const m = S.merchant;
-  const [bal, entries, holdings] = await Promise.all([
+  const [bal, day, entries, holdings] = await Promise.all([
     api('GET', `/v1/accounts/${m.account_id}/balance`),
-    api('GET', `/v1/accounts/${m.account_id}/entries?limit=10`),
+    // The day's summary is a newer endpoint: an older platform simply shows no "Hoje" card.
+    api('GET', `/v1/merchants/${m.id}/summary`).catch(() => null),
+    api('GET', `/v1/accounts/${m.account_id}/entries?limit=8`),
     api('GET', `/v1/holdings?merchant_id=${m.id}`).catch(() => ({ data: [] })),
   ]);
   const pending = bal.pending_by_date || [];
@@ -207,7 +210,7 @@ views.overview = async () => {
     h('div', { class: 'grid' },
       card('Disponível agora', h('div', { class: 'hero money pos' }, brl(bal.available)),
         h('p', { class: 'muted' }, `Atualizado ${new Date(bal.as_of).toLocaleTimeString('pt-BR')}`),
-        h('div', { class: 'actions' }, h('a', { class: 'button primary', href: '#/payouts' }, 'Sacar por Pix'))),
+        h('div', { class: 'actions' }, h('a', { class: 'button primary', href: '#/payouts' }, icon('payouts', 18), 'Sacar por Pix'))),
       card('A receber', h('div', { class: 'big money' }, brl(bal.pending)),
         pending.length ? h('ul', { class: 'small' }, pending.slice(0, 5).map((d) => h('li', {}, `${relDay(d.date)}: ${brl(d.amount)}`))) : h('p', { class: 'muted' }, 'Nada a receber.'),
         bal.held ? h('p', { class: 'small' }, badge('Retido para análise', 'warn'), ' ', brl(bal.held)) : null,
@@ -216,9 +219,73 @@ views.overview = async () => {
         ? h('ul', {}, holdings.data.map((x) => h('li', {}, amountFmt(x.amount, x.asset), x.value_brl != null ? h('span', { class: 'muted' }, ` ≈ ${brl(x.value_brl)}`) : '')))
         : h('p', { class: 'muted' }, 'Só reais por enquanto.'),
         h('div', { class: 'actions' }, h('a', { class: 'button', href: '#/crypto' }, 'Cripto'), h('a', { class: 'button', href: '#/international' }, 'Internacional'), h('a', { class: 'button', href: '#/investments' }, 'B3')))),
-    card('Movimentações recentes', entriesTable(entries.data || [])),
+    day ? dayCard(day) : null,
+    h('div', { class: 'grid' },
+      day ? h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Últimas vendas'), h('a', { href: '#/payments' }, 'Ver todas')), recentSales(day.recent)) : null,
+      h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Movimentações recentes'), h('a', { href: '#/statements' }, 'Extratos')), entriesTable(entries.data || []))),
   ];
 };
+
+// How customers paid, in the merchant's words, and the chart colour of each (tokens: chart-*).
+const METHOD = { credit: 'Crédito', debit: 'Débito', prepaid: 'Pré-pago', card: 'Cartão', pix: 'Pix', crypto: 'Cripto' };
+const methodName = (k) => METHOD[k] || String(k).replaceAll('_', ' ');
+const methodSeg = (k) => 'seg-' + (['credit', 'debit', 'pix', 'crypto'].includes(k) ? k : 'other');
+// A payment's state as a chip: the word carries the meaning, the colour only repeats it.
+const STATUS = {
+  captured: ['Paga', 'ok'], partially_refunded: ['Estorno parcial', 'warn'], refunded: ['Estornada', 'info'],
+  requires_action: ['Aguardando', 'warn'], processing: ['Aguardando', 'warn'], requires_payment_method: ['Aguardando', 'warn'], failed: ['Recusada', 'bad'], canceled: ['Cancelada', ''],
+};
+const statusChip = (st) => badge(...(STATUS[st] || [String(st).replaceAll('_', ' '), '']));
+
+/** Today in one card: the money first, then its shape over the day and how it was paid (docs/06 §6). */
+function dayCard(d) {
+  const today = d.date === new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  const when = new Date(d.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const lw = d.last_week || {};
+  let delta = h('span', { class: 'muted small' }, 'Sem vendas no mesmo dia da semana passada');
+  if (lw.change_pct !== null && lw.change_pct !== undefined) {
+    const dir = lw.change_pct > 0 ? 'up' : lw.change_pct < 0 ? 'down' : 'flat';
+    const pct = Math.abs(lw.change_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+    delta = h('span', { class: 'delta ' + dir }, dir === 'flat' ? null : icon(dir, 16), `${dir === 'down' ? '−' : dir === 'up' ? '+' : ''}${pct}%`,
+      h('span', { class: 'muted' }, ` vs. ${new Date(lw.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short' })} passada${today ? ' até agora' : ''}`));
+  }
+  const total = d.by_method.reduce((a, x) => a + x.gross, 0);
+  const mix = h('div', { class: 'mix', role: 'img', 'aria-label': d.by_method.map((x) => `${methodName(x.method)} ${Math.round((100 * x.gross) / total)}%`).join(', ') },
+    d.by_method.map((x) => {
+      const seg = h('span', { class: methodSeg(x.method) });
+      seg.style.width = `${(100 * x.gross) / total}%`;
+      return seg;
+    }));
+  const peak = d.hourly.indexOf(Math.max(...d.hourly));
+  return h('section', { class: 'card wide', 'aria-labelledby': 'day-h' },
+    h('div', { class: 'card-head' }, h('h2', { id: 'day-h' }, today ? 'Hoje' : 'Dia'), h('span', { class: 'muted small' }, when)),
+    h('div', { class: 'kpis' },
+      h('div', { class: 'kpi lead' }, h('div', { class: 'label' }, 'Vendido'), h('div', { class: 'value money' }, brl(d.gross)), delta),
+      h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Você recebe'), h('div', { class: 'value money pos' }, brl(d.net)),
+        h('span', { class: 'muted small' }, d.fees ? `${brl(d.fees)} de taxas` : 'Sem taxas')),
+      h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Vendas'), h('div', { class: 'value' }, String(d.sales)),
+        d.refunded ? h('span', { class: 'muted small' }, `${brl(d.refunded)} estornados`) : null),
+      h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Ticket médio'), h('div', { class: 'value money' }, brl(d.average_ticket)))),
+    d.sales ? h('div', { class: 'day-charts' },
+      h('div', {}, h('div', { class: 'overline' }, 'Por hora'),
+        sparkBars(d.hourly, { label: `Vendas por hora; o pico foi às ${peak}h, com ${brl(d.hourly[peak])}` }),
+        h('div', { class: 'axis', 'aria-hidden': 'true' }, ['0h', '6h', '12h', '18h', '23h'].map((x) => h('span', {}, x)))),
+      h('div', {}, h('div', { class: 'overline' }, 'Como pagaram'), mix,
+        h('ul', { class: 'legend' }, d.by_method.map((x) => h('li', {}, h('span', { class: 'sw ' + methodSeg(x.method) }), h('span', {}, methodName(x.method)),
+          h('span', { class: 'money' }, brl(x.gross)), h('span', { class: 'pct' }, `${Math.round((100 * x.gross) / total)}%`))))))
+      : h('p', { class: 'muted' }, today ? 'Nenhuma venda ainda hoje. A primeira aparece aqui na hora.' : 'Nenhuma venda neste dia.'),
+    d.waiting.count ? h('a', { class: 'waiting', href: '#/payments' }, icon('clock', 20),
+      h('span', {}, h('strong', {}, `${d.waiting.count} ${d.waiting.count === 1 ? 'cobrança aguardando' : 'cobranças aguardando'}`), ` · ${brl(d.waiting.amount)}`)) : null);
+}
+
+function recentSales(rows) {
+  if (!rows.length) return h('p', { class: 'muted' }, 'As vendas do dia aparecem aqui.');
+  return h('ul', { class: 'sales' }, rows.map((p) => h('li', {},
+    h('span', { class: 'dot', 'aria-hidden': 'true' }, h('span', { class: methodSeg(p.method) })),
+    h('div', { class: 'what' }, h('div', {}, p.card || methodName(p.method)),
+      h('div', { class: 'muted small' }, [new Date(p.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }), p.card ? methodName(p.method) : null].filter(Boolean).join(' · '))),
+    h('div', { class: 'end' }, h('span', { class: 'money' }, brl(p.amount)), statusChip(p.status)))));
+}
 
 // The ledger's journal types in the words a merchant uses; anything new falls back to its code.
 const ENTRY = {
@@ -785,6 +852,26 @@ function loginView() {
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Entrar'))));
 }
 
+const brand = () => h('div', { class: 'brand' }, h('span', { class: 'mark', 'aria-hidden': 'true' }, 'g'), h('span', {}, 'gooners', h('b', {}, 'PAY')));
+
+// Dark, light, or sunlight (black on white for a bright room, docs/06 §3); the system decides
+// until the merchant picks one.
+const THEMES = [['dark', 'escuro'], ['light', 'claro'], ['sunlight', 'sol forte']];
+function currentTheme() {
+  return document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+}
+function themeToggle(route) {
+  const label = () => `Tema: ${THEMES.find(([k]) => k === currentTheme())[1]}`;
+  const text = h('span', {}, label());
+  return h('a', { href: '#/' + route, 'aria-live': 'polite', onclick: (e) => {
+    e.preventDefault();
+    const i = THEMES.findIndex(([k]) => k === currentTheme());
+    document.documentElement.dataset.theme = THEMES[(i + 1) % THEMES.length][0];
+    save('gp.theme', document.documentElement.dataset.theme);
+    text.textContent = label();
+  } }, icon('theme'), text);
+}
+
 async function render() {
   S.timers.forEach((t) => clearInterval(t));
   S.timers = [];
@@ -795,23 +882,19 @@ async function render() {
   }
   const route = (location.hash.replace(/^#\//, '') || 'overview').split('?')[0];
   const view = views[route] || views.overview;
-  const side = h('nav', { class: 'side', 'aria-label': 'Seções' }, h('div', { class: 'brand' }, 'gooners', h('b', {}, 'PAY')),
-    nav.map(([group, items]) => [h('div', { class: 'group' }, group), items.map(([id, label]) => h('a', { href: '#/' + id, 'aria-current': id === route ? 'page' : null }, label))]),
+  const side = h('nav', { class: 'side', 'aria-label': 'Seções' }, brand(),
+    nav.map(([group, items]) => [h('div', { class: 'group' }, group),
+      items.map(([id, label]) => h('a', { href: '#/' + id, 'aria-current': id === route ? 'page' : null }, icon(id), label))]),
     h('div', { class: 'group' }, 'Conta'),
-    h('a', { href: '#/' + route, onclick: (e) => {
-      e.preventDefault();
-      const root = document.documentElement;
-      root.dataset.theme = root.dataset.theme === 'light' ? 'dark' : 'light';
-      save('gp.theme', root.dataset.theme);
-    } }, 'Tema claro/escuro'),
+    themeToggle(route),
     h('a', { href: '#/', onclick: (e) => {
       e.preventDefault();
       S.key = '';
       render();
-    } }, 'Sair'));
+    } }, icon('logout'), 'Sair'));
   const title = nav.flatMap(([, items]) => items).find(([id]) => id === route)?.[1] || 'Visão geral';
   const main = h('main', { id: 'main', tabindex: '-1' },
-    h('header', { class: 'top' }, h('button', { class: 'menu-toggle', type: 'button', 'aria-label': 'Menu', onclick: () => side.classList.toggle('open') }, '☰'), h('h1', {}, title),
+    h('header', { class: 'top' }, h('button', { class: 'menu-toggle', type: 'button', 'aria-label': 'Menu', onclick: () => side.classList.toggle('open') }, icon('menu')), h('h1', {}, title),
       h('div', { class: 'who' }, S.env === 'sandbox' ? badge('sandbox', 'warn') : null,
         S.merchant ? h('a', { class: 'button', href: '#/merchants' }, S.merchant.trade_name) : h('a', { class: 'button primary', href: '#/merchants' }, 'Escolher lojista'))),
     h('div', { id: 'flash' }, banner()), h('p', { class: 'loading' }, 'Carregando…'));

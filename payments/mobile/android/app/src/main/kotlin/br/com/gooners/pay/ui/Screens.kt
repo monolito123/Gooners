@@ -20,6 +20,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -210,7 +212,8 @@ private fun AwaitingApprovalScreen(s: Screen.AwaitingApproval, busy: Boolean, ch
 
 // ---- home ----
 
-private val Glyphs = mapOf(AppTab.CHARGE to "R$", AppTab.MONEY to "≡", AppTab.ASSETS to "◆", AppTab.DEVICES to "▣", AppTab.SETTINGS to "⚙")
+private val TabIcons = mapOf(AppTab.CHARGE to AppIcons.Charge, AppTab.MONEY to AppIcons.Money, AppTab.ASSETS to AppIcons.Assets,
+    AppTab.DEVICES to AppIcons.Devices, AppTab.SETTINGS to AppIcons.Settings)
 
 @Composable
 private fun HomeScreen(vm: MainViewModel) {
@@ -227,9 +230,11 @@ private fun HomeScreen(vm: MainViewModel) {
             }
         }
         // At the bottom, in thumb reach (docs/06 §4).
-        NavigationBar {
+        NavigationBar(containerColor = semantic.surface, tonalElevation = 0.dp) {
             tabs.forEach { t ->
-                NavigationBarItem(t == tab, { vm.select(t) }, icon = { Text(Glyphs.getValue(t), fontWeight = FontWeight.Bold) }, label = { Text(t.label) })
+                NavigationBarItem(t == tab, { vm.select(t) }, icon = { Icon(TabIcons.getValue(t), contentDescription = null) }, label = { Text(t.label) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = semantic.textPrimary, selectedTextColor = semantic.textPrimary,
+                        indicatorColor = semantic.surfaceRaised, unselectedIconColor = semantic.textSecondary, unselectedTextColor = semantic.textSecondary))
             }
         }
     }
@@ -566,23 +571,22 @@ private fun MoneyTab(vm: MainViewModel) {
             Spacer(Modifier.height(8.dp))
             val b = m.balance
             // One number first (docs/06 §6).
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Disponível agora", style = MaterialTheme.typography.labelLarge)
-                    Text(b?.let { Money(it.available).format() } ?: "—", style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"),
-                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.semantics { b?.let { contentDescription = "Disponível agora: " + Money(it.available).spoken() } })
-                    if (!payout && m.quote == null) PrimaryButton("Sacar por Pix", enabled = (b?.available ?: 0) > 0) { payout = true }
-                }
+            SectionCard {
+                Kpi("Disponível agora", b?.let { Money(it.available).format() } ?: "—", lead = true, color = semantic.successText,
+                    spoken = b?.let { Money(it.available).spoken() })
+                if (!payout && m.quote == null) PrimaryButton("Sacar por Pix", enabled = (b?.available ?: 0) > 0) { payout = true }
             }
         }
         if (payout || m.quote != null) item { PayoutCard(vm, m, busy) { payout = false } }
+        m.today?.let { d ->
+            item { TodayCard(d) }
+            if (d.recent.isNotEmpty()) item { RecentSales(d.recent) }
+        }
         item {
             val b = m.balance ?: return@item
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("A receber", style = MaterialTheme.typography.labelLarge)
-                    Text(Money(b.pending).format(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            SectionCard {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Kpi("A receber", Money(b.pending).format(), spoken = Money(b.pending).spoken())
                     // Time, not jargon: "amanhã", "28/11", never "D+30".
                     b.pendingByDate.take(6).forEach {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

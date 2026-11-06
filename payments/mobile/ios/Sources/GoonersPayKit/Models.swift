@@ -415,3 +415,49 @@ public struct Conversion: Codable, Sendable, Equatable, Identifiable {
     public var status: String
     public var expiresAt: String
 }
+
+/// A merchant's day at a glance, in Brasília time (GET /v1/merchants/{id}/summary, docs/02 §8.5).
+public struct DaySummary: Codable, Sendable, Equatable {
+    public var date: String
+    public var sales: Int64
+    public var gross: Int64
+    public var refunded: Int64
+    public var fees: Int64
+    public var net: Int64
+    public var averageTicket: Int64
+    public var byMethod: [MethodTotal]
+    /// The gross captured in each hour, 0 to 23.
+    public var hourly: [Int64]
+    public var lastWeek: LastWeek?
+    public var waiting: WaitingTotal
+    public var recent: [RecentPayment]
+}
+
+public struct MethodTotal: Codable, Sendable, Equatable, Hashable {
+    public var method: String
+    public var sales: Int64
+    public var gross: Int64
+}
+
+public struct LastWeek: Codable, Sendable, Equatable {
+    public var date: String
+    public var sales: Int64
+    public var gross: Int64
+    /// Nil when last week sold nothing: there is nothing to compare with.
+    public var changePct: Double?
+}
+
+public struct WaitingTotal: Codable, Sendable, Equatable {
+    public var count: Int64
+    public var amount: Int64
+}
+
+public struct RecentPayment: Codable, Sendable, Equatable, Hashable, Identifiable {
+    public var id: String
+    public var amount: Int64
+    public var method: String
+    public var status: String
+    /// Brand and last four digits, for a card.
+    public var card: String?
+    public var createdAt: String
+}

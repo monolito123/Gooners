@@ -110,6 +110,10 @@ class SandboxIntegrationTest {
             .execute().use { Json.parseToJsonElement(it.body.string()).jsonObject["data"]!!.jsonArray.size }
         assertEquals(2, evidence) // tap_started and auth_result: the device's own signed view of the sale
 
+        // The day at a glance counts the sale.
+        val day = authed.daySummary()
+        assertTrue(day.sales >= 1 && day.gross == day.hourly.sum() && day.recent.isNotEmpty())
+
         // Balance and a payout to a Pix key.
         val balance = authed.balance()
         assertTrue(balance.available > 0)

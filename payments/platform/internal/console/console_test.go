@@ -22,6 +22,9 @@ func TestServesTheAppUnderItsPolicy(t *testing.T) {
 		"/console/app.js":           "javascript",
 		"/console/verify.js":        "javascript",
 		"/console/style.css":        "text/css",
+		"/console/tokens.css":       "text/css",
+		"/console/icons.js":         "javascript",
+		"/console/icon-paths.js":    "javascript",
 		"/console/vendor/qrcode.js": "javascript",
 	} {
 		r := get(t, path)
@@ -58,9 +61,11 @@ func TestNoInlineCodeOrStyle(t *testing.T) {
 		}
 	}
 	app := read("app.js")
-	for _, bad := range []string{"innerHTML", "eval(", "new Function", "document.write", "setAttribute('style'"} {
-		if strings.Contains(app, bad) {
-			t.Errorf("app.js uses %q", bad)
+	for _, name := range []string{"app.js", "icons.js", "icon-paths.js"} {
+		for _, bad := range []string{"innerHTML", "eval(", "new Function", "document.write", "setAttribute('style'", "'style'"} {
+			if strings.Contains(read(name), bad) {
+				t.Errorf("%s uses %q", name, bad)
+			}
 		}
 	}
 	// A style attribute set through h() is blocked by the policy; Intl's style option is not one.
