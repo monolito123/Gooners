@@ -6,11 +6,14 @@ import br.com.gooners.pay.core.api.GoonersPayApi
 import br.com.gooners.pay.core.hexToBytes
 import br.com.gooners.pay.core.sandbox.CardReader
 import br.com.gooners.pay.core.sandbox.SandboxCardReader
+import br.com.gooners.pay.data.FileJournalStore
 import br.com.gooners.pay.data.Settings
+import br.com.gooners.pay.security.AndroidPosture
 import br.com.gooners.pay.security.IntegrityProvider
+import br.com.gooners.pay.security.KeyAttestationIntegrity
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.Unlocker
-import br.com.gooners.pay.security.UnverifiedIntegrity
+import java.io.File
 
 class GoonersPayApp : Application() {
     val container by lazy { AppContainer(this) }
@@ -19,11 +22,19 @@ class GoonersPayApp : Application() {
 /** The app's long-lived objects. */
 class AppContainer(context: Context) {
     val settings = Settings(context)
+    val journalStore = FileJournalStore(File(context.filesDir, "journal.json"))
     val vault = KeyVault(context)
     val unlocker = Unlocker()
-    val integrity: IntegrityProvider = UnverifiedIntegrity
+    val integrity: IntegrityProvider by lazy { KeyAttestationIntegrity(vault) }
+    val posture = AndroidPosture(context)
+    val feedback = br.com.gooners.pay.ui.Feedback(context, settings)
 
-    fun api(url: String = settings.apiUrl) = GoonersPayApi(url)
+    fun api(url: String = settings.apiUrl): GoonersPayApi {
+        val pins = BuildConfig.API_PINS.split(',').map { it.trim() }.filter { it.startsWith("sha256/") }
+        val host = runCatching { java.net.URI(url).host }.getOrNull()
+        if (pins.isNotEmpty() && host == BuildConfig.PINNED_HOST) return GoonersPayApi(url, GoonersPayApi.defaultClient(host, pins))
+        return GoonersPayApi(url)
+    }
 
     /**
      * The card reader. Production plugs in the licensed MPoC SDK here; until then only the

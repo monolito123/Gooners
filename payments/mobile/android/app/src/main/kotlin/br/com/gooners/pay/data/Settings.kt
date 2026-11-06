@@ -3,6 +3,8 @@ package br.com.gooners.pay.data
 import android.content.Context
 import androidx.core.content.edit
 import br.com.gooners.pay.core.auth.DeviceList
+import br.com.gooners.pay.core.checkout.MethodMemory
+import br.com.gooners.pay.core.checkout.PayMethod
 import br.com.gooners.pay.core.checkout.StanSource
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -33,6 +35,11 @@ class Settings(context: Context) {
         get() = prefs.getString("device_id", "").orEmpty()
         set(v) = prefs.edit { putString("device_id", v) }
 
+    /** The merchant's root key (hex), which every journal entry names. */
+    var merchantRootPub: String
+        get() = prefs.getString("merchant_root_pub", "").orEmpty()
+        set(v) = prefs.edit { putString("merchant_root_pub", v) }
+
     var tradeName: String
         get() = prefs.getString("trade_name", "").orEmpty()
         set(v) = prefs.edit { putString("trade_name", v) }
@@ -58,6 +65,23 @@ class Settings(context: Context) {
     var deviceListAt: Long
         get() = prefs.getLong("device_list_at", 0)
         set(v) = prefs.edit { putLong("device_list_at", v) }
+
+    /** The last payment method, first on the sheet next time (docs/06 §5). */
+    val methods = object : MethodMemory {
+        override var last: PayMethod?
+            get() = prefs.getString("last_method", null)?.let { n -> PayMethod.entries.firstOrNull { it.name == n } }
+            set(v) = prefs.edit { if (v == null) remove("last_method") else putString("last_method", v.name) }
+    }
+
+    /** The approval tone plays even in silent mode: a busy counter often needs it (docs/06 §7). */
+    var approvalTone: Boolean
+        get() = prefs.getBoolean("approval_tone", false)
+        set(v) = prefs.edit { putBoolean("approval_tone", v) }
+
+    /** The merchant takes stablecoins at the counter, settled in reais (docs/09). */
+    var acceptsCrypto: Boolean
+        get() = prefs.getBoolean("accepts_crypto", false)
+        set(v) = prefs.edit { putBoolean("accepts_crypto", v) }
 
     /** The terminal's trace numbers, 000001..999999, kept across restarts. */
     val stan = StanSource {

@@ -18,7 +18,13 @@
         "tree_size": { "type": "integer", "minimum": 1 },
         "root": { "$ref": "common.schema.json#/$defs/hex32" },
         "prev": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hex32" }, { "type": "null" }] },
-        "padding": { "type": "string" }
+        "padding": { "type": "string" },
+        "audit": {
+          "description": "The operations audit trail's hash-chain head when the day closed (docs/03 §6.3a)",
+          "type": "object",
+          "required": ["seq", "head"],
+          "properties": { "seq": { "type": "integer", "minimum": 1 }, "head": { "$ref": "common.schema.json#/$defs/hex32" } }
+        }
       }
     }
   }

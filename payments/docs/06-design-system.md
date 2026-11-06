@@ -98,13 +98,13 @@ Why white in sunlight, when dark is better indoors: in direct sun, reflected amb
 
 | Token | Spec | Use |
 |-------|------|-----|
-| `amount-display` | Inter 56/64 sp, weight 700, tabular figures (`tnum`) | The amount on the keypad and the result screens. Tabular figures stop digits jumping as the amount is typed |
-| `title` | Inter 22/28 sp, 600 | Screen titles |
-| `body` | Inter 16/24 sp, 400 | Minimum size for any sentence |
-| `label` | Inter 14/20 sp, 600 | Buttons, chips |
-| `caption` | Inter 12/16 sp, 500 | Timestamps, metadata only, never for actions |
+| `amount-display` | 56/64 sp, weight 700, tabular figures (`tnum`) | The amount on the keypad and the result screens. Tabular figures stop digits jumping as the amount is typed |
+| `title` | 22/28 sp, 600 | Screen titles |
+| `body` | 16/24 sp, 400 | Minimum size for any sentence |
+| `label` | 14/20 sp, 600 | Buttons, chips |
+| `caption` | 12/16 sp, 500 | Timestamps, metadata only, never for actions |
 
-On iOS the system font (SF Pro) with `.monospacedDigit()` replaces Inter, to respect Dynamic Type and platform feel.
+The tokens fix size, line height, weight and tabular figures; the typeface is the platform's, for Dynamic Type and platform feel: Roboto on Android (`fontFeatureSettings = "tnum"`), SF Pro on iOS (`.monospacedDigit()`), and Inter in the web console where installed, falling back to the system font. The dashboards add three styles: `headline` (28/34, 700), `kpi` (36/44, 700, tabular) for a card's lead figure, and `overline` (12/16, 600, tracked 0.06 em, upper case) for the label over a figure.
 
 | Size token | Value | Rule |
 |------------|-------|------|
@@ -135,7 +135,11 @@ Rules that keep it at two taps:
 - The method sheet remembers the last method and puts it first, under the thumb.
 - Installments (*parcelas*) default to 1×. Choosing more is one extra tap on the sheet, and only for credit.
 - After approval the app returns to the keypad by itself after 4 seconds. The cashier's next action is always "type the next amount".
-- Nothing in the flow asks for confirmation. A wrong sale is undone with "Cancelar venda" on the result screen (a reversal before clearing, [02 §4.6](02-api-reference.md#46-capture-cancel-refund)), which is faster than confirming every right one.
+- Nothing in the flow asks for confirmation. A wrong sale is undone with "Cancelar venda" on the result screen (a reversal before clearing, [02 §4.6](02-api-reference.md#46-capture-cancel-refund)), which is faster than confirming every right one. A Pix sale cannot be reversed, so "Cancelar venda" refunds it to the payer (app sessions may refund their own merchant's sales only). A crypto sale is returned in crypto to an address the customer gives, which the app explains instead ([09 §3.2](09-digital-assets-international-b3.md#32-a-payment-in-crypto)).
+- A bar under the result shows the 4 seconds before the keypad returns, so the return is never a surprise; tapping the receipt QR (the customer is scanning it) keeps the result on screen.
+- Quick amounts (R$ 10, 20, 50, 100) sit above the keypad while it is empty.
+
+Implemented in both cores (`CheckoutController` in Kotlin and Swift) and unit-tested with the same cases: the method order, the long press, the auto-return and a failed cancellation that offers the sale again.
 
 ---
 
@@ -151,6 +155,17 @@ Rules that keep it at two taps:
 | **Verifiable by default** | A small "verificado" badge on each daily statement opens the proof view: the statement's root in the public log ([03 §6](03-nostr-layer.md#6-verifiable-settlement-transparency-log)) |
 | **Calm errors** | Every error names what happened, what it means for the money, and the next step: "Pix demorando mais que o normal. Seu dinheiro está seguro; avisaremos quando cair." |
 
+**As built: the day at a glance.** Under "Disponível agora", Dinheiro (and the console's Visão geral) shows **Hoje**, from `GET /v1/merchants/{id}/summary` ([02 §8.5](02-api-reference.md#85-get-v1merchantsidsummary)):
+
+- **Vendido**, the day's gross, is the lead figure. Next to it is the change against the same weekday last week up to the same time ("+50% vs. sexta passada até agora"). A fair comparison motivates, and a whole-day comparison at 10 a.m. would always look like a loss.
+- **Você recebe** (net, with the fees in reais under it), **Vendas** and **Ticket médio**.
+- **Por hora**: 24 bars, with empty hours as a faint baseline so the shape of the day reads at a glance.
+- **Como pagaram**: one bar split by method in the chart colours, with a legend of amounts and whole percentages that add up to exactly 100.
+- What is still **aguardando** payment, as one line.
+- **Últimas vendas**, the last eight payments. Each has a status chip whose word carries the meaning ("Paga", "Aguardando", "Recusada", "Estornada") and whose colour only repeats it.
+
+The words and figures come from the same functions in both app cores (`Today` in Kotlin and Swift, tested with the same cases) and the same tables in the console.
+
 ---
 
 ## 7. Motion, sound and haptics
@@ -160,17 +175,26 @@ Rules that keep it at two taps:
 | Card detected | Status lights advance (EMV contactless indicator pattern) | Short click | Light tick |
 | Approved | Check draws in 400 ms (`motion.approve`), amount scales 1.0 → 1.04 → 1.0 | Two rising notes | Success pattern |
 | Declined | Card shakes 2 px horizontally, once | One low note | Double pulse |
+| Under review (a crypto payment held while compliance checks who sent it) | None: plain text, neither the approval's mint nor the decline's coral | None | None. The screen says the payment arrived, is being checked and will reach the balance once cleared, and offers one action, Nova venda; it never says why ([09 §6.5](09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit)) |
 | Warning banner | Slides in 200 ms | None | None |
 
 With "reduce motion" on, the motions become cross-fades. Sounds follow the device's ring mode, except the approval tone, which the merchant can force on in settings because a busy counter often needs it.
+
+As built: Android uses `HapticFeedbackConstants.CONFIRM`/`REJECT`/`CLOCK_TICK`, `ToneGenerator` (two beeps for approval, one low note for a decline) and the system animator scale for "reduce motion"; the tone switch lives in Ajustes. iOS uses `sensoryFeedback` (.success, .error, a light impact on card read), `accessibilityReduceMotion`, and tones the kit synthesizes (`Tone`: a 2 kHz click, C6 then G6 for approval, A3 for a decline; soft attack and release, no audio files) played through `AVAudioEngine`: in the ambient category, which follows the silent switch, except the approval tone with the switch in Ajustes on, which plays in the playback category. The kit's tests measure each tone's frequencies.
 
 ---
 
 ## 8. Platform mapping
 
-| Token layer | Android | iOS |
-|-------------|---------|-----|
-| Colours | Generated `ColorScheme` + an extended `IpColors` for roles Material lacks (attention, alert, on-alert, sunlight) | Generated `Color` assets with Any/Dark appearances + a sunlight environment value |
-| Typography | `Typography` with Inter variable font, `fontFeatureSettings = "tnum"` on amounts | `Font.system(…).monospacedDigit()`, Dynamic Type styles |
-| Sizes | `Dp` constants | `CGFloat` constants |
-| Source of truth | `design/tokens.json` → Style Dictionary → Kotlin + Swift, regenerated in CI | Same pipeline |
+`design/tokens.json` (W3C Design Tokens format) and `design/icons.json` are the only source of truth. `tools/gen-tokens.mjs` generates every platform's copy from them, and `npm run check` fails when a generated file is out of date or a contrast pair of §2.1 (now including the chart colours, 3:1 minimum against the surfaces they sit on) falls short. Nobody edits a generated file: change the tokens and run `npm run tokens`.
+
+| Token layer | Android (Compose) | iOS (SwiftUI) | Web console |
+|-------------|-------------------|---------------|-------------|
+| Colours | `DesignTokens.kt`: `Palette`, `SemanticColors` for each theme; `Theme.kt` maps every Material role to them, containers included, so no Material default leaks in | `DesignTokens.swift`: `SemanticPalette` for each theme; `Theme.swift` builds dynamic light/dark `Color`s from it | `tokens.css`: custom properties for dark (default), light (system or toggle) and sunlight (chosen in the sidebar) |
+| Type | `TypeScale` text styles, `tnum` on figures; the platform font | `TypeScale` styles through `Font.scale(_:)`, `.monospacedDigit()`; SF Pro | `.t-*` classes |
+| Spacing, radius, sizes, motion | `Space`, `Radius`, `Sizes` in dp; `Motion` in ms | `Space`, `Radius`, `Sizes` in points; `Motion` in seconds | `--space-*`, `--radius-*`, `--size-*`, `--motion-*` |
+| Icons | `AppIcons.kt`: the paths as `ImageVector`s, tinted by `Icon` | `AppIcons.swift`: the SF Symbol named for each icon, for platform feel | `icon-paths.js`: the same paths as inline SVG |
+
+In light themes the mint fill stays a fill: mint as text, outline, tint or chart mark is `action-border` (`#047857`), because mint-500 on white is 2.5:1. The same rule gives Android's light `primary` and iOS's `Theme.actionText`.
+
+The chart colours (`chart-credit`, `chart-debit`, `chart-pix`, `chart-crypto`, `chart-other`) are one hue per payment method, the same in every app and in every chart, so a merchant learns "Pix is teal" once. A chart never relies on colour alone: each one has a legend with words and figures, and a spoken description for screen readers.

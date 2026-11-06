@@ -17,9 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 )
 
 // Environments.
@@ -77,8 +80,64 @@ type Config struct {
 	PayoutBaseURL                                                 string
 
 	VaultKEK, VaultFingerprintKey, CardDataDevKey, ReceiptsSecret []byte
-	Relays                                                        []string
-	ClaimBase                                                     string
+	TransparencySecret                                            []byte // signs the daily public roots (kind 7715)
+	TransparencyPadTo                                             int    // log padding granularity; 0 = 4096
+
+	// Device attestation (docs/05 §2.4, §3.6). Configuring either set of roots turns on strict
+	// attestation: devices must prove they are the genuine app on genuine hardware.
+	AppAttestRoots, AppAttestAppID          string // PEM file of Apple's App Attestation Root CA; TEAMID.bundle
+	AppAttestProduction                     bool
+	AndroidAttestationRoots, AndroidPackage string   // PEM file of Google's hardware attestation roots; application ID
+	AndroidSigningDigests                   [][]byte // SHA-256 of the app signing certificates
+	// AndroidAttestationStatus is where Google's certificate status list is read (URL or
+	// file); "off" skips the check (refused in production).
+	AndroidAttestationStatus string
+
+	// Receivables registrar (docs/07 §1.6): an adapter speaking internal/registrar's JSON
+	// contract. The sandbox runs an in-memory registrar when it is not set.
+	RegistrarURL     string
+	PlatformDocument string // the platform's CNPJ, beneficiary of its assignments
+	// Digital assets and international accounts (docs/09). Exchanges lists the crypto venues
+	// (binance, kraken, coinbase; the sandbox runs its own). FXProvider is wise; the sandbox
+	// runs its own. BrokerURL is a B3 broker adapter (the sandbox runs its own broker).
+	Exchanges                                      []string
+	BinanceKey, BinanceSecret                      string
+	KrakenKey, KrakenSecret                        string
+	KrakenWithdrawKeys                             map[string]string
+	CoinbaseKeyName, CoinbaseKeyPEM                string
+	FXProvider, WiseToken, WiseProfile, WiseURL    string
+	BrokerURL, BrokerToken, BrokerName, BrapiToken string
+	// CryptoAuthorization and FXAuthorization name what lets the platform offer them in
+	// production: its own BCB authorization or the licensed partner it acts for.
+	CryptoAuthorization, FXAuthorization                                      string
+	CryptoFeeBps, CryptoSpreadBps, FXFeeBps, FXSpreadBps, IOFOutBps, IOFInBps int
+	// SanctionsLists are lists of sanctioned addresses (paths or https URLs: OFAC's SDN.CSV,
+	// or one address per line); ScreeningURL is a screening provider's adapter. Crypto
+	// withdrawals are screened against all of them (docs/09 §6.1).
+	SanctionsLists               []string
+	ScreeningURL, ScreeningToken string
+	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
+	ReportingName, ReportingURL string
+	// SenderLookups find who sent each crypto deposit, per network (docs/09 §6.5): an
+	// Esplora URL for bitcoin, JSON-RPC nodes for ethereum and polygon, a full node's HTTP
+	// API for tron. SenderLookupURL is a provider's adapter for the networks left (and
+	// solana). Without a lookup for a network, its deposits are held for compliance.
+	SenderLookups                      map[string]string
+	TronAPIKey                         string
+	SenderLookupURL, SenderLookupToken string
+	// TravelRuleURL is the travel-rule network's adapter (docs/09 §6.6); TravelRuleSecret
+	// ("whsec_…") verifies the messages it posts in. TravelRuleThreshold (centavos; 0 = every
+	// withdrawal) and TravelRuleReview (deposits without originator data) set the values.
+	TravelRuleURL, TravelRuleToken, TravelRuleSecret string
+	TravelRuleThreshold, TravelRuleReview            int64
+	// TravelRuleRetention is how long the travel rule's personal data is kept (default ten years).
+	TravelRuleRetention time.Duration
+	// PlatformLEI is the platform's Legal Entity Identifier, when it has one.
+	PlatformLEI string
+	// RiskMode is how the fraud shield acts (docs/07 §3): enforce, shadow or off.
+	RiskMode  string
+	Relays    []string
+	ClaimBase string
 
 	BootstrapTenant  string
 	BootstrapCapital int64
@@ -143,6 +202,99 @@ func Load() (*Config, error) {
 	}
 	if c.ReceiptsSecret, err = hexEnv("RECEIPTS_SECRET_HEX"); err != nil {
 		return nil, err
+	}
+	if c.TransparencySecret, err = hexEnv("TRANSPARENCY_SECRET_HEX"); err != nil {
+		return nil, err
+	}
+	if v := os.Getenv("TRANSPARENCY_PAD_TO"); v != "" {
+		if c.TransparencyPadTo, err = strconv.Atoi(v); err != nil || c.TransparencyPadTo < 1 {
+			return nil, fmt.Errorf("config: TRANSPARENCY_PAD_TO must be a positive number of leaves")
+		}
+	}
+	c.AppAttestRoots, c.AppAttestAppID = os.Getenv("APPATTEST_ROOT_CA"), os.Getenv("APPATTEST_APP_ID")
+	c.AppAttestProduction = os.Getenv("APPATTEST_ENVIRONMENT") == "production"
+	c.AndroidAttestationRoots, c.AndroidPackage = os.Getenv("ANDROID_ATTESTATION_ROOTS"), env("ANDROID_PACKAGE", "br.com.gooners.pay")
+	c.AndroidAttestationStatus = env("ANDROID_ATTESTATION_STATUS", "https://android.googleapis.com/attestation/status")
+	for _, d := range strings.Split(os.Getenv("ANDROID_SIGNING_DIGESTS"), ",") {
+		if d = strings.TrimSpace(d); d == "" {
+			continue
+		}
+		b, err := hex.DecodeString(strings.ReplaceAll(d, ":", "")) // keytool prints AA:BB:…
+		if err != nil || len(b) != 32 {
+			return nil, fmt.Errorf("config: ANDROID_SIGNING_DIGESTS are SHA-256 digests in hex, comma-separated")
+		}
+		c.AndroidSigningDigests = append(c.AndroidSigningDigests, b)
+	}
+	if (c.AppAttestRoots != "") != (c.AppAttestAppID != "") {
+		return nil, fmt.Errorf("config: APPATTEST_ROOT_CA and APPATTEST_APP_ID go together")
+	}
+	if c.AndroidAttestationRoots != "" && len(c.AndroidSigningDigests) == 0 {
+		return nil, fmt.Errorf("config: ANDROID_ATTESTATION_ROOTS needs ANDROID_SIGNING_DIGESTS")
+	}
+	c.RegistrarURL, c.PlatformDocument = os.Getenv("REGISTRAR_URL"), os.Getenv("PLATFORM_DOCUMENT")
+	for _, x := range strings.Split(os.Getenv("EXCHANGES"), ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			c.Exchanges = append(c.Exchanges, x)
+		}
+	}
+	c.BinanceKey, c.BinanceSecret = os.Getenv("BINANCE_API_KEY"), os.Getenv("BINANCE_SECRET_KEY")
+	c.KrakenKey, c.KrakenSecret = os.Getenv("KRAKEN_API_KEY"), os.Getenv("KRAKEN_SECRET_KEY")
+	c.KrakenWithdrawKeys = map[string]string{}
+	for _, kv := range strings.Split(os.Getenv("KRAKEN_WITHDRAW_KEYS"), ";") { // address=key name;…
+		if a, k, ok := strings.Cut(kv, "="); ok {
+			c.KrakenWithdrawKeys[strings.TrimSpace(a)] = strings.TrimSpace(k)
+		}
+	}
+	c.CoinbaseKeyName, c.CoinbaseKeyPEM = os.Getenv("COINBASE_KEY_NAME"), os.Getenv("COINBASE_PRIVATE_KEY")
+	c.FXProvider, c.WiseToken, c.WiseProfile, c.WiseURL = os.Getenv("FX_PROVIDER"), os.Getenv("WISE_TOKEN"), os.Getenv("WISE_PROFILE_ID"), os.Getenv("WISE_BASE_URL")
+	c.BrokerURL, c.BrokerToken, c.BrokerName, c.BrapiToken = os.Getenv("BROKER_URL"), os.Getenv("BROKER_TOKEN"), env("BROKER_NAME", "broker"), os.Getenv("BRAPI_TOKEN")
+	c.CryptoAuthorization, c.FXAuthorization = os.Getenv("CRYPTO_AUTHORIZATION"), os.Getenv("FX_AUTHORIZATION")
+	for _, x := range strings.Split(os.Getenv("SANCTIONS_LISTS"), ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			c.SanctionsLists = append(c.SanctionsLists, x)
+		}
+	}
+	c.ScreeningURL, c.ScreeningToken = os.Getenv("SCREENING_URL"), os.Getenv("SCREENING_TOKEN")
+	c.ReportingName, c.ReportingURL = env("REPORTING_NAME", "goonersPAY"), os.Getenv("REPORTING_URL")
+	c.SenderLookups = map[string]string{}
+	for network, k := range map[string]string{"bitcoin": "BITCOIN_ESPLORA_URL", "ethereum": "ETHEREUM_RPC_URL", "polygon": "POLYGON_RPC_URL", "tron": "TRON_API_URL"} {
+		if v := os.Getenv(k); v != "" {
+			c.SenderLookups[network] = v
+		}
+	}
+	c.TronAPIKey, c.SenderLookupURL, c.SenderLookupToken = os.Getenv("TRON_API_KEY"), os.Getenv("SENDER_LOOKUP_URL"), os.Getenv("SENDER_LOOKUP_TOKEN")
+	c.TravelRuleURL, c.TravelRuleToken, c.TravelRuleSecret = os.Getenv("TRAVEL_RULE_URL"), os.Getenv("TRAVEL_RULE_TOKEN"), os.Getenv("TRAVEL_RULE_INBOUND_SECRET")
+	c.PlatformLEI = os.Getenv("PLATFORM_LEI")
+	if v := os.Getenv("TRAVEL_RULE_RETENTION_YEARS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 5 || n > 30 {
+			return nil, errors.New("config: TRAVEL_RULE_RETENTION_YEARS is between 5 (Law 9.613/1998, art. 10) and 30")
+		}
+		c.TravelRuleRetention = time.Duration(n) * 365 * 24 * time.Hour
+	}
+	for name, dst := range map[string]*int64{"TRAVEL_RULE_THRESHOLD_BRL": &c.TravelRuleThreshold, "TRAVEL_RULE_REVIEW_BRL": &c.TravelRuleReview} {
+		if v := os.Getenv(name); v != "" {
+			n, err := strconv.ParseFloat(v, 64)
+			if err != nil || n < 0 || n > 1e9 {
+				return nil, fmt.Errorf("config: %s is an amount in reais", name)
+			}
+			*dst = int64(n*100 + 0.5)
+		}
+	}
+	for name, dst := range map[string]*int{"CRYPTO_FEE_BPS": &c.CryptoFeeBps, "CRYPTO_SPREAD_BPS": &c.CryptoSpreadBps, "FX_FEE_BPS": &c.FXFeeBps,
+		"FX_SPREAD_BPS": &c.FXSpreadBps, "IOF_FX_OUT_BPS": &c.IOFOutBps, "IOF_FX_IN_BPS": &c.IOFInBps} {
+		if v := os.Getenv(name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 2000 {
+				return nil, fmt.Errorf("config: %s is basis points between 0 and 2000", name)
+			}
+			*dst = n
+		}
+	}
+	switch c.RiskMode = env("RISK_MODE", "enforce"); c.RiskMode {
+	case "enforce", "shadow", "off":
+	default:
+		return nil, fmt.Errorf("config: RISK_MODE must be enforce, shadow or off")
 	}
 	if r := os.Getenv("RELAYS"); r != "" {
 		c.Relays = strings.Split(r, ",")
@@ -220,6 +372,32 @@ func (c *Config) Validate() error {
 			return errors.New("config: production cannot use the development card decryptor; wire the payment HSM adapter")
 		case len(c.ReceiptsSecret) > 0:
 			return errors.New("config: production cannot hold the receipts key in process memory; wire the enclave signer")
+		case len(c.TransparencySecret) > 0:
+			return errors.New("config: production cannot hold the transparency key in process memory; wire the enclave signer")
+		case c.RegistrarURL == "" || c.PlatformDocument == "":
+			return errors.New("config: production registers receivables before any advance: set REGISTRAR_URL and PLATFORM_DOCUMENT")
+		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":
+			return errors.New("config: production verifies device attestation: set APPATTEST_ROOT_CA/APPATTEST_APP_ID and ANDROID_ATTESTATION_ROOTS/ANDROID_SIGNING_DIGESTS")
+		case c.AndroidAttestationStatus == "off":
+			return errors.New("config: production checks Google's attestation status list: unset ANDROID_ATTESTATION_STATUS or point it at a mirror")
+		case slices.Contains(c.Exchanges, "sandbox") || c.FXProvider == "sandbox":
+			return errors.New("config: the sandbox exchange and FX provider do not run in production")
+		case len(c.Exchanges) > 0 && c.CryptoAuthorization == "":
+			return errors.New("config: crypto in production needs CRYPTO_AUTHORIZATION: the BCB authorization (Res. BCB 519/2025) or the authorized provider the platform acts for")
+		case len(c.Exchanges) > 0 && len(c.SanctionsLists) == 0 && c.ScreeningURL == "":
+			return errors.New("config: crypto in production screens withdrawal addresses: set SANCTIONS_LISTS (OFAC's SDN.CSV or address lists) and/or SCREENING_URL")
+		case len(c.Exchanges) > 0 && (c.PlatformDocument == "" || c.ReportingURL == ""):
+			return errors.New("config: crypto in production files the DeCripto: set PLATFORM_DOCUMENT (the CNPJ) and REPORTING_URL")
+		case len(c.Exchanges) > 0 && c.SenderLookupURL == "" && len(c.SenderLookups) < 4:
+			return errors.New("config: crypto in production screens who sends each deposit: set BITCOIN_ESPLORA_URL, ETHEREUM_RPC_URL, POLYGON_RPC_URL and TRON_API_URL, or SENDER_LOOKUP_URL (which also covers solana)")
+		case len(c.Exchanges) > 0 && (c.TravelRuleURL == "" || c.TravelRuleSecret == ""):
+			return errors.New("config: crypto in production carries the travel rule (Res. BCB 520/2025): set TRAVEL_RULE_URL and TRAVEL_RULE_INBOUND_SECRET")
+		case c.PlatformLEI != "" && !travelrule.ValidLEI(c.PlatformLEI):
+			return errors.New("config: PLATFORM_LEI is not a valid LEI")
+		case c.FXProvider != "" && c.FXAuthorization == "":
+			return errors.New("config: foreign exchange in production needs FX_AUTHORIZATION: the institution authorized for câmbio that carries the operations")
+		case c.RiskMode == "off":
+			return errors.New("config: production keeps the fraud shield on: RISK_MODE enforce, or shadow while a new policy is trialled")
 		}
 		return errors.New("config: production needs the HSM, payment-HSM and enclave adapters described in payments/integration/README.md, which this reference implementation leaves as interfaces")
 	}

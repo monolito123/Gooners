@@ -36,11 +36,12 @@ Seven premises of the original brief would fail regulation, certification or phy
 | [docs/06-design-system.md](docs/06-design-system.md) | **Module 6**: colour psychology in proportion, verified contrast, colour-vision simulation, themes (sunlight mode), two-tap checkout, dashboard |
 | [docs/07-enhancements.md](docs/07-enhancements.md) | **Module 7**: Instant Liquidity Engine, Zero-Knowledge Compliance, Autonomous Fraud Shield |
 | [docs/08-roadmap-risks.md](docs/08-roadmap-risks.md) | Phases, certification path, risk register, questions for counsel |
+| [docs/09-digital-assets-international-b3.md](docs/09-digital-assets-international-b3.md) | **Module 9**: crypto payments and holdings (Binance, Kraken, Coinbase), accounts abroad (USD, EUR, GBP through Wise), IOF, B3 shares through a broker, and the rules (BCB 519/520/521, DeCripto, CVM 30): sanctions screening of withdrawals and of who sends each deposit, the travel rule in IVMS101.2023, compliance cases |
 | [api/openapi.yaml](api/openapi.yaml) | OpenAPI 3.1 contract |
 | [nostr/schemas/](nostr/schemas) | JSON Schema for each custom event kind |
 | [nostr/examples/](nostr/examples) | Real signed events, gift wraps, a settlement statement and Merkle proofs, from public test keys |
-| [design/tokens.json](design/tokens.json) | Design tokens (W3C DTCG format) |
-| [tools/](tools) | Example generator and the specification checker |
+| [design/tokens.json](design/tokens.json), [design/icons.json](design/icons.json) | Design tokens (W3C DTCG format) and line icons: the only source of each platform's colours, type, spacing and icons ([06 §8](docs/06-design-system.md#8-platform-mapping)) |
+| [tools/](tools) | Example generator, the design token generator and the specification checker |
 | [platform/](platform) | **Reference implementation (Go)**: ISO 8583 codec and dialects, scheme sessions, authorization switch with reversals, ledger, Pix (BR Code, API Pix, webhook, payouts), Nostr receipts, vault, HTTP API, simulators, Docker stack |
 | [integration/](integration) | **Integration kit**: sponsor acquirer, Visa, Mastercard, Pix with a bank, key custody (HSM) adapters, certification test plan |
 | [mobile/](mobile) | **Merchant apps**: Android (Kotlin, Compose) and iOS (Swift, SwiftUI) with their protocol cores, tested against the platform's conformance vectors and a live sandbox |
@@ -55,6 +56,7 @@ npm ci
 npm run check          # everything below
 npm run check -- --fast   # skip Mermaid rendering, OpenAPI lint and PostgreSQL
 npm run gen            # regenerate nostr/examples (deterministic: same bytes every run)
+npm run tokens         # regenerate the Kotlin, Swift and CSS tokens and icons from design/
 ```
 
 `npm run check` recomputes what the documents claim:
@@ -62,7 +64,7 @@ npm run gen            # regenerate nostr/examples (deterministic: same bytes ev
 - every JSON block parses; every Nostr event ID and BIP-340 signature verifies; events embedded in documents are byte-identical to `nostr/examples`; gift wraps decrypt and their layers verify; contents validate against the kind schemas and are canonical JSON;
 - the settlement statement totals, the statement commitment, both RFC 6962 inclusion proofs and the chain of transparency roots;
 - every Pix BR Code's CRC16, the Standard Webhooks HMAC test vector, every advance fee from the pricing formula, and the routing example's expected margins;
-- every contrast ratio and colour-vision ΔE in the design module, from `tokens.json`;
+- every contrast ratio and colour-vision ΔE in the design module, from `tokens.json`, the chart colours against the surfaces they sit on, and that each app's and the console's generated tokens and icons match `design/`;
 - every prefixed ID is a valid ULID, every npub decodes to a published test key, and every relative link and heading anchor resolves;
 - the OpenAPI file lints clean (Redocly), all Mermaid diagrams render in Chromium, and the ledger DDL runs on PostgreSQL with the posting catalogue and invariants L1–L5.
 

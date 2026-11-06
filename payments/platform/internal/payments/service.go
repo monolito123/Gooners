@@ -8,18 +8,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -42,6 +47,35 @@ type Config struct {
 	// MaxPaymentAmount caps one payment intent (centavos), limiting what a stolen credential
 	// can charge or move in one request. Default R$ 1.000.000,00; never above MaxAmount.
 	MaxPaymentAmount int64
+	// TransparencyPadTo pads each day's transparency log to a multiple of this many leaves
+	// (docs/03 §6.4). Default 4096.
+	TransparencyPadTo int
+	// PlatformDocument is the platform's CNPJ: the beneficiary of the assignments it registers,
+	// and the declarant of the DeCripto.
+	PlatformDocument string
+	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
+	ReportingName, ReportingURL string
+	// RiskMode is how the fraud shield acts on card-present sales: enforce (default),
+	// shadow (assess and record only) or off.
+	RiskMode string
+	// Crypto and FX pricing in basis points (docs/09); zero takes the defaults.
+	CryptoFeeBps, CryptoSpreadBps int
+	FXFeeBps, FXSpreadBps         int
+	// IOF on foreign exchange, in basis points: reais going abroad, currency coming in.
+	IOFOutBps, IOFInBps int
+	// PlatformLEI is the platform's Legal Entity Identifier, sent as the originating
+	// provider's in travel-rule messages when it has one (its CNPJ goes otherwise).
+	PlatformLEI string
+	// TravelRuleThreshold is the value (centavos) from which a withdrawal carries
+	// travel-rule data. Zero, the default, is every withdrawal: Resolução BCB 520/2025 sets
+	// no minimum.
+	TravelRuleThreshold int64
+	// TravelRuleReview is the value (centavos) from which a deposit that arrived with no
+	// identification of its originator opens a compliance review. Default R$ 5.000,00.
+	TravelRuleReview int64
+	// TravelRuleRetention is how long the personal data of the travel rule is kept before it
+	// is redacted. Default ten years (Circular BCB 3.978/2020, art. 67).
+	TravelRuleRetention time.Duration
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -50,18 +84,28 @@ const MaxAmount int64 = 999_999_999_999
 
 // Service wires the components.
 type Service struct {
-	cfg       Config
-	pool      *pgxpool.Pool
-	ledger    *ledger.Ledger
-	sw        *authswitch.Switch
-	vault     *vault.Vault
-	dec       carddata.Decryptor
-	pix       *apipix.Client
-	payout    pixout.Sender
-	receipts  *receipts.Issuer
-	publisher *receipts.Publisher
-	attest    Attestor
-	log       *slog.Logger
+	cfg          Config
+	pool         *pgxpool.Pool
+	ledger       *ledger.Ledger
+	sw           *authswitch.Switch
+	vault        *vault.Vault
+	dec          carddata.Decryptor
+	pix          *apipix.Client
+	payout       pixout.Sender
+	receipts     *receipts.Issuer
+	publisher    *receipts.Publisher
+	attest       Attestor
+	transparency nostr.Author
+	registrar    registrar.Registrar
+	log          *slog.Logger
+	baselines    sync.Map // tenant/merchant → baseline (risk.go)
+	exchanges    *exchange.Router
+	fx           fx.Provider
+	broker       brokerage.Broker
+	screener     AddressScreener
+	senders      SenderLookup
+	travelRule   TravelRuleProvider
+	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
 // Deps are the service's collaborators. Pix, Payout, Receipts and Publisher are optional.
@@ -76,7 +120,28 @@ type Deps struct {
 	Receipts  *receipts.Issuer
 	Publisher *receipts.Publisher
 	Attestor  Attestor // device attestation; required in production
-	Logger    *slog.Logger
+	// Transparency signs the daily public roots (kind 7715). With Receipts, it turns on
+	// daily statements; in production it is the attested enclave signer.
+	Transparency nostr.Author
+	// Registrar registers receivable units and the platform's contract effects before any
+	// advance (docs/07 §1.6). Required in production; the sandbox uses an in-memory one.
+	Registrar registrar.Registrar
+	// Exchanges trade and hold crypto-assets (docs/09); nil turns crypto off.
+	Exchanges *exchange.Router
+	// FX converts currency and holds merchants' international accounts; nil turns it off.
+	FX fx.Provider
+	// Broker routes merchants' orders to B3; nil turns investments off.
+	Broker brokerage.Broker
+	// Screener checks withdrawal addresses against sanctions lists before anything is sent
+	// (docs/09 §6.1). Without one, withdrawals are refused.
+	Screener AddressScreener
+	// Senders finds who sent each crypto deposit, so screening can clear them before the
+	// deposit settles (docs/09 §6.5). Without one, every deposit is held for compliance.
+	Senders SenderLookup
+	// TravelRule sends travel-rule data to the provider receiving a withdrawal (docs/09
+	// §6.6). Without one, withdrawals to other providers are refused.
+	TravelRule TravelRuleProvider
+	Logger     *slog.Logger
 }
 
 // New returns the service.
@@ -102,20 +167,34 @@ func New(cfg Config, d Deps) *Service {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
+	if cfg.TravelRuleReview <= 0 {
+		cfg.TravelRuleReview = 500_000
+	}
+	if cfg.TravelRuleRetention <= 0 {
+		cfg.TravelRuleRetention = 10 * 365 * 24 * time.Hour
+	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
-		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, log: d.Logger}
+		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule}
 }
 
 // Errors surfaced to the API as problem details.
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrConflict  = errors.New("conflict")
-	ErrInvalid   = errors.New("invalid request")
-	ErrDisabled  = errors.New("not configured")
-	ErrDeclined  = errors.New("declined")
-	ErrFunds     = errors.New("insufficient funds")
-	ErrExpired   = errors.New("expired")
-	ErrSandboxed = errors.New("not allowed outside the sandbox")
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict")
+	ErrInvalid  = errors.New("invalid request")
+	ErrDisabled = errors.New("not configured")
+	ErrDeclined = errors.New("declined")
+	ErrFunds    = errors.New("insufficient funds")
+	ErrExpired  = errors.New("expired")
+	// ErrUnavailable is an upstream the operation needs (the receivables registrar) not answering.
+	ErrUnavailable = errors.New("upstream unavailable")
+	ErrSandboxed   = errors.New("not allowed outside the sandbox")
+	// ErrScreened is a destination sanctions screening refused.
+	ErrScreened = errors.New("refused by sanctions screening")
+	// ErrTravelRuleRejected is a withdrawal the receiving provider refused on its travel-rule
+	// data (an unknown account, a beneficiary that does not match).
+	ErrTravelRuleRejected = errors.New("refused by the receiving provider")
 )
 
 func invalid(format string, a ...any) error {

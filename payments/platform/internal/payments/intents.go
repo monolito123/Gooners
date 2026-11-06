@@ -19,6 +19,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/risk"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
@@ -142,11 +143,11 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 		return nil, invalid("currency %s is not supported", in.Currency)
 	}
 	switch in.Channel {
-	case "card_present", "pix", "ecommerce":
+	case "card_present", "pix", "ecommerce", "crypto":
 	case "":
 		in.Channel = "card_present"
 	default:
-		return nil, invalid("channel must be card_present, pix or ecommerce")
+		return nil, invalid("channel must be card_present, pix, crypto or ecommerce")
 	}
 	if in.Installments < 1 {
 		in.Installments = 1
@@ -187,7 +188,11 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 
 // GetIntent loads a payment intent.
 func (s *Service) GetIntent(ctx context.Context, tenantID, id string) (*Intent, error) {
-	return scanIntent(s.pool.QueryRow(ctx, `SELECT `+intentCols+` FROM payment_intents WHERE tenant_id = $1 AND id = $2`, tenantID, id))
+	in, err := scanIntent(s.pool.QueryRow(ctx, `SELECT `+intentCols+` FROM payment_intents WHERE tenant_id = $1 AND id = $2`, tenantID, id))
+	if err == nil && in.Channel == "crypto" {
+		s.cryptoAction(ctx, in) // the address, amount and price the customer pays with
+	}
+	return in, err
 }
 
 // claim moves an intent from one of `from` to `to`; ErrConflict if it is in another state.
@@ -216,7 +221,7 @@ type TerminalAuth struct {
 	Application     string // credit or debit (the AID the kernel selected)
 	Format, KSN     string
 	Ciphertext      []byte
-	DeviceRiskMilli int
+	Device          risk.Device // the phone's own score (docs/07 §3), inside the authenticated request
 	JournalEventID  string
 }
 
@@ -248,9 +253,12 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 	if !terminalSTAN.MatchString(ta.TerminalSTAN) {
 		return nil, invalid("stan must be the terminal's 6-digit trace number")
 	}
-	var termMerchant string
-	if err := s.pool.QueryRow(ctx, `SELECT merchant_id FROM terminals WHERE tenant_id = $1 AND id = $2 AND status = 'active'`, tenantID, ta.TerminalID).Scan(&termMerchant); err != nil {
+	var termMerchant, termStatus string
+	if err := s.pool.QueryRow(ctx, `SELECT merchant_id, status FROM terminals WHERE tenant_id = $1 AND id = $2 AND status IN ('active', 'frozen')`, tenantID, ta.TerminalID).Scan(&termMerchant, &termStatus); err != nil {
 		return nil, fmt.Errorf("%w: unknown terminal", ErrNotFound)
+	}
+	if termStatus == "frozen" {
+		return nil, fmt.Errorf("%w: the terminal is frozen for a risk review", ErrConflict)
 	}
 	if termMerchant != pi.MerchantID {
 		return nil, invalid("terminal belongs to another merchant")
@@ -290,6 +298,34 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 	mdr := pricing.MDR(m.Plan, pi.Amount, funding, pi.installments)
 	ic := s.cfg.Costs.Interchange(pi.Amount, funding)
 
+	// The fraud shield decides before the issuer sees anything (docs/07 §3.6).
+	ra, err := s.assessRisk(ctx, tenantID, pi, m, ta.TerminalID, newRiskCard(stored.Fingerprint, stored.BIN, card.Expiry, card.PANSequence, card.EMVHex), ta.Device)
+	if err != nil {
+		fail("processing_error")
+		return nil, err
+	}
+	cardView := map[string]any{"brand": brand, "last4": stored.Last4, "funding": funding}
+	if act := ra.act(); act.Declines() || (act.StepsUp() && card.PINBlockHex == "") {
+		card = carddata.Card{}
+		out := &TerminalResult{PaymentIntentID: pi.ID, Status: "declined", DeclineCode: "risk_declined", Card: cardView,
+			CustomerMessage: "Venda não autorizada. Use outro meio de pagamento."}
+		if !act.Declines() {
+			out.Status, out.DeclineCode, out.CustomerMessage = "pin_required", "authentication_required", "Por segurança, este cartão precisa da senha."
+		}
+		if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET card_brand = $3, card_last4 = $4, card_funding = $5, pan_token = $6, updated_at = now()
+			WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, brand, stored.Last4, funding, stored.Token); err != nil {
+			return nil, err
+		}
+		fail(out.DeclineCode)
+		s.riskOutcome(ctx, ra, "risk_"+out.Status)
+		if act == risk.DeclineFreeze { // a declined or stepped-up sale holds no money to review
+			s.openReview(ctx, tenantID, m.ID, ta.TerminalID, pi.ID, ra)
+		}
+		mAuthorizations.Inc("risk_" + out.Status)
+		s.notify(ctx, tenantID, "payment_intent.failed", map[string]any{"id": pi.ID, "decline_code": out.DeclineCode})
+		return out, nil
+	}
+
 	authID := ids.New("auth")
 	res, err := s.sw.Authorize(ctx, authswitch.Request{
 		AuthID: authID, TenantID: tenantID, PaymentIntentID: pi.ID, Kind: authswitch.Purchase, Amount: pi.Amount,
@@ -309,7 +345,6 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 		fail("processing_error")
 		return nil, err
 	}
-	cardView := map[string]any{"brand": brand, "last4": stored.Last4, "funding": funding}
 	out := &TerminalResult{PaymentIntentID: pi.ID, ResponseCode: res.ResponseCode, AuthCode: res.AuthCode, RRN: res.RRN, Card: cardView, IssuerEMV: res.IssuerEMVHex}
 	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET auth_id = $3, card_brand = $4, card_last4 = $5, card_funding = $6, pan_token = $7, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, authID, brand, stored.Last4, funding, stored.Token); err != nil {
@@ -325,16 +360,22 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 			out.Status = "pin_required"
 		}
 		fail(code)
+		s.riskOutcome(ctx, ra, out.Status)
 		mAuthorizations.Inc(out.Status)
 		s.notify(ctx, tenantID, "payment_intent.failed", map[string]any{"id": pi.ID, "decline_code": code})
 		return out, nil
 	}
 
-	settle, err := s.capture(ctx, tenantID, pi, m, brand, funding, mdr, ic)
+	hold := ra.act().Holds()
+	settle, err := s.capture(ctx, tenantID, pi, m, brand, funding, mdr, ic, hold)
 	if err != nil {
 		return nil, err
 	}
 	out.Status = "approved"
+	s.riskOutcome(ctx, ra, out.Status)
+	if hold {
+		s.openReview(ctx, tenantID, m.ID, ta.TerminalID, pi.ID, ra)
+	}
 	mAuthorizations.Inc(out.Status)
 	out.Settlement = settle
 	out.Receipt = s.issueReceipt(ctx, tenantID, pi, m, map[string]any{
@@ -345,8 +386,9 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 }
 
 // capture posts the capture journal and the receivables, and releases instantly when the
-// merchant is eligible (docs/07 §1).
-func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *Merchant, brand, funding string, mdr, ic int64) (map[string]any, error) {
+// merchant is eligible (docs/07 §1). A held sale's receivables wait for its risk review: no
+// instant release, no advance, no settlement (docs/07 §3.6).
+func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *Merchant, brand, funding string, mdr, ic int64, hold bool) (map[string]any, error) {
 	fees := s.cfg.Costs.SchemeFees(pi.Amount)
 	if err := s.post(ctx, tenantID, "capture:"+pi.ID, "card_capture", pi.ID,
 		ledger.CardCapture(brand, m.ID, ledger.CardCaptureAmounts{Gross: pi.Amount, MDR: mdr, Interchange: ic, SchemeFees: fees})); err != nil {
@@ -356,31 +398,57 @@ func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *M
 	dates := pricing.SettlementDates(s.cfg.Now(), funding, pi.installments)
 	parts := pricing.Split(payable, len(dates))
 	annual, eligible := s.cfg.Costs.AnnualRate(m.Plan.Tier)
-	instant := m.Plan.Instant && eligible
-	var feeTotal int64
+	instant := m.Plan.Instant && eligible && !hold
+	arr := arrangement(brand, funding)
+	recIDs := make([]int64, len(dates))
 	for i, d := range dates {
-		status, fee := "pending", int64(0)
-		if instant {
-			fee = pricing.AdvanceFee(parts[i], annual, pricing.BusinessDaysBetween(s.cfg.Now(), d))
-			if err := s.post(ctx, tenantID, fmt.Sprintf("release:%s:%d", pi.ID, i), "instant_release", pi.ID, releaseInstant(m.ID, parts[i], fee)); err != nil {
-				return nil, err
-			}
-			status = "advanced"
-			feeTotal += fee
-		}
-		if _, err := s.pool.Exec(ctx, `INSERT INTO receivables (tenant_id, merchant_id, payment_intent_id, brand, settles_on, amount, status, advance_fee)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, tenantID, m.ID, pi.ID, brand, d, parts[i], status, fee); err != nil {
+		if err := s.pool.QueryRow(ctx, `INSERT INTO receivables (tenant_id, merchant_id, payment_intent_id, brand, arrangement, settles_on, amount, status, held)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8) RETURNING id`, tenantID, m.ID, pi.ID, brand, arr, d, parts[i], hold).Scan(&recIDs[i]); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = amount, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, StatusCaptured); err != nil {
+	// Instant settlement advances the receivables: their assignment to the platform is
+	// registered first. Without it the sale settles on schedule (docs/07 §1.6).
+	if instant && s.registrar != nil {
+		// The card authorization is waiting: a slow registrar costs the merchant the instant
+		// release, never the sale.
+		rctx, cancel := context.WithTimeout(ctx, registrarBudget)
+		lines, err := s.receivableLines(rctx, tenantID, recIDs)
+		if err == nil {
+			err = s.commitAdvance(rctx, tenantID, m.ID, "capture:"+pi.ID, "instant_release", pi.ID, lines)
+		}
+		cancel()
+		if err != nil {
+			s.log.Warn("instant settlement not registered; the sale settles on schedule", "payment_intent", pi.ID, "err", err)
+			instant = false
+		}
+	}
+	var feeTotal int64
+	if instant {
+		for i, d := range dates {
+			fee := pricing.AdvanceFee(parts[i], annual, pricing.BusinessDaysBetween(s.cfg.Now(), d))
+			if err := s.post(ctx, tenantID, fmt.Sprintf("release:%s:%d", pi.ID, i), "instant_release", pi.ID, releaseInstant(m.ID, parts[i], fee)); err != nil {
+				return nil, err
+			}
+			if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $2 WHERE id = $1`, recIDs[i], fee); err != nil {
+				return nil, err
+			}
+			feeTotal += fee
+		}
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = amount, fee = $4, settlement_mode = $5, captured_at = $6, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, StatusCaptured, mdr, settlementMode(instant, len(dates)), s.cfg.Now()); err != nil {
 		return nil, err
 	}
 	mode := "standard"
 	if instant {
 		mode = "instant"
 	}
-	return map[string]any{"mode": mode, "merchant_discount": mdr, "advance_fee": feeTotal, "net_available": payable - feeTotal, "settles_on": dates[len(dates)-1].Format("2006-01-02")}, nil
+	out := map[string]any{"mode": mode, "merchant_discount": mdr, "advance_fee": feeTotal, "net_available": payable - feeTotal, "settles_on": dates[len(dates)-1].Format("2006-01-02")}
+	if hold {
+		out["held"] = true // shown to the merchant: the money waits for a review
+	}
+	return out, nil
 }
 
 func (s *Service) issueReceipt(ctx context.Context, tenantID string, pi *Intent, m *Merchant, method, auth map[string]any, journal string) map[string]any {
@@ -525,8 +593,9 @@ func (s *Service) OnPix(ctx context.Context, hint apipix.Pix) error {
 	if err := s.post(ctx, tenantID, "pix:"+p.EndToEndID, "pix_received", pi.ID, pixReceived(m.ID, amount, fee)); err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = $4, pix_e2e = $5, updated_at = now() WHERE tenant_id = $1 AND id = $2 AND status = $6`,
-		tenantID, pi.ID, StatusCaptured, amount, p.EndToEndID, StatusRequiresAction)
+	tag, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = $4, pix_e2e = $5, fee = $7, settlement_mode = 'instant', captured_at = $8, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2 AND status = $6`,
+		tenantID, pi.ID, StatusCaptured, amount, p.EndToEndID, StatusRequiresAction, fee, s.cfg.Now())
 	if err != nil {
 		return err
 	}
@@ -710,8 +779,17 @@ func (s *Service) reverseCaptureJournals(ctx context.Context, tenantID string, p
 	if err := s.post(ctx, tenantID, "cancel:"+pi.ID, "card_capture_reversal", pi.ID, ps); err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `UPDATE receivables SET status = 'reversed' WHERE tenant_id = $1 AND payment_intent_id = $2`, tenantID, pi.ID)
-	return err
+	if _, err = s.pool.Exec(ctx, `UPDATE receivables SET status = 'reversed' WHERE tenant_id = $1 AND payment_intent_id = $2`, tenantID, pi.ID); err != nil {
+		return err
+	}
+	if s.registrar != nil {
+		// The platform no longer finances the reversed sale: free its assignment at the
+		// registrar. The unit's lower total is registered by the next SyncReceivableUnits.
+		if err := s.registrar.CancelEffect(ctx, "capture:"+pi.ID); err != nil {
+			s.log.Error("cancel the registrar effect of a reversed sale", "payment_intent", pi.ID, "err", err)
+		}
+	}
+	return nil
 }
 
 // Refund is the API view of a refund.
@@ -726,7 +804,9 @@ type Refund struct {
 }
 
 // CreateRefund refunds a captured payment: an online refund authorization for cards, a
-// devolução for Pix. The merchant's wallet funds it.
+// devolução for Pix. The merchant's wallet funds it. A crypto payment has no way back to the
+// payer the platform could know (the sending address may be an exchange's), so it is refused:
+// the merchant returns crypto to the address the customer gives (docs/09 §3.2).
 func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amount int64) (*Refund, error) {
 	pi, err := s.GetIntent(ctx, tenantID, piID)
 	if err != nil {
@@ -734,6 +814,10 @@ func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amoun
 	}
 	if pi.Status != StatusCaptured && pi.Status != StatusPartiallyRefunded {
 		return nil, fmt.Errorf("%w: only captured payments can be refunded", ErrConflict)
+	}
+	if pi.Channel == "crypto" {
+		return nil, fmt.Errorf("%w: a crypto payment is returned in crypto, to the address the customer gives: "+
+			"buy the asset (POST /v1/conversions) and send it (POST /v1/crypto/withdrawals)", ErrConflict)
 	}
 	if amount <= 0 {
 		amount = pi.AmountCaptured - pi.AmountRefunded
@@ -786,6 +870,7 @@ func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amoun
 			return nil, err
 		}
 	}
+	s.releaseHold(ctx, tenantID, piID)
 	newStatus := StatusPartiallyRefunded
 	if pi.AmountRefunded+amount == pi.AmountCaptured {
 		newStatus = StatusRefunded

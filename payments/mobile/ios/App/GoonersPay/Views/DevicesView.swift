@@ -6,6 +6,7 @@ struct DevicesView: View {
     @State private var npub = ""
     @State private var label = ""
     @State private var platform = "android"
+    @State private var scanning = false
 
     var body: some View {
         List {
@@ -31,6 +32,9 @@ struct DevicesView: View {
             }
             Section {
                 Button("Gerar código de pareamento") { model.newEnrollmentCode() }.disabled(model.busy)
+                if QRScannerView.isAvailable {
+                    Button { scanning = true } label: { Label("Ler o código do novo aparelho", systemImage: "qrcode.viewfinder") }
+                }
                 TextField("Código do aparelho (npub…)", text: $npub)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -51,8 +55,16 @@ struct DevicesView: View {
             } header: {
                 Text("Adicionar aparelho")
             } footer: {
-                Text("No novo aparelho, use um código de pareamento. Ele mostra um código npub: cole-o aqui.")
+                Text("No novo aparelho, use um código de pareamento. Ele mostra um código npub: leia-o com a câmera ou cole-o aqui.")
             }
+        }
+        .sheet(isPresented: $scanning) {
+            QRScannerView { code in
+                let c = code.trimmingCharacters(in: .whitespacesAndNewlines)
+                if c.hasPrefix("npub1") { npub = c }
+                scanning = false
+            }
+            .ignoresSafeArea()
         }
     }
 }
@@ -60,6 +72,8 @@ struct DevicesView: View {
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirming = false
+    @State private var crypto = false
+    @State private var tone = false
 
     var body: some View {
         List {
@@ -72,6 +86,24 @@ struct SettingsView: View {
                 }
             }
             Section {
+                Toggle(isOn: $crypto) {
+                    VStack(alignment: .leading) {
+                        Text("Aceitar cripto")
+                        Text("O cliente paga em USDT na rede Tron; você recebe em reais, com tarifa de 1,5%.")
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                Toggle(isOn: $tone) {
+                    VStack(alignment: .leading) {
+                        Text("Som de aprovação sempre ligado")
+                        Text("Toca mesmo no silencioso: útil num balcão movimentado.")
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            } footer: {
+                Text("Aprovação e recusa têm som e vibração diferentes, para o caixa sentir o resultado sem olhar. Os sons seguem a chave de silêncio.")
+            }
+            Section {
                 Button("Desparear este aparelho", role: .destructive) { confirming = true }
             }
             Section {
@@ -79,6 +111,12 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
+        .onAppear {
+            crypto = model.settings.acceptsCrypto
+            tone = model.settings.approvalTone
+        }
+        .onChange(of: tone) { _, on in model.settings.approvalTone = on }
+        .onChange(of: crypto) { _, on in if on != model.settings.acceptsCrypto { model.setAcceptsCrypto(on) } }
         .confirmationDialog("Desparear este aparelho?", isPresented: $confirming, titleVisibility: .visible) {
             Button("Apagar chaves e desparear", role: .destructive) { model.unpair() }
         } message: {

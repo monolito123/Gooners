@@ -326,6 +326,48 @@ Raw features never leave the phone. Only the score, the model version and the si
 | Poisoning via fake labels | Labels come from scheme fraud reports and confirmed cases, never from merchant self-reports |
 | Replay of an old "good" request | The attested request includes the nonce, the payment intent and a fresh integrity token |
 
+### 3.9 What the reference implementation builds
+
+The first version replaces the trained models with transparent, weighted rules, so the whole pipeline (signals, scores, the §3.6 policy, holds, reviews) runs today and the models can be swapped in behind it. Scores are combined as a noisy OR in integer thousandths: each signal, heaviest first, keeps `(1000 − weight) / 1000` of the remaining "clean" mass, truncated at every step. Integer arithmetic makes the phones and the platform agree bit for bit; the conformance vectors check it in Go, Kotlin, Swift and JavaScript.
+
+**Device model `gp-device-1`** (both app cores, `RiskMonitor`). The authorization carries `device_risk: {score, model, signals}` with at most five codes. The platform recomputes the score from the codes and keeps the higher one; a report whose score is below what its own codes give adds the server signal `device_score_inconsistent`.
+
+| Code | Weight | What the phone saw |
+|------|-------:|--------------------|
+| `hooking` | 700 | Frida, Xposed/LSPosed, Substrate or similar loaded in the app's process |
+| `root_indicators` | 600 | `su` binaries, Magisk, test-keys builds (Android); Cydia/Sileo, writable system paths (iOS) |
+| `debugger` | 600 | A debugger attached (`Debug.isDebuggerConnected`, `P_TRACED`) |
+| `emulator` | 500 | Emulator build properties; the iOS Simulator |
+| `apdu_rtt_p99_exceeded` | 500 | Reserved for the MPoC kernel's relay timing (§3.3) |
+| `overlay_active` | 400 | A touch reached the checkout through another app's window (Android); overlays are also hidden from the app's window |
+| `accessibility_service` | 350 | An accessibility service is enabled (Android) |
+| `decline_streak` | 350 | The phone's last three card results were declines |
+| `tap_burst` | 300 | Eight or more card reads within two minutes |
+| `screen_captured` | 300 | The screen is being recorded, mirrored or shared (Android 15+, iOS) |
+| `fast_amount_to_tap` | 250 | The card was read less than 1.5 s after the first digit of the amount |
+| `adb_enabled` | 200 | USB debugging is on (Android) |
+| `cancelled_taps` | 200 | Three or more sales abandoned in ten minutes |
+| `repeated_amount` | 150 | The same amount as each of the last two card sales |
+| `just_under_limit` | 150 | Within 5% under the R$ 200,00 contactless limit without cardholder verification |
+| `developer_options` | 100 | Developer options are on (Android) |
+
+**Server rules** (`internal/risk`), from the platform's own history: every card-present attempt is recorded as an assessment before the issuer sees it, and the next assessment reads those rows (cards by vault fingerprint, across terminals and partners).
+
+| Code | Weight | Rule |
+|------|-------:|------|
+| `atc_replay` | 900 | The card's application transaction counter (EMV 9F36) equals one already seen for that physical card (PAN, expiry, PAN sequence) |
+| `atc_regression` | 800 | The counter is below one already seen: a clone or a pre-played cryptogram |
+| `device_score_inconsistent` | 700 | The phone's score is below what its own codes give |
+| `card_multi_merchant` | 500 | The card was presented to five or more merchants in an hour (three is an afternoon at a mall) |
+| `terminal_card_testing` | 500 | Five or more distinct cards on one terminal in ten minutes |
+| `card_velocity` | 400 | Five or more earlier attempts with the card in ten minutes |
+| `amount_above_baseline` | 350 | Above ten times the merchant's 30-day median card sale (with at least 20 sales) |
+| `terminal_decline_streak` | 300 | The terminal's last three issuer answers were declines (the platform's own risk declines neither count nor break the streak) |
+| `new_merchant_large_amount` | 300 | R$ 1.000,00 or more at a merchant younger than seven days |
+| `terminal_bin_spread` | 200 | Four or more distinct BINs on one terminal in ten minutes |
+
+Levels: device low below 400, medium below 750, high from 750; server low below 300, medium below 700, high from 700. The §3.6 table then decides. A step-up without a PIN returns `pin_required` before anything reaches the issuer. A hold approves the sale but marks its receivables `held`: no instant release, no advance, no scheduled settlement, shown to the merchant as held in the balance and on the sale screen. A hold or a frozen terminal opens a review (`GET /v1/risk/reviews`, `POST /v1/risk/reviews/{id}/resolve` with `release` or `fraud`, webhooks `risk.review_opened` and `risk.review_resolved`): releasing lets the money settle and the terminal sell again, confirming fraud keeps the money held for the chargeback and revokes a frozen terminal. Once a refund or a chargeback has charged the loss to the merchant, the hold has done its job and the money settles on its schedule (keeping it would charge the merchant twice). `RISK_MODE=shadow` records every decision and enforces none (the §3.4 shadow period); production refuses `RISK_MODE=off`.
+
 ---
 
 ## 4. Other advantages that fall out of the design

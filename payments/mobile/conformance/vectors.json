@@ -42,6 +42,20 @@
       "url": ""
     }
   ],
+  "canonical_json": [
+    {
+      "canonical": "{\"a\":{\"x\":false,\"y\":true,\"z\":null},\"b\":[3,1,2],\"v\":1}",
+      "json": "{\"v\":1,\"b\":[3,1,2],\"a\":{\"z\":null,\"y\":true,\"x\":false}}"
+    },
+    {
+      "canonical": "{\"ação\":\"São Paulo – R$ 1.299,90\",\"seq\":-7,\"text\":\"aspas \\\" barra \\\\ nova\\nlinha \\t tab \\u0001 ctl\"}",
+      "json": "{\"seq\":-7,\"text\":\"aspas \\\" barra \\\\ nova\\nlinha \\t tab \\u0001 ctl\",\"ação\":\"São Paulo – R$ 1.299,90\"}"
+    },
+    {
+      "canonical": "{\"empty_arr\":[],\"empty_obj\":{},\"nested\":{\"k1\":[{\"c\":3,\"d\":4}],\"k2\":{\"a\":1,\"b\":2}}}",
+      "json": "{\"nested\":{\"k2\":{\"b\":2,\"a\":1},\"k1\":[{\"d\":4,\"c\":3}]},\"empty_obj\":{},\"empty_arr\":[]}"
+    }
+  ],
   "dev_card": {
     "ciphertext_base64": "wvQEhAkbB6ypn7bTQbYTzGsLzVT0kvwyUnK1nBCsAd91HPAJwdqNdUZDa+mSiI0NQq3FyM92d/kR2AeJlZSi+NiaJn5vcbA5zZRFxr6L6hpx5uPPv3aeviR9/aCKv4QDC/y1uUSziaJ90fWFdBWVOzdXxEavOqZAMMIxKjWdqvl4RZ6RGcB4BadSWd0GYbJOeL4=",
     "format": "dev-aesgcm-v1",
@@ -83,6 +97,144 @@
       ],
       "content": "",
       "sig": "f5881dbfefbbbea0a1282c4cae7bb0f2af2d6749ffe4144cc8793d06714eef677ec175365905afc5ea6eed1f2b3978bf98815b8be8c7fed899bd5acc600bea26"
+    }
+  },
+  "device_risk": {
+    "cases": [
+      {
+        "score_milli": 0,
+        "sent": [],
+        "signals": []
+      },
+      {
+        "score_milli": 0,
+        "sent": [],
+        "signals": [
+          "not_a_signal"
+        ]
+      },
+      {
+        "score_milli": 600,
+        "sent": [
+          "debugger"
+        ],
+        "signals": [
+          "debugger",
+          "debugger"
+        ]
+      },
+      {
+        "score_milli": 840,
+        "sent": [
+          "debugger",
+          "root_indicators"
+        ],
+        "signals": [
+          "debugger",
+          "root_indicators"
+        ]
+      },
+      {
+        "score_milli": 278,
+        "sent": [
+          "just_under_limit",
+          "repeated_amount"
+        ],
+        "signals": [
+          "just_under_limit",
+          "repeated_amount"
+        ]
+      },
+      {
+        "score_milli": 480,
+        "sent": [
+          "adb_enabled",
+          "just_under_limit",
+          "repeated_amount",
+          "developer_options"
+        ],
+        "signals": [
+          "developer_options",
+          "adb_enabled",
+          "repeated_amount",
+          "just_under_limit"
+        ]
+      },
+      {
+        "score_milli": 659,
+        "sent": [
+          "decline_streak",
+          "tap_burst",
+          "fast_amount_to_tap"
+        ],
+        "signals": [
+          "fast_amount_to_tap",
+          "tap_burst",
+          "decline_streak"
+        ]
+      },
+      {
+        "score_milli": 727,
+        "sent": [
+          "overlay_active",
+          "accessibility_service",
+          "screen_captured"
+        ],
+        "signals": [
+          "accessibility_service",
+          "overlay_active",
+          "screen_captured",
+          "unknown"
+        ]
+      },
+      {
+        "score_milli": 1000,
+        "sent": [
+          "hooking",
+          "debugger",
+          "root_indicators",
+          "apdu_rtt_p99_exceeded",
+          "emulator"
+        ],
+        "signals": [
+          "accessibility_service",
+          "adb_enabled",
+          "apdu_rtt_p99_exceeded",
+          "cancelled_taps",
+          "debugger",
+          "decline_streak",
+          "developer_options",
+          "emulator",
+          "fast_amount_to_tap",
+          "hooking",
+          "just_under_limit",
+          "overlay_active",
+          "repeated_amount",
+          "root_indicators",
+          "screen_captured",
+          "tap_burst"
+        ]
+      }
+    ],
+    "max_signals": 5,
+    "model": "gp-device-1",
+    "weights": {
+      "accessibility_service": 350,
+      "adb_enabled": 200,
+      "apdu_rtt_p99_exceeded": 500,
+      "cancelled_taps": 200,
+      "debugger": 600,
+      "decline_streak": 350,
+      "developer_options": 100,
+      "emulator": 500,
+      "fast_amount_to_tap": 250,
+      "hooking": 700,
+      "just_under_limit": 150,
+      "overlay_active": 400,
+      "repeated_amount": 150,
+      "root_indicators": 600,
+      "screen_captured": 300,
+      "tap_burst": 300
     }
   },
   "events": [
@@ -180,6 +332,73 @@
     }
   ],
   "generated_by": "payments/platform/cmd/conformance",
+  "journal": {
+    "device_role": "merchant-device-android",
+    "entries": [
+      {
+        "aux": "35dc54ef77ca15f6ac8266920eb60d2f5389aa05b0e27197926a396e585c1b12",
+        "event": {
+          "id": "6e53d19d8c0c8ceee99735c1cdcb45e0b5889063fa2159725fc39cad4b167c9a",
+          "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+          "created_at": 1793295000,
+          "kind": 7714,
+          "tags": [
+            [
+              "merchant",
+              "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+            ]
+          ],
+          "content": "{\"app\":{\"version\":\"0.1.0\"},\"local_time\":\"2026-10-29T14:30:00-03:00\",\"prev\":null,\"seq\":1,\"type\":\"session_start\",\"v\":1}",
+          "sig": "85704d5b5ef02fd0f977edf05e36e8595b7803683c634024172f10d94958f41b8af5c65839eb0985a8568ce7e134c2bc3ea0713d9de58f0a8da90a34e9bd6aeb"
+        },
+        "fields": {
+          "app": {
+            "version": "0.1.0"
+          },
+          "local_time": "2026-10-29T14:30:00-03:00",
+          "prev": null,
+          "seq": 1,
+          "type": "session_start",
+          "v": 1
+        }
+      },
+      {
+        "aux": "edfd65d3450ab5817438aaa9e7837a96727487fcc8d7a58bd53fce8308bd1c7a",
+        "event": {
+          "id": "bc9d7a8570b5060a5453d08d76bd2b4f47815d81c6534451acf9052e78854f0f",
+          "pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2",
+          "created_at": 1793295060,
+          "kind": 7714,
+          "tags": [
+            [
+              "merchant",
+              "f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0"
+            ]
+          ],
+          "content": "{\"amount\":{\"currency\":\"BRL\",\"exponent\":2,\"value\":12990},\"app\":{\"version\":\"0.1.0\"},\"local_time\":\"2026-10-29T14:42:09-03:00\",\"payment_intent_id\":\"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\"prev\":\"6e53d19d8c0c8ceee99735c1cdcb45e0b5889063fa2159725fc39cad4b167c9a\",\"seq\":2,\"terminal_id\":\"TP000418\",\"type\":\"tap_started\",\"v\":1}",
+          "sig": "2bda708e9abdeb3b8989b7391cb0127ba6fad7ae3196d539e746a5018e9ae9b54c4eda51740176d76682a66c00c988a568c75ca0b4c0b3aa8460d24a57537d3c"
+        },
+        "fields": {
+          "amount": {
+            "currency": "BRL",
+            "exponent": 2,
+            "value": 12990
+          },
+          "app": {
+            "version": "0.1.0"
+          },
+          "local_time": "2026-10-29T14:42:09-03:00",
+          "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0",
+          "prev": "6e53d19d8c0c8ceee99735c1cdcb45e0b5889063fa2159725fc39cad4b167c9a",
+          "seq": 2,
+          "terminal_id": "TP000418",
+          "type": "tap_started",
+          "v": 1
+        }
+      }
+    ],
+    "root_role": "merchant-root"
+  },
   "jwk_thumbprint": {
     "jwk": {
       "kty": "EC",
@@ -188,6 +407,10 @@
       "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
     },
     "thumbprint": "oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U"
+  },
+  "key_attestation_challenge": {
+    "challenge": "33513d97c18f606a4cb85ff137cbdf470da85b4b4743a46d6b6325d601be3dcc",
+    "device_pubkey": "6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2"
   },
   "money": [
     {
@@ -260,6 +483,26 @@
     "method": "POST",
     "url": "https://api.goonerspay.example/v1/auth/nostr"
   },
+  "spki_pins": [
+    {
+      "bits": 256,
+      "external": "04a4f5349c79bd87f08d94b7806acd690647306f129a7a235e25dbbb3800b4d7b8596a4bd6acb8143f316c6945e525eb52aec73b874427cf0f5be205395c03f4fb",
+      "pin": "sha256/NE9iXcyzsKzPQCI00IIwyHRjsRMNEiCPor29lMaH49c=",
+      "type": "ec"
+    },
+    {
+      "bits": 384,
+      "external": "048c5db06e51f2d0ba983e6b91d8297826292d79a21fd68c06f6078f0dd7d633b5bf686a8884f6d5e4676ba8b27f6345a1920c1aebec6e9fad6d98a8498110668b696c27a77091fc31f57c84bba97806d82b423d17113d27318d833b9a0653f789",
+      "pin": "sha256/T6Nu3DeFjO7iYAG4mFFHRW7K8DlRuNffKz7zt6fyQ7k=",
+      "type": "ec"
+    },
+    {
+      "bits": 2048,
+      "external": "3082010a0282010100c0174c0d956c7dbb0ce5f995bf4f18d2e9c6276657358107e525a9396a4eae8886893dc39d373af9808a49cdbe403ef44f864af33f979ee958d45f498257351f8fe9883ed06b9195d864e0af7cce0c50c313feaf0267495c36b70605a9cb99b6fa5a65442562b6473f9216783ad3b91ea040fb0ea8bcf042625443fb8ca66122cb8377c0dd034b067d54cc32a8b587e4fdb2c7e52ee105ad6fd8f568836ce093e08c244b7173198aef81a5caf118df5c4b054e867647fbcd056fb756eb3b2cd4ba71ec7868e20c712ab39c54324d86bddaa9b498add8c9cf2339ab8b3d837dbec8765ad6baeb54f4b1ec2d454262d10ee1ee897a6b78b5dd5a5b7796da6affa50203010001",
+      "pin": "sha256/4r6RmPNPhO2D5PK9sO5pHTxZgca/svMzsHg9HYcMlYk=",
+      "type": "rsa"
+    }
+  ],
   "test_keys": [
     {
       "npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",

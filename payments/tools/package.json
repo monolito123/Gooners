@@ -10,6 +10,7 @@
   },
   "scripts": {
     "gen": "node gen-nostr-examples.mjs",
+    "tokens": "node gen-tokens.mjs",
     "check": "node check.mjs",
     "check:mermaid": "node check-mermaid.mjs",
     "lint:openapi": "redocly lint ../api/openapi.yaml --config redocly.yaml"

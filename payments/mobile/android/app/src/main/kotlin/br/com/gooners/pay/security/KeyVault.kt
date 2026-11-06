@@ -44,12 +44,17 @@ class KeyVault(private val context: Context) {
 
     private val hasStrongBox = context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
 
-    fun dpopSigner(): P256Signer {
+    /**
+     * The DPoP key. Generated on first use; with [attestationChallenge] the Keystore attests
+     * it (docs/05 §2.4), so the platform can pin this device's sessions to this hardware key.
+     */
+    fun dpopSigner(attestationChallenge: ByteArray? = null): P256Signer {
         if (!ks.containsAlias(DPOP)) {
             fun spec(strongBox: Boolean) = KeyGenParameterSpec.Builder(DPOP, KeyProperties.PURPOSE_SIGN)
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                 .setDigests(KeyProperties.DIGEST_SHA256)
                 .setIsStrongBoxBacked(strongBox)
+                .apply { if (attestationChallenge != null) setAttestationChallenge(attestationChallenge) }
                 .build()
             val gen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE)
             try {
@@ -74,6 +79,10 @@ class KeyVault(private val context: Context) {
                 derToRaw(Signature.getInstance("SHA256withECDSA").apply { initSign(private); update(data) }.sign())
         }
     }
+
+    /** The DPoP key's attestation certificate chain (leaf first, base64 DER). */
+    fun dpopAttestationChain(): List<String> =
+        ks.getCertificateChain(DPOP)?.map { Base64.getEncoder().encodeToString(it.encoded) }.orEmpty()
 
     private fun wrappingKey(): SecretKey {
         (ks.getKey(WRAP, null) as? SecretKey)?.let { return it }

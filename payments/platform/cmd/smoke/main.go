@@ -31,6 +31,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/monolito123/Gooners/payments/platform/internal/transparency"
 )
 
 var bin, pki string
@@ -116,20 +118,21 @@ func main() {
 	devKey := hexKey()
 	env := []string{
 		"PLATFORM_ENV=sandbox", "DATABASE_URL=" + dsn, "HTTP_ADDR=" + apiAddr, "ROUTES_FILE=" + routes, "CARD_PRESENT_TIMEOUT=2s",
-		"VAULT_KEK_HEX=" + hexKey(), "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "RECEIPTS_SECRET_HEX=" + hexKey(),
+		"VAULT_KEK_HEX=" + hexKey(), "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "RECEIPTS_SECRET_HEX=" + hexKey(), "TRANSPARENCY_SECRET_HEX=" + hexKey(),
 		"PIX_BASE_URL=https://" + pixAddr + "/api/v2", "PIX_TOKEN_URL=https://" + pixAddr + "/oauth/token", "PIX_CLIENT_ID=platform",
 		"PIX_CLIENT_SECRET=dev-secret", "PIX_KEY=12345678000195", "PIX_TLS_CA=" + p("ca.pem"), "PIX_TLS_CERT=" + p("platform-client.pem"),
 		"PIX_TLS_KEY=" + p("platform-client.key"), "PAYOUT_BASE_URL=https://" + pixAddr + "/api/v2",
 		"PIX_WEBHOOK_ADDR=" + hookAddr, "PIX_WEBHOOK_TLS_CA=" + p("ca.pem"), "PIX_WEBHOOK_TLS_CERT=" + p("platform-server.pem"),
 		"PIX_WEBHOOK_TLS_KEY=" + p("platform-server.key"), "PIX_WEBHOOK_PUBLIC_URL=https://" + hookAddr,
 		"BOOTSTRAP_TENANT=" + tenant, "BOOTSTRAP_CAPITAL=100000000", "METRICS_ADDR=" + metricsAddr,
+		"PLATFORM_DOCUMENT=22222222000191", "REPORTING_URL=https://goonerspay.example",
 	}
 	procs = append(procs, start(env, "platform", "serve"))
 	waitTCP(apiAddr)
 	waitTCP(hookAddr)
 	ok("schemesim, pixsim and platform are listening (API, Pix webhook over mTLS)")
 
-	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke").Output()
+	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke", "-scopes", "*,compliance:write").Output()
 	if err != nil {
 		fail("apikey: %v", err)
 	}
@@ -268,6 +271,83 @@ func main() {
 	}
 	ok("Pix day reconciled against GET /pix: %v", run["summary"])
 
+	// The day closed into a signed statement and a public transparency root (docs/03 §6).
+	today := time.Now().In(brt).Format("2006-01-02")
+	cli("close-day", "-date", today)
+	sts := call("GET", "/v1/settlements?merchant_id="+m["id"].(string), nil, 200)["data"].([]any)
+	if len(sts) != 1 {
+		fail("settlements after close-day: %v", sts)
+	}
+	set := sts[0].(map[string]any)
+	stmt := call("GET", "/v1/settlements/"+set["id"].(string)+"/statement", nil, 200)
+	var statement struct {
+		Lines []struct {
+			Receipt string `json:"receipt_event_id"`
+		} `json:"lines"`
+		Commitment   string `json:"statement_commitment"`
+		Transparency struct {
+			Salt string `json:"leaf_salt"`
+		} `json:"transparency"`
+	}
+	_ = json.Unmarshal([]byte(stmt["content"].(string)), &statement)
+	resp, err = http.Get("http://" + apiAddr + "/v1/transparency/" + today)
+	if err != nil || resp.StatusCode != 200 {
+		fail("public transparency root: %v %v", err, resp)
+	}
+	var root map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&root)
+	resp.Body.Close()
+	proof := call("GET", "/v1/settlements/"+set["id"].(string)+"/proofs/"+statement.Lines[0].Receipt, nil, 200)
+	ti := proof["transparency_inclusion"].(map[string]any)
+	var path []string
+	for _, x := range ti["audit_path"].([]any) {
+		path = append(path, x.(string))
+	}
+	leaf, _ := transparency.LeafData(statement.Transparency.Salt, statement.Commitment)
+	hops, _ := transparency.ParsePath(path)
+	logRoot, _ := hex.DecodeString(root["root"].(string))
+	if !transparency.VerifyInclusion(leaf, int(ti["leaf_index"].(float64)), int(ti["tree_size"].(float64)), hops, logRoot) {
+		fail("the statement's leaf is not proven in the public root: %v", proof)
+	}
+	ok("day closed: statement of %d receipts, net R$ %.2f, proven in a public root of %v leaves", len(statement.Lines), set["net"].(float64)/100, root["tree_size"])
+
+	// Crypto, international accounts and B3 in the sandbox (docs/09).
+	cpi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 5000, "channel": "crypto"}, 201)
+	cq := call("POST", "/v1/payment-intents/"+cpi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
+	act, _ := cq["next_action"].(map[string]any)
+	if paid := call("POST", "/v1/sandbox/crypto/payments/"+cpi["id"].(string), nil, 200); paid["status"] != "captured" {
+		fail("crypto payment: %v", paid)
+	}
+	ok("R$ 50,00 paid in USDT on Tron (%v to %v), sold for reais, intent captured", act["amount"], act["address"])
+	accts := call("GET", "/v1/international/accounts?merchant_id="+m["id"].(string), nil, 200)
+	if n := len(accts["data"].([]any)); n != 3 {
+		fail("international accounts: %v", accts)
+	}
+	quote := call("GET", "/v1/investments/quotes/PETR4", nil, 200)
+	ok("international accounts in USD, EUR and GBP; B3 quote PETR4 R$ %v (lot %v)", quote["last"], quote["lot"])
+	// A withdrawal to the sandbox's sanctioned test address is refused before anything moves.
+	if r := call("POST", "/v1/crypto/withdrawals", map[string]any{"merchant_id": m["id"], "asset": "USDT", "network": "ethereum",
+		"address": "0x0000000000000000000000000000000000000bad", "amount": "1"}, 403); r["code"] != "address_refused" {
+		fail("sanctions screening: %v", r)
+	}
+	// A payment from the sandbox's sanctioned sender is held for compliance, not settled.
+	hpi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 2000, "channel": "crypto"}, 201)
+	call("POST", "/v1/payment-intents/"+hpi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
+	if held := call("POST", "/v1/sandbox/crypto/payments/"+hpi["id"].(string), map[string]any{"from": "TSanctionedTestAddressForSandbox12"}, 200); held["status"] != "processing" {
+		fail("a sanctioned sender's payment: %v", held)
+	}
+	if cs, _ := call("GET", "/v1/compliance/cases", nil, 200)["data"].([]any); len(cs) != 1 || cs[0].(map[string]any)["reason"] != "sanctions_hit" {
+		fail("the held payment's compliance case: %v", cs)
+	}
+	// This month's DeCripto, written by the operator command as it would be filed.
+	dc := filepath.Join(dir, "decripto.txt")
+	cli("decripto", "-month", time.Now().In(brt).Format("2006-01"), "-out", dc)
+	file, _ := os.ReadFile(dc)
+	if !strings.HasPrefix(string(file), "0000|22222222000191|") || !strings.Contains(string(file), "\r\n0350|") || !strings.Contains(string(file), "\r\n9999|1|50,00|") {
+		fail("decripto:\n%s", file)
+	}
+	ok("sanctioned address refused; a sanctioned sender's payment held for compliance; DeCripto written (%d lines)", strings.Count(string(file), "\r\n"))
+
 	resp, err = http.Get("http://" + metricsAddr + "/metrics")
 	if err != nil {
 		fail("metrics: %v", err)
@@ -282,6 +362,6 @@ func main() {
 	ok("/metrics exposes authorizations, open disputes and safeguarding headroom")
 
 	cli("verify-ledger")
-	ok("ledger invariants L1–L5 hold")
+	ok("ledger invariants L1–L6 hold")
 	fmt.Println("SMOKE OK")
 }
