@@ -121,7 +121,7 @@ ${body}
         <li><a href="${WA('Olá! Vim pelo site do Gooners.')}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp ${C.phoneDisplay}</a></li>
         <li><a href="mailto:${C.email}">${ic('mail')}${C.email}</a></li>
       </ul>
-      <p><a href="${R}contato/">Contato</a> · <a href="${R}ai/">Gooners AI</a> · <a href="${R}law/">Gooners Law</a> · <a href="${R}law/noticias/">Notícias jurídicas</a> · <a href="${R}sitemap.xml">Mapa do site</a></p>
+      <p><a href="${R}contato/">Contato</a> · <a href="${R}ai/">Gooners AI</a> · <a href="${R}folio/">Fólio Judiciário</a> · <a href="${R}law/">Gooners Law</a> · <a href="${R}law/noticias/">Notícias jurídicas</a> · <a href="${R}sitemap.xml">Mapa do site</a></p>
     </div>
     <div class="footer-cols">${footCols}</div>
   </div>
@@ -364,7 +364,7 @@ for (const d of existsSync(ROOT + 'ferramentas') ? readdirSync(ROOT + 'ferrament
 
 // ---------- sitemap, robots, manifest ----------
 const lawPages = ['law/', 'law/noticias/', 'law/glossario/', 'law/artigos/', ...(existsSync(ROOT + 'law/artigos') ? readdirSync(ROOT + 'law/artigos').filter((d) => existsSync(`${ROOT}law/artigos/${d}/index.html`)).map((d) => `law/artigos/${d}/`) : [])];
-const urls = [['', '1.0', 'weekly'], ['ai/', '0.8', 'monthly'], ['contato/', '0.5', 'yearly'], ...CATEGORIES.map((c) => [`categorias/${c.id}/`, '0.8', 'weekly']), ...TOOLS.map((t) => [`ferramentas/${t.id}/`, POPULAR.includes(t.id) ? '0.9' : '0.7', 'monthly']),
+const urls = [['', '1.0', 'weekly'], ['ai/', '0.8', 'monthly'], ['folio/', '0.8', 'monthly'], ['contato/', '0.5', 'yearly'], ...CATEGORIES.map((c) => [`categorias/${c.id}/`, '0.8', 'weekly']), ...TOOLS.map((t) => [`ferramentas/${t.id}/`, POPULAR.includes(t.id) ? '0.9' : '0.7', 'monthly']),
   ...lawPages.map((p) => [p, p === 'law/noticias/' ? '0.9' : '0.8', p === 'law/noticias/' ? 'hourly' : 'monthly'])];
 writeFileSync(ROOT + 'sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(([p, pr, cf]) => `  <url><loc>${SITE_URL}${p}</loc><lastmod>${TODAY}</lastmod><changefreq>${cf}</changefreq><priority>${pr}</priority></url>`).join('\n')}\n</urlset>\n`);
 writeFileSync(ROOT + 'robots.txt', `User-agent: *\nAllow: /\nDisallow: /favoritos/\nDisallow: /scripts/\n\nSitemap: ${SITE_URL}sitemap.xml\n`);
