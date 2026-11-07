@@ -1,0 +1,56 @@
+name: Gooners AI (tipos, testes e build)
+
+on:
+  push:
+    paths: ['ai/**', '.github/workflows/ai.yml']
+  pull_request:
+    paths: ['ai/**', '.github/workflows/ai.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gooners-ai-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ai
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ai/package-lock.json
+
+      - name: Dependências
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Testes unitários
+        run: npm test
+
+      - name: Build de produção
+        run: npm run build
+
+      - name: Testes ponta a ponta (Chromium headless, offline incluso)
+        run: |
+          npm install --no-save --ignore-scripts playwright@1.63.0
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gooners-ai-dist
+          path: ai/dist
+          if-no-files-found: ignore
