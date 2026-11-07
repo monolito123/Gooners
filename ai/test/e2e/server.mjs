@@ -29,6 +29,6 @@ export function serve(root, port = 0) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { url } = await serve(join(import.meta.dirname, '../../dist'), Number(process.argv[2] ?? 4173));
+  const { url } = await serve(process.env.ROOT ?? join(import.meta.dirname, '../../dist'), Number(process.argv[2] ?? 4173));
   console.log(`serving dist/ at ${url}`);
 }

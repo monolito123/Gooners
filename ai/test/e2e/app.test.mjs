@@ -62,6 +62,7 @@ describe('Gooners AI (production build)', () => {
 
   test('generates a procedural image and saves it to the gallery', async () => {
     const { context, page, errors } = await openApp('image');
+    await page.getByRole('radio', { name: 'Abstract art' }).click();
     await page.getByPlaceholder(/synthwave/).fill('neon synthwave sunset over a calm ocean');
     await page.getByRole('button', { name: /^Generate$/ }).click();
     const img = page.locator('figure img').first();
@@ -74,6 +75,7 @@ describe('Gooners AI (production build)', () => {
 
   test('renders a shader video and encodes GIF and MP4 with ffmpeg.wasm', async () => {
     const { context, page, errors } = await openApp('video');
+    await page.getByRole('radio', { name: 'Abstract' }).click();
     await page.getByPlaceholder(/aurora/).fill('aurora over a frozen lake, slow');
     await page.getByRole('radio', { name: '12' }).click();
     const duration = page.getByLabel('Duration');
@@ -137,9 +139,82 @@ try { parent.document.title = 'pwned'; } catch (e) { console.log('parent blocked
     await page.getByRole('heading', { name: /Private AI/ }).waitFor();
     await page.locator('footer [data-connectivity="offline"]').waitFor();
     await page.getByRole('navigation').getByRole('button', { name: /Image Studio/ }).click();
+    await page.getByRole('radio', { name: 'Abstract art' }).click();
     await page.getByPlaceholder(/synthwave/).fill('crystal cave, glowing');
     await page.getByRole('button', { name: /^Generate$/ }).click();
     await page.locator('figure img').first().waitFor({ timeout: 30_000 });
+    await context.close();
+  });
+
+  test('App Builder submit works with no project and no model (starts the model download)', async () => {
+    const { context, page, errors } = await openApp('builder');
+    await page.getByPlaceholder('Describe the app to build…').fill('A counter with a big plus button');
+    const submit = page.getByTestId('builder-submit');
+    assert.equal(await submit.isEnabled(), true, 'submit is enabled before any model is loaded');
+    await submit.click();
+    await page.locator('[data-model-status="loading"]').waitFor({ timeout: 20_000 });
+    await page.getByText('Loading the coding model').waitFor();
+    const projects = await page.evaluate(() => JSON.parse(localStorage.getItem('gooners-ai:projects')).state.projects);
+    assert.equal(projects.length, 1, 'a project was created');
+    assert.match(projects[0].title, /counter/i);
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+    await page.locator('[data-model-status="idle"]').waitFor();
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('defaults to a real diffusion model that runs without WebGPU', async () => {
+    const { context, page, errors } = await openApp('image');
+    await page.getByLabel('Image model').waitFor();
+    assert.equal(await page.getByLabel('Image model').inputValue(), 'sdxs-fp32');
+    await page.getByText('CPU · WASM').first().waitFor();
+    await page.getByPlaceholder(/street market/).fill('a red apple on a wooden table');
+    await page.getByTestId('image-generate').getByText(/Download model \(1\.\d GB\) & generate/).waitFor();
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('generates real images and an AI video with SDXS on the CPU', { skip: !process.env.GOONERS_E2E_MODELS, timeout: 1_800_000 }, async () => {
+    const { context, page, errors } = await openApp('image');
+    await page.getByPlaceholder(/street market/).fill('a red sports car on a coastal road at sunset, photo');
+    await page.getByTestId('image-generate').click();
+    await page.locator('figure img').first().waitFor({ timeout: 1_500_000 });
+    const caption = await page.locator('figure').first().innerText();
+    assert.match(caption, /SDXS/);
+    assert.match(caption, /512×512/);
+    // Reuse the downloaded model for a 1-second "camera" video (one diffusion pass).
+    await page.getByRole('navigation').getByRole('button', { name: /Video Generator/ }).click();
+    await page.getByPlaceholder(/lighthouse/).fill('a lighthouse on a cliff at sunset, waves crashing');
+    await page.getByRole('radio', { name: 'Camera' }).click();
+    await page.getByRole('radio', { name: '12' }).click();
+    const duration = page.getByLabel('Duration');
+    await duration.focus();
+    await duration.press('Home');
+    await page.getByTestId('video-render').click();
+    await page.getByRole('button', { name: 'MP4', exact: true }).waitFor({ timeout: 600_000 });
+    await page.getByRole('button', { name: 'MP4', exact: true }).click();
+    await page.getByRole('button', { name: /Download MP4/ }).waitFor({ timeout: 120_000 });
+    await page.screenshot({ path: process.env.GOONERS_E2E_SHOTS ? `${process.env.GOONERS_E2E_SHOTS}/ai-video.png` : '/dev/null' }).catch(() => undefined);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('builds an app with a real coding model on the CPU', { skip: !process.env.GOONERS_E2E_MODELS, timeout: 1_800_000 }, async () => {
+    const { context, page, errors } = await openApp('builder');
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('gooners-ai:settings'));
+      Object.assign(s.state, { appMaxTokens: 600 });
+      localStorage.setItem('gooners-ai:settings', JSON.stringify(s));
+    });
+    await page.reload();
+    await page.getByPlaceholder('Describe the app to build…').fill('A page with one big red button labeled "Hello". Keep it very short.');
+    await page.getByTestId('builder-submit').click();
+    await page.locator('[data-model-status="ready"], [data-model-status="generating"]').first().waitFor({ timeout: 900_000 });
+    await page.getByRole('button', { name: /^v1$/ }).waitFor({ timeout: 900_000 });
+    const frame = page.frameLocator('iframe').first();
+    await frame.getByRole('button').first().waitFor({ timeout: 30_000 });
+    assert.match(await frame.getByRole('button').first().innerText(), /hello/i);
+    assert.deepEqual(errors, []);
     await context.close();
   });
 

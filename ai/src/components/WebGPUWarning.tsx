@@ -1,5 +1,5 @@
 import { Cpu, ShieldAlert } from 'lucide-react';
-import { DEFAULT_CPU_MODEL } from '../engines/models.ts';
+import { DEFAULT_CPU_CODE_MODEL, DEFAULT_CPU_MODEL } from '../engines/models.ts';
 import { useT } from '../i18n/index.ts';
 import { usePlatform } from '../state/platform.ts';
 import { useSettings } from '../state/settings.ts';
@@ -33,7 +33,7 @@ export function WebGPUWarning() {
             variant="primary"
             icon={<Cpu className="size-4" />}
             onClick={() => {
-              set({ chatModelId: DEFAULT_CPU_MODEL, codeModelId: DEFAULT_CPU_MODEL, gpuWarningDismissed: true });
+              set({ chatModelId: DEFAULT_CPU_MODEL, codeModelId: DEFAULT_CPU_CODE_MODEL, gpuWarningDismissed: true });
             }}
           >
             {t('gpu.useCpu')}

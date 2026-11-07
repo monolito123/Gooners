@@ -1,7 +1,7 @@
 /** User settings, persisted in localStorage. */
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { DEFAULT_CHAT_MODEL, DEFAULT_CODE_MODEL, type TextModelInfo } from '../engines/models.ts';
+import { DEFAULT_CHAT_MODEL, DEFAULT_CODE_MODEL, type DiffusionModelId, type TextModelInfo } from '../engines/models.ts';
 
 export type Language = 'pt' | 'en';
 
@@ -58,6 +58,9 @@ export interface SettingsState {
   appMaxTokens: number;
   sandboxNetwork: boolean;
   gpuWarningDismissed: boolean;
+  /** Image model chosen in the Image/Video studios (default depends on the GPU). */
+  imageModelId?: DiffusionModelId;
+  imageCpu: boolean;
   set: (patch: Partial<Omit<SettingsState, 'set' | 'reset'>>) => void;
   reset: () => void;
 }
@@ -79,6 +82,8 @@ export const DEFAULT_SETTINGS = {
   appMaxTokens: 2500,
   sandboxNetwork: false,
   gpuWarningDismissed: false,
+  imageModelId: undefined as DiffusionModelId | undefined,
+  imageCpu: false,
 };
 
 export const useSettings = create<SettingsState>()(

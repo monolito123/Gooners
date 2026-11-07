@@ -1,19 +1,21 @@
 import { Dices, Image as ImageIcon, ImagePlus, Lock, RotateCcw, Sparkles, Square, Unlock, Wand2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { imageEngine } from '../../engines/ImageEngine.ts';
+import { findDiffusionModel } from '../../engines/models.ts';
 import { SCENE_MODES, type SceneMode, type SceneSpec, interpretPrompt } from '../../engines/procedural/artEngine.ts';
 import { canUseLLM, interpretWithLLM } from '../../engines/procedural/llmSpec.ts';
 import { renderProceduralImage } from '../../engines/procedural/shaderRenderer.ts';
 import { rgbaToPng } from '../../engines/VideoSynthesizer.ts';
 import { useGpu, useImageEngine, useTextEngine } from '../../hooks.ts';
 import { useT } from '../../i18n/index.ts';
-import { formatDuration } from '../../lib/format.ts';
+import { formatBytes, formatDuration } from '../../lib/format.ts';
 import { blobToRgba } from '../../lib/image.ts';
 import { randomSeed } from '../../lib/prng.ts';
 import { isAbortError } from '../../lib/rpc.ts';
 import { type Asset, assetBlob, useAssets } from '../../state/assets.ts';
+import { useSettings } from '../../state/settings.ts';
 import { useUi } from '../../state/ui.ts';
-import { AssetCard, AssetChip, AssetPicker, DiffusionModelCard } from '../media.tsx';
+import { AssetCard, AssetChip, AssetPicker, DiffusionModelPanel } from '../media.tsx';
 import { Button, EmptyState, Field, IconButton, Panel, ProgressBar, Segmented, Slider, Toggle, inputClass } from '../ui/primitives.tsx';
 
 type Engine = 'diffusion' | 'procedural';
@@ -69,11 +71,12 @@ export default function ImageStudio() {
   const t = useT();
   const sd = useImageEngine();
   const text = useTextEngine();
-  const gpu = useGpu();
+  useGpu(); // re-render when the GPU capabilities are known (they decide the device)
   const assets = useAssets((s) => s.assets);
   const toast = useUi((s) => s.toast);
-  const diffusionOk = gpu.supported && gpu.hasF16;
-  const [engine, setEngine] = useState<Engine>('procedural');
+  const sdModel = findDiffusionModel(sd.modelId);
+  const sdDevice = imageEngine.device(sdModel);
+  const [engine, setEngine] = useState<Engine>('diffusion');
   const [prompt, setPrompt] = useState('');
   const [seed, setSeed] = useState(randomSeed);
   const [lockSeed, setLockSeed] = useState(false);
@@ -90,18 +93,8 @@ export default function ImageStudio() {
   const [lastMs, setLastMs] = useState<number>();
   const abort = useRef<AbortController | null>(null);
 
-  // Prefer diffusion once the model is on disk, unless the user picked an engine.
-  const userPicked = useRef(false);
-  const sdOnDisk = ['downloaded', 'ready', 'generating'].includes(sd.status);
   useEffect(() => {
-    if (diffusionOk && sdOnDisk && !userPicked.current) setEngine('diffusion');
-  }, [diffusionOk, sdOnDisk]);
-  const pickEngine = (value: Engine) => {
-    userPicked.current = true;
-    setEngine(value);
-  };
-
-  useEffect(() => {
+    void imageEngine.refresh();
     const handoff = useUi.getState().takeHandoff('image');
     if (handoff?.purpose === 'init') {
       setInit({ assetId: handoff.assetId, strength: 0.55 });
@@ -128,7 +121,7 @@ export default function ImageStudio() {
     const start = performance.now();
     try {
       if (engine === 'diffusion') {
-        const initRgba = init ? await blobToRgba(await assetBlob(init.assetId), 512) : undefined;
+        const initRgba = init && sdModel.img2img ? await blobToRgba(await assetBlob(init.assetId), 512) : undefined;
         let done = 0;
         await imageEngine.generate(
           { prompt, seed, steps, frames: count, mode: 'single', init: initRgba ? { rgba: initRgba, strength: init!.strength } : undefined },
@@ -136,7 +129,7 @@ export default function ImageStudio() {
             done++;
             setProgress({ done, total: count });
             setLastMs(frame.ms);
-            void rgbaToPng(frame.rgba, frame.width, frame.height).then((png) => save(png, 'sd-turbo', frame.width, frame.height));
+            void rgbaToPng(frame.rgba, frame.width, frame.height).then((png) => save(png, sdModel.label, frame.width, frame.height));
           },
           controller.signal,
         );
@@ -164,10 +157,16 @@ export default function ImageStudio() {
   const useAsInit = (asset: Asset) => {
     setInit({ assetId: asset.id, strength: 0.55 });
     setEngine('diffusion');
+    // Image-to-image needs a model that supports it.
+    if (!sdModel.img2img && imageEngine.device(findDiffusionModel('sd-turbo'))) {
+      useSettings.getState().set({ imageModelId: 'sd-turbo' });
+      void imageEngine.select('sd-turbo');
+    }
   };
 
-  const diffusionReady = sd.status === 'ready' || sd.status === 'downloaded' || sd.status === 'generating';
-  const canGenerate = prompt.trim() && !busy && (engine === 'procedural' || diffusionReady);
+  const sdBusy = sd.status === 'downloading' || sd.status === 'loading' || sd.status === 'generating';
+  const canGenerate = Boolean(prompt.trim()) && !busy && (engine === 'procedural' || (Boolean(sdDevice) && !sdBusy));
+  const needsDownload = engine === 'diffusion' && (sd.status === 'absent' || sd.status === 'partial');
 
   return (
     <div className="flex h-full flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
@@ -175,13 +174,13 @@ export default function ImageStudio() {
         <Segmented
           className="w-full"
           value={engine}
-          onChange={pickEngine}
+          onChange={setEngine}
           options={[
-            { value: 'diffusion', label: t('image.engine.diffusion'), disabled: !diffusionOk, title: diffusionOk ? undefined : t('sd.noF16') },
+            { value: 'diffusion', label: t('image.engine.diffusion') },
             { value: 'procedural', label: t('image.engine.procedural') },
           ]}
         />
-        {engine === 'diffusion' ? <DiffusionModelCard /> : <p className="text-xs text-ink-400">{t('image.procedural.about')}</p>}
+        {engine === 'diffusion' ? <DiffusionModelPanel disabled={busy} /> : <p className="text-xs text-ink-400">{t('image.procedural.about')}</p>}
 
         <Field label={t('image.prompt')}>
           <textarea
@@ -211,8 +210,12 @@ export default function ImageStudio() {
 
         {engine === 'diffusion' ? (
           <>
-            <Slider label={t('image.steps')} value={steps} min={1} max={4} step={1} onChange={setSteps} hint={t('image.stepsHint')} />
-            {init ? (
+            {sdModel.maxSteps > 1 && (
+              <Slider label={t('image.steps')} value={Math.min(steps, sdModel.maxSteps)} min={1} max={sdModel.maxSteps} step={1} onChange={setSteps} hint={t('image.stepsHint')} />
+            )}
+            {!sdModel.img2img ? (
+              <p className="text-xs text-ink-400">{t('image.initNeeds')}</p>
+            ) : init ? (
               <AssetChip assetId={init.assetId} onClear={() => setInit(null)}>
                 <Slider label={t('image.strength')} value={init.strength} min={0.1} max={1} step={0.05} onChange={(strength) => setInit({ ...init, strength })} format={(v) => v.toFixed(2)} />
               </AssetChip>
@@ -248,8 +251,8 @@ export default function ImageStudio() {
         )}
 
         <div className="flex gap-2">
-          <Button variant="primary" className="flex-1" size="lg" disabled={!canGenerate} busy={busy} icon={<Sparkles className="size-4.5" />} onClick={() => void generate()}>
-            {t('image.generate')}
+          <Button variant="primary" className="flex-1" size="lg" disabled={!canGenerate} busy={busy} icon={<Sparkles className="size-4.5" />} onClick={() => void generate()} data-testid="image-generate">
+            {needsDownload ? t('image.downloadGenerate', { size: formatBytes(sd.totalBytes) }) : t('image.generate')}
           </Button>
           {busy && (
             <Button
@@ -265,7 +268,9 @@ export default function ImageStudio() {
             </Button>
           )}
         </div>
-        {progress && <ProgressBar value={progress.total ? progress.done / progress.total : undefined} indeterminate={progress.done === 0} tone="pink" />}
+        {progress && sd.status !== 'downloading' && sd.status !== 'loading' && (
+          <ProgressBar value={progress.total ? progress.done / progress.total : undefined} indeterminate={progress.done === 0} tone="pink" />
+        )}
         {lastMs !== undefined && !busy && (
           <p className="font-mono text-[11px] text-ink-400">
             {t('image.lastTime', { time: formatDuration(lastMs / 1000) })}
@@ -281,14 +286,18 @@ export default function ImageStudio() {
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
             {images.map((a) => (
-              <AssetCard key={a.id} asset={a} highlight={latest.includes(a.id)} onUseAsInit={diffusionOk ? useAsInit : undefined} />
+              <AssetCard key={a.id} asset={a} highlight={latest.includes(a.id)} onUseAsInit={useAsInit} />
             ))}
           </div>
         )}
         {busy && engine === 'diffusion' && (
           <Panel className="mt-4 flex items-center gap-3 p-3 text-xs text-ink-300">
             <Wand2 className="size-4 animate-pulse text-neon-pink" />
-            {t('image.working', { done: progress?.done ?? 0, total: progress?.total ?? count })}
+            {sd.status === 'downloading'
+              ? t('image.stageDownload')
+              : sd.status === 'loading'
+                ? t('image.stageLoad')
+                : t(sdDevice === 'wasm' ? 'image.workingCpu' : 'image.working', { done: progress?.done ?? 0, total: progress?.total ?? count })}
           </Panel>
         )}
       </section>

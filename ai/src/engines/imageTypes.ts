@@ -1,4 +1,5 @@
 /** Types shared by the image engine and its worker. */
+import type { DiffusionDevice, DiffusionModelId } from './models.ts';
 
 export type DiffusionMode = 'single' | 'morph' | 'loop' | 'zoom';
 
@@ -15,6 +16,10 @@ export interface DiffusionRequest {
   /** morph: second prompt and seed to travel towards. */
   promptB?: string;
   seedB?: number;
+  /** morph: fraction of the way from seed to seedB that the frames cover (default 1). */
+  walk?: number;
+  /** loop: radius of the orbit around the seed's noise (default 0.45); smaller = subtler motion. */
+  radius?: number;
   /** zoom: per-frame transform and repaint strength for the feedback loop. */
   zoom?: { scale: number; rotateDeg: number; strength: number };
 }
@@ -28,22 +33,14 @@ export interface DiffusionFrame {
   ms: number;
 }
 
-export interface ModelFileStatus {
-  key: string;
-  received: number;
-  size: number;
-  complete: boolean;
-}
-
 export type ImageWorkerApi = {
-  status: { params: undefined; progress: never; result: { files: ModelFileStatus[]; loaded: boolean } };
   download: {
-    params: undefined;
+    params: { modelId: DiffusionModelId };
     progress: { loaded: number; total: number; file: string };
     result: undefined;
   };
   load: {
-    params: undefined;
+    params: { modelId: DiffusionModelId; device: DiffusionDevice };
     progress: { stage: 'read' | 'session'; file: string; index: number; count: number; fraction: number };
     result: { ms: number };
   };

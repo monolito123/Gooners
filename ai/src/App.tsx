@@ -10,7 +10,7 @@ import { IconButton, Spinner } from './components/ui/primitives.tsx';
 import { WebGPUWarning } from './components/WebGPUWarning.tsx';
 import { imageEngine } from './engines/ImageEngine.ts';
 import { isTextModelCached } from './engines/modelCache.ts';
-import { findTextModel, isUsable } from './engines/models.ts';
+import { defaultDiffusionModel, diffusionDevice, findDiffusionModel, findTextModel, isUsable } from './engines/models.ts';
 import { textEngine } from './engines/TextEngine.ts';
 import { loadTextModel } from './hooks.ts';
 import { type TKey, useT } from './i18n/index.ts';
@@ -30,9 +30,14 @@ const TITLES: Record<Mode, TKey> = { chat: 'mode.chat', image: 'mode.image', vid
 /** Detects the device, registers the offline worker and reloads the last model if it is cached. */
 async function bootstrap(): Promise<void> {
   const platform = usePlatform.getState();
-  const [info] = await Promise.all([platform.detect(), platform.refreshStorage(), useAssets.getState().load(), imageEngine.refresh()]);
+  const [info] = await Promise.all([platform.detect(), platform.refreshStorage(), useAssets.getState().load()]);
   void registerServiceWorker();
   const settings = useSettings.getState();
+  // Image model: the saved choice if it runs here, else the best one for this device.
+  const caps = { supported: info.gpu.supported, hasF16: info.gpu.hasF16, isFallbackAdapter: info.gpu.isFallbackAdapter };
+  const saved = settings.imageModelId ? findDiffusionModel(settings.imageModelId) : undefined;
+  imageEngine.setPreferCpu(settings.imageCpu);
+  await imageEngine.select(saved && diffusionDevice(saved, caps) ? saved.id : defaultDiffusionModel(caps));
   if (!settings.autoLoad || !settings.lastModelId) return;
   const model = findTextModel(settings.lastModelId, settings.customModels);
   if (!model || !isUsable(model, info.gpu)) return;

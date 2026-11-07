@@ -103,3 +103,86 @@ describe('numeric helpers', () => {
     expect(formatDuration(125)).toBe('2m 05s');
   });
 });
+
+describe('second release: image models, abliterated models, manifest fallback', async () => {
+  const { DIFFUSION_MODELS, defaultDiffusionModel, diffusionDevice, findDiffusionModel } = await import('../../src/engines/models.ts');
+  const { withLegacyManifestFallback } = await import('../../src/engines/legacyManifest.ts');
+  const { orbitNoise } = await import('../../src/engines/sd/tensor.ts');
+  const { gaussianNoise } = await import('../../src/lib/prng.ts');
+
+  it('runs real diffusion on every device class', () => {
+    const f16 = { supported: true, hasF16: true };
+    const noF16 = { supported: true, hasF16: false };
+    const cpu = { supported: false, hasF16: false };
+    const swiftshader = { supported: true, hasF16: false, isFallbackAdapter: true };
+    expect(defaultDiffusionModel(f16)).toBe('sdxs');
+    expect(defaultDiffusionModel(noF16)).toBe('sdxs-fp32');
+    expect(defaultDiffusionModel(cpu)).toBe('sdxs-fp32');
+    const fp32 = findDiffusionModel('sdxs-fp32');
+    expect(diffusionDevice(fp32, f16)).toBe('webgpu');
+    expect(diffusionDevice(fp32, cpu)).toBe('wasm');
+    expect(diffusionDevice(fp32, swiftshader)).toBe('wasm');
+    expect(diffusionDevice(fp32, f16, true)).toBe('wasm');
+    expect(diffusionDevice(findDiffusionModel('sdxs'), noF16)).toBeNull();
+    expect(diffusionDevice(findDiffusionModel('sd-turbo'), f16)).toBe('webgpu');
+    for (const m of DIFFUSION_MODELS) {
+      const roles = m.files.map((f) => f.role);
+      for (const role of ['vocab', 'merges', 'text_encoder', 'unet', 'vae_decoder'] as const) expect(roles).toContain(role);
+      expect(roles.includes('vae_encoder')).toBe(m.img2img);
+      expect(new Set(m.files.map((f) => f.key)).size).toBe(m.files.length);
+      for (const f of m.files) expect(f.url).toMatch(/^https:\/\/huggingface\.co\/.+\/resolve\/.+/);
+    }
+  });
+
+  it('lists abliterated models for WebGPU (shader-f16) and the CPU', () => {
+    const llama = findTextModel('Llama-3.2-1B-Instruct-abliterated-q4f16_1-MLC')!;
+    expect(llama.tags).toContain('uncensored');
+    expect(llama.mlc?.libFrom).toBe('Llama-3.2-1B-Instruct-q4f16_1-MLC');
+    expect(isUsable(llama, { supported: true, hasF16: true })).toBe(true);
+    expect(isUsable(llama, { supported: true, hasF16: false })).toBe(false);
+    const cpu = findTextModel('wasm:onnx-community/Qwen2.5-0.5B-Instruct-abliterated-v3-ONNX')!;
+    expect(isUsable(cpu, { supported: false, hasF16: false })).toBe(true);
+    expect(cpu.dtype).toBe('q8');
+  });
+
+  it('builds WebLLM records for abliterated weights on the official libraries', async () => {
+    const { webllmAppConfig } = await import('../../src/engines/modelCache.ts');
+    const config = await webllmAppConfig([]);
+    const official = config.model_list.find((r) => r.model_id === 'Llama-3.2-1B-Instruct-q4f16_1-MLC')!;
+    const derived = config.model_list.find((r) => r.model_id === 'Llama-3.2-1B-Instruct-abliterated-q4f16_1-MLC')!;
+    expect(derived.model_lib).toBe(official.model_lib);
+    expect(derived.model).toContain('Sandoche/Llama-3.2-1B-Instruct-abliterated');
+    expect(derived.integrity).toBeUndefined();
+    expect(config.cacheBackend).toBe('indexeddb');
+  });
+
+  it('falls back to ndarray-cache.json for older MLC conversions', async () => {
+    const seen: string[] = [];
+    const fake = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      seen.push(url);
+      return new Response(url.endsWith('ndarray-cache.json') ? '{"records":[]}' : 'missing', { status: url.endsWith('ndarray-cache.json') ? 200 : 404 });
+    }) as typeof fetch;
+    const wrapped = withLegacyManifestFallback(fake);
+    const res = await wrapped('https://huggingface.co/x/y/resolve/abc/tensor-cache.json');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"records":[]}');
+    expect(seen.at(-1)).toBe('https://huggingface.co/x/y/resolve/abc/ndarray-cache.json');
+    expect((await wrapped('https://huggingface.co/x/y/resolve/abc/params_shard_0.bin')).status).toBe(404);
+  });
+
+  it('orbits close to the seed noise and closes the loop', () => {
+    const a = gaussianNoise(4096, 1);
+    const b = gaussianNoise(4096, 2);
+    const c = gaussianNoise(4096, 3);
+    const start = orbitNoise(a, b, c, 0, 0.45);
+    const end = orbitNoise(a, b, c, 1, 0.45);
+    start.forEach((v, i) => expect(v).toBeCloseTo(end[i], 4));
+    const mid = orbitNoise(a, b, c, 0.37, 0.45);
+    const std = Math.sqrt(mid.reduce((s, v) => s + v * v, 0) / mid.length);
+    expect(std).toBeCloseTo(1, 1);
+    let dot = 0;
+    for (let i = 0; i < a.length; i++) dot += (a[i] * mid[i]) / a.length;
+    expect(dot).toBeGreaterThan(0.85);
+  });
+});

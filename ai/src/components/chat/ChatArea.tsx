@@ -4,14 +4,14 @@ import { extractCode } from '../../appBuilder/extractCode.ts';
 import { detectAppIntent } from '../../appBuilder/intent.ts';
 import { textEngine } from '../../engines/TextEngine.ts';
 import type { ChatTurn } from '../../engines/textTypes.ts';
-import { useTextEngine } from '../../hooks.ts';
+import { ensureTextModel, useTextEngine } from '../../hooks.ts';
 import { type TKey, useT } from '../../i18n/index.ts';
 import { titleFrom, useChats } from '../../state/chats.ts';
 import { useProjects } from '../../state/projects.ts';
 import { useSettings } from '../../state/settings.ts';
 import { useUi } from '../../state/ui.ts';
 import { ModelGate } from '../ModelGate.tsx';
-import { IconButton, cx } from '../ui/primitives.tsx';
+import { IconButton, Spinner, cx } from '../ui/primitives.tsx';
 import { Markdown, MessageBubble } from './MessageBubble.tsx';
 
 const SUGGESTIONS: TKey[] = ['chat.suggest.1', 'chat.suggest.2', 'chat.suggest.3', 'chat.suggest.4'];
@@ -27,11 +27,11 @@ export default function ChatArea() {
   const engine = useTextEngine();
   const setMode = useUi((s) => s.setMode);
   const requestApp = useUi((s) => s.requestApp);
-  const toast = useUi((s) => s.toast);
   const session = chats.sessions.find((c) => c.id === chats.activeId);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [pinned, setPinned] = useState(true);
+  const [waitingModel, setWaitingModel] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const ready = engine.status === 'ready';
@@ -90,16 +90,18 @@ export default function ChatArea() {
     }
   };
 
-  const send = (text = draft) => {
+  const send = async (text = draft) => {
     const content = text.trim();
-    if (!content || busy) return;
-    if (!ready) {
-      toast(t('chat.loadFirst'), 'error');
-      return;
-    }
+    if (!content || busy || waitingModel) return;
     const sessionId = chats.activeId && session ? session.id : chats.create();
     useChats.getState().append(sessionId, { role: 'user', content });
     setDraft('');
+    if (textEngine.getState().status !== 'ready') {
+      // Load the recommended model first; the message is answered as soon as it is ready.
+      setWaitingModel(true);
+      const ok = await ensureTextModel('chat').finally(() => setWaitingModel(false));
+      if (!ok) return;
+    }
     void run(sessionId);
   };
 
@@ -131,7 +133,7 @@ export default function ChatArea() {
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      send();
+      void send();
     }
   };
 
@@ -164,8 +166,8 @@ export default function ChatArea() {
                 <button
                   key={key}
                   type="button"
-                  disabled={!ready}
-                  onClick={() => send(t(key))}
+                  disabled={busy || waitingModel}
+                  onClick={() => void send(t(key))}
                   className="flex items-start gap-2 rounded-xl border border-ink-600 bg-ink-850/70 px-3.5 py-3 text-left text-sm text-ink-200 transition-colors hover:border-neon-cyan/50 hover:text-white disabled:opacity-50"
                 >
                   <Sparkles className="mt-0.5 size-4 shrink-0 text-neon-pink" />
@@ -231,7 +233,7 @@ export default function ChatArea() {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKey}
-            placeholder={ready ? t('chat.placeholder') : t('chat.placeholderNoModel')}
+            placeholder={t('chat.placeholder')}
             aria-label={t('chat.placeholder')}
             className="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-white placeholder:text-ink-400 focus:outline-none"
           />
@@ -242,15 +244,18 @@ export default function ChatArea() {
           ) : (
             <IconButton
               label={t('chat.send')}
-              onClick={() => send()}
-              disabled={!draft.trim() || !ready}
-              className={cx('size-10 rounded-xl', draft.trim() && ready ? 'bg-neon-cyan text-ink-950 hover:bg-[#6ff0ff] hover:text-ink-950' : 'bg-ink-700')}
+              onClick={() => void send()}
+              disabled={!draft.trim() || waitingModel}
+              data-testid="chat-send"
+              className={cx('size-10 rounded-xl', draft.trim() && !waitingModel ? 'bg-neon-cyan text-ink-950 hover:bg-[#6ff0ff] hover:text-ink-950' : 'bg-ink-700')}
             >
-              <SendHorizontal className="size-5" />
+              {waitingModel ? <Spinner className="size-5" /> : <SendHorizontal className="size-5" />}
             </IconButton>
           )}
         </div>
-        <p className="mx-auto mt-1.5 max-w-3xl px-2 text-center text-[11px] text-ink-400">{t('chat.disclaimer')}</p>
+        <p className={cx('mx-auto mt-1.5 max-w-3xl px-2 text-center text-[11px]', waitingModel ? 'text-neon-cyan' : 'text-ink-400')}>
+          {waitingModel ? t('chat.waitingModel') : t('chat.disclaimer')}
+        </p>
       </div>
     </div>
   );

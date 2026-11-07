@@ -1,124 +1,125 @@
 /** Pieces shared by the Image and Video studios: diffusion model card, asset cards and picker. */
-import { AppWindow, Check, Clapperboard, Download, HardDriveDownload, ImagePlus, Pause, Play, Power, Trash2, TriangleAlert } from 'lucide-react';
+import { AppWindow, Check, Clapperboard, Download, HardDriveDownload, ImagePlus, Pause, Power, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { imageEngine } from '../engines/ImageEngine.ts';
-import { SD_TURBO_TOTAL_BYTES, SD_TURBO_VRAM_MB } from '../engines/models.ts';
+import { DIFFUSION_MODELS, type DiffusionModelId, diffusionBytes, diffusionDevice, findDiffusionModel } from '../engines/models.ts';
 import { useGpu, useImageEngine } from '../hooks.ts';
-import { useT } from '../i18n/index.ts';
-import { formatBytes, formatDuration, formatMB } from '../lib/format.ts';
+import { useLocalized, useT } from '../i18n/index.ts';
+import { formatBytes, formatDuration } from '../lib/format.ts';
 import { type Asset, assetBlob, assetUrl, useAssets } from '../state/assets.ts';
 import { usePlatform } from '../state/platform.ts';
+import { useSettings } from '../state/settings.ts';
 import { useUi } from '../state/ui.ts';
-import { Badge, Button, IconButton, Modal, Panel, ProgressBar, cx, downloadBlob } from './ui/primitives.tsx';
+import { Badge, Button, Field, IconButton, Modal, Panel, ProgressBar, Toggle, cx, downloadBlob, inputClass } from './ui/primitives.tsx';
 
-/** Download / load state of the SD-Turbo diffusion model. */
-export function DiffusionModelCard() {
+/** Selects the diffusion model and shows its download / load state on this device. */
+export function DiffusionModelPanel({ disabled }: { disabled?: boolean }) {
   const t = useT();
+  const loc = useLocalized();
   const sd = useImageEngine();
   const gpu = useGpu();
-  const refreshStorage = usePlatform((s) => s.refreshStorage);
-  useEffect(() => {
-    void imageEngine.refresh();
-  }, []);
-
-  if (!gpu.supported || !gpu.hasF16) {
-    return (
-      <Panel className="flex gap-3 p-4 text-sm">
-        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-neon-amber" />
-        <p className="text-ink-300">{gpu.supported ? t('sd.noF16') : t('sd.noGpu')}</p>
-      </Panel>
-    );
-  }
-
+  const info = usePlatform((s) => s.info);
+  const setSettings = useSettings((s) => s.set);
+  const model = findDiffusionModel(sd.modelId);
+  const caps = { supported: gpu.supported, hasF16: gpu.hasF16, isFallbackAdapter: info?.gpu.isFallbackAdapter };
+  const device = diffusionDevice(model, caps, sd.preferCpu);
+  const realGpu = gpu.supported && !info?.gpu.isFallbackAdapter;
+  const busy = sd.status === 'downloading' || sd.status === 'loading' || sd.status === 'generating';
   const pct = sd.totalBytes ? sd.downloadedBytes / sd.totalBytes : 0;
-  let body: ReactNode;
-  switch (sd.status) {
-    case 'downloading':
-      body = (
-        <>
+
+  return (
+    <Panel className="space-y-3 p-4">
+      <Field label={t('sd.model')}>
+        <select
+          className={inputClass}
+          value={sd.modelId}
+          disabled={busy || disabled}
+          onChange={(e) => {
+            const id = e.target.value as DiffusionModelId;
+            setSettings({ imageModelId: id });
+            void imageEngine.select(id);
+          }}
+        >
+          {DIFFUSION_MODELS.map((m) => {
+            const where = diffusionDevice(m, caps, false);
+            return (
+              <option key={m.id} value={m.id} disabled={!where}>
+                {m.label} · {formatBytes(diffusionBytes(m), 1)} · {where === 'webgpu' ? 'GPU' : where === 'wasm' ? 'CPU' : t('sd.notHere')}
+              </option>
+            );
+          })}
+        </select>
+      </Field>
+      <p className="text-xs text-ink-300">{loc(model.blurb)}</p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {device ? <Badge tone={device === 'webgpu' ? 'cyan' : 'amber'}>{device === 'webgpu' ? 'WebGPU' : 'CPU · WASM'}</Badge> : <Badge tone="red">{t('sd.notHere')}</Badge>}
+        <Badge>{model.precision}</Badge>
+        <Badge>512px</Badge>
+        {sd.status === 'ready' || sd.status === 'generating' ? (
+          <Badge tone="lime">
+            <Check className="size-2.5" /> {t('sd.ready')}
+          </Badge>
+        ) : sd.status === 'downloaded' ? (
+          <Badge tone="lime">
+            <Check className="size-2.5" /> {t('sd.downloaded')}
+          </Badge>
+        ) : null}
+        {sd.lastFrameMs !== undefined && (sd.status === 'ready' || sd.status === 'generating') && (
+          <span className="font-mono text-[11px] text-ink-400">
+            {formatDuration(sd.lastFrameMs / 1000)} / {t('sd.perImage')}
+          </span>
+        )}
+      </div>
+      {!device && <p className="text-xs text-neon-amber">{gpu.supported ? t('sd.noF16') : t('sd.noGpu')}</p>}
+      {model.precision === 'fp32' && realGpu && (
+        <Toggle checked={sd.preferCpu} onChange={(v) => { setSettings({ imageCpu: v }); imageEngine.setPreferCpu(v); }} label={t('sd.useCpu')} hint={t('sd.useCpuHint')} />
+      )}
+
+      {sd.status === 'downloading' && (
+        <div>
           <ProgressBar value={sd.download ? sd.download.loaded / sd.download.total : pct} tone="pink" />
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] text-ink-300">
             <span>
-              {formatBytes(sd.download?.loaded ?? sd.downloadedBytes)} / {formatBytes(SD_TURBO_TOTAL_BYTES)}
+              {t('sd.downloading')} {formatBytes(sd.download?.loaded ?? sd.downloadedBytes)} / {formatBytes(sd.totalBytes)}
             </span>
             <span>{sd.download?.speedMBps ? `${sd.download.speedMBps.toFixed(1)} MB/s · ${t('loader.eta')} ${formatDuration(sd.download.etaSec)}` : ''}</span>
           </div>
-          <p className="mt-1 truncate font-mono text-[10px] text-ink-400">{sd.download?.file}</p>
-          <Button className="mt-3" size="sm" variant="outline" icon={<Pause className="size-3.5" />} onClick={() => imageEngine.cancel()}>
+          <Button className="mt-2" size="sm" variant="outline" icon={<Pause className="size-3.5" />} onClick={() => imageEngine.cancel()}>
             {t('sd.pause')}
           </Button>
-        </>
-      );
-      break;
-    case 'loading':
-      body = (
-        <>
+        </div>
+      )}
+      {sd.status === 'loading' && (
+        <div>
           <ProgressBar value={sd.load ? (sd.load.index + sd.load.fraction) / sd.load.count : undefined} indeterminate={!sd.load} tone="pink" />
           <p className="mt-2 font-mono text-[11px] text-ink-300">
             {sd.load ? `${sd.load.stage === 'read' ? t('sd.reading') : t('sd.compiling')} ${sd.load.file} (${sd.load.index + 1}/${sd.load.count})` : t('sd.starting')}
           </p>
-        </>
-      );
-      break;
-    case 'ready':
-    case 'generating':
-      body = (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="lime">
-            <Check className="size-2.5" /> {t('sd.ready')}
-          </Badge>
-          {sd.lastFrameMs !== undefined && <span className="font-mono text-[11px] text-ink-400">{formatDuration(sd.lastFrameMs / 1000)} / {t('sd.perImage')}</span>}
-          <span className="flex-1" />
-          <Button size="sm" variant="ghost" icon={<Power className="size-3.5" />} disabled={sd.status === 'generating'} onClick={() => void imageEngine.unload()}>
-            {t('sd.unload')}
+        </div>
+      )}
+      {(sd.status === 'absent' || sd.status === 'partial') && device && (
+        <div className="space-y-2">
+          <p className="text-xs text-ink-400">{t('sd.firstUse', { size: formatBytes(sd.totalBytes) })}</p>
+          {sd.status === 'partial' && <ProgressBar value={pct} tone="pink" />}
+          <Button size="sm" variant="outline" icon={<HardDriveDownload className="size-3.5" />} disabled={disabled} onClick={() => void imageEngine.download()}>
+            {sd.status === 'partial' ? t('sd.resume', { pct: Math.round(pct * 100) }) : t('sd.downloadNow')}
           </Button>
         </div>
-      );
-      break;
-    case 'downloaded':
-      body = (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="lime">
-            <Check className="size-2.5" /> {t('sd.downloaded')}
-          </Badge>
-          <span className="flex-1" />
-          <Button size="sm" variant="primary" icon={<Play className="size-3.5" />} onClick={() => void imageEngine.load().catch(() => undefined)}>
-            {t('sd.load')}
+      )}
+      {(sd.status === 'ready' || sd.status === 'downloaded') && (
+        <div className="flex flex-wrap gap-2">
+          {sd.status === 'ready' && (
+            <Button size="sm" variant="ghost" icon={<Power className="size-3.5" />} onClick={() => void imageEngine.unload()}>
+              {t('sd.unload')}
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => void imageEngine.remove()}>
+            {t('sd.delete')}
           </Button>
         </div>
-      );
-      break;
-    default:
-      body = (
-        <>
-          <p className="text-xs text-ink-300">{t('sd.about', { size: formatBytes(SD_TURBO_TOTAL_BYTES), vram: formatMB(SD_TURBO_VRAM_MB) })}</p>
-          {sd.status === 'partial' && <ProgressBar className="mt-3" value={pct} tone="pink" />}
-          <Button
-            className="mt-3"
-            size="sm"
-            variant="primary"
-            icon={<HardDriveDownload className="size-3.5" />}
-            onClick={async () => {
-              await navigator.storage?.persist?.().catch(() => false);
-              await imageEngine.download();
-              void refreshStorage();
-            }}
-          >
-            {sd.status === 'partial' ? t('sd.resume', { pct: Math.round(pct * 100) }) : t('sd.download', { size: formatBytes(SD_TURBO_TOTAL_BYTES) })}
-          </Button>
-        </>
-      );
-  }
-
-  return (
-    <Panel className="p-4">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm font-semibold text-white">SD-Turbo</span>
-        <Badge tone="pink">diffusion</Badge>
-        <Badge>fp16 · 512px</Badge>
-      </div>
-      {body}
-      {sd.error && <p className="mt-2 text-xs break-words text-neon-red">{sd.error}</p>}
+      )}
+      {sd.error && <p className="text-xs break-words text-neon-red">{sd.error}</p>}
+      <p className="text-[10px] text-ink-500">{t('sd.license', { license: model.license })}</p>
     </Panel>
   );
 }

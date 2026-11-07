@@ -2,7 +2,7 @@ import { Box, CloudOff, Database, HardDrive, Image as ImageIcon, Lock, MessageSq
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { imageEngine } from '../engines/ImageEngine.ts';
 import { cpuModelFiles, deleteAllWebLLMData, deleteTextModel } from '../engines/modelCache.ts';
-import { SD_TURBO_GROUP, TEXT_MODELS } from '../engines/models.ts';
+import { DIFFUSION_MODELS, TEXT_MODELS } from '../engines/models.ts';
 import { textEngine } from '../engines/TextEngine.ts';
 import { invalidateModelCache, useCachedModels } from '../hooks.ts';
 import { useT } from '../i18n/index.ts';
@@ -74,16 +74,18 @@ export function StoragePanel() {
         },
       });
     }
-    const sdBytes = await store.groupSize(SD_TURBO_GROUP);
-    if (sdBytes > 0) {
-      next.push({
-        id: 'sd-turbo',
-        icon: <ImageIcon className="size-4 text-neon-pink" />,
-        label: 'SD-Turbo',
-        detail: t('storage.imageModel'),
-        bytes: sdBytes,
-        remove: () => imageEngine.remove(),
-      });
+    for (const m of DIFFUSION_MODELS) {
+      const bytes = await store.groupSize(m.id);
+      if (bytes > 0) {
+        next.push({
+          id: `image:${m.id}`,
+          icon: <ImageIcon className="size-4 text-neon-pink" />,
+          label: m.label,
+          detail: t('storage.imageModel'),
+          bytes,
+          remove: () => imageEngine.remove(m.id),
+        });
+      }
     }
     const assetBytes = await store.groupSize(ASSET_GROUP);
     if (assetBytes > 0) {
@@ -149,7 +151,7 @@ export function StoragePanel() {
     setBusy('all');
     try {
       await textEngine.unload();
-      await imageEngine.remove();
+      for (const m of DIFFUSION_MODELS) await imageEngine.remove(m.id);
       await deleteAllWebLLMData();
       await store.deleteGroup('transformers');
       await useAssets.getState().clear();
