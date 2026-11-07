@@ -1,0 +1,177 @@
+// End-to-end tests of the production build in headless Chromium.
+// Run: npm run build && npm run test:e2e   (GOONERS_E2E_MODELS=1 also downloads a CPU model and chats)
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { after, before, describe, test } from 'node:test';
+import { serve } from './server.mjs';
+
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright');
+
+const DIST = join(import.meta.dirname, '../../dist');
+let server;
+let base;
+let browser;
+
+const SETTINGS = { state: { language: 'en', gpuWarningDismissed: true }, version: 1 };
+
+async function openApp(hash = 'chat', init) {
+  const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+  await context.addInitScript(
+    ([settings, extra]) => {
+      // Init scripts also run inside the sandboxed preview iframe, which has no storage.
+      if (window.top !== window) return;
+      if (!localStorage.getItem('gooners-ai:settings')) localStorage.setItem('gooners-ai:settings', JSON.stringify(settings));
+      for (const [k, v] of Object.entries(extra ?? {})) if (!localStorage.getItem(k)) localStorage.setItem(k, v);
+    },
+    [SETTINGS, init],
+  );
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${base}#${hash}`, { waitUntil: 'load' });
+  return { context, page, errors };
+}
+
+before(async () => {
+  ({ server, url: base } = await serve(DIST));
+  browser = await chromium.launch();
+});
+
+after(async () => {
+  await browser?.close();
+  server?.close();
+});
+
+describe('Gooners AI (production build)', () => {
+  test('renders every mode without errors', async () => {
+    const { context, page, errors } = await openApp('chat');
+    await page.getByRole('heading', { name: /Private AI/ }).waitFor();
+    for (const name of ['Image Studio', 'Video Generator', 'App Builder', 'Chat']) {
+      await page.getByRole('navigation').getByRole('button', { name: new RegExp(name) }).click();
+      await page.waitForTimeout(400);
+    }
+    await page.getByRole('button', { name: /Settings/ }).first().click();
+    await page.getByRole('dialog').getByText('Temperature').waitFor();
+    await page.getByRole('radio', { name: 'Storage' }).click();
+    await page.getByText('Storage used by this site').waitFor();
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('generates a procedural image and saves it to the gallery', async () => {
+    const { context, page, errors } = await openApp('image');
+    await page.getByPlaceholder(/synthwave/).fill('neon synthwave sunset over a calm ocean');
+    await page.getByRole('button', { name: /^Generate$/ }).click();
+    const img = page.locator('figure img').first();
+    await img.waitFor({ timeout: 30_000 });
+    const size = await img.evaluate((el) => (el.complete ? el.naturalWidth : 0));
+    assert.ok(size >= 512, `image width ${size}`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('renders a shader video and encodes GIF and MP4 with ffmpeg.wasm', async () => {
+    const { context, page, errors } = await openApp('video');
+    await page.getByPlaceholder(/aurora/).fill('aurora over a frozen lake, slow');
+    await page.getByRole('radio', { name: '12' }).click();
+    const duration = page.getByLabel('Duration');
+    await duration.focus();
+    await duration.press('Home');
+    await page.getByRole('button', { name: /Render 12 frames/ }).click();
+    const gif = page.getByRole('button', { name: 'GIF', exact: true });
+    await gif.waitFor({ timeout: 60_000 });
+    await gif.click();
+    await page.getByRole('button', { name: /Download GIF/ }).waitFor({ timeout: 120_000 });
+    await page.getByRole('button', { name: 'MP4', exact: true }).click();
+    await page.getByRole('button', { name: /Download MP4/ }).waitFor({ timeout: 120_000 });
+    const duration2 = await page.locator('video[src^="blob:"]').first().evaluate(
+      (v) => new Promise((resolve) => (v.readyState >= 1 ? resolve(v.duration) : v.addEventListener('loadedmetadata', () => resolve(v.duration)))),
+    );
+    assert.ok(duration2 > 0.5 && duration2 < 2, `mp4 duration ${duration2}`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('runs an app in the offline sandbox with console bridge and storage shim', async () => {
+    const code = `<!DOCTYPE html><html><head><title>Counter</title></head><body class="bg-slate-900 text-white">
+<h1 id="t" class="text-3xl font-bold p-4">Counter 0</h1><button id="b" class="px-4 py-2">+1</button>
+<script>
+let n = Number(localStorage.getItem('n') || 0);
+const t = document.getElementById('t');
+t.textContent = 'Counter ' + n;
+document.getElementById('b').onclick = () => { n++; localStorage.setItem('n', n); t.textContent = 'Counter ' + n; };
+console.log('hello from sandbox');
+fetch('https://example.com/').catch(() => console.warn('fetch failed'));
+try { parent.document.title = 'pwned'; } catch (e) { console.log('parent blocked'); }
+</script></body></html>`;
+    const project = { id: 'p_test', title: 'Counter', createdAt: 1, updatedAt: 1, versions: [{ id: 'v1', prompt: 'counter', code, createdAt: 1 }], code, storage: { n: '41' }, assetIds: [] };
+    const { context, page, errors } = await openApp('builder', {
+      'gooners-ai:projects': JSON.stringify({ state: { projects: [project], activeId: 'p_test' }, version: 1 }),
+    });
+    const frame = page.frameLocator('iframe[title="Counter"]');
+    await frame.getByText('Counter 41').waitFor({ timeout: 20_000 });
+    await frame.getByRole('button', { name: '+1' }).click();
+    await frame.getByText('Counter 42').waitFor();
+    const weight = await frame.locator('#t').evaluate((el) => getComputedStyle(el).fontWeight);
+    assert.equal(weight, '700', 'Tailwind classes are applied offline');
+    await page.getByRole('button', { name: 'Console' }).click();
+    const log = page.getByRole('log');
+    await log.getByText('hello from sandbox').waitFor();
+    await log.getByText('parent blocked').waitFor();
+    await log.getByText(/Blocked by the offline sandbox|fetch failed/).first().waitFor();
+    assert.notEqual(await page.title(), 'pwned');
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gooners-ai:projects')).state.projects[0].storage.n);
+    assert.equal(stored, '42', 'app storage persisted through the bridge');
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('opens and works offline after the first visit', async () => {
+    const { context, page } = await openApp('chat');
+    await page.waitForFunction(() => navigator.serviceWorker?.controller, null, { timeout: 30_000 });
+    await page.locator('footer').getByText('offline-ready').waitFor({ timeout: 30_000 });
+    await context.setOffline(true);
+    await page.reload({ waitUntil: 'load' });
+    await page.getByRole('heading', { name: /Private AI/ }).waitFor();
+    await page.locator('footer [data-connectivity="offline"]').waitFor();
+    await page.getByRole('navigation').getByRole('button', { name: /Image Studio/ }).click();
+    await page.getByPlaceholder(/synthwave/).fill('crystal cave, glowing');
+    await page.getByRole('button', { name: /^Generate$/ }).click();
+    await page.locator('figure img').first().waitFor({ timeout: 30_000 });
+    await context.close();
+  });
+
+  test('chats with a CPU model downloaded into IndexedDB', { skip: !process.env.GOONERS_E2E_MODELS }, async () => {
+    const { context, page } = await openApp('chat');
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('gooners-ai:settings'));
+      Object.assign(s.state, { chatModelId: 'wasm:HuggingFaceTB/SmolLM2-135M-Instruct', temperature: 0, maxTokens: 32 });
+      localStorage.setItem('gooners-ai:settings', JSON.stringify(s));
+    });
+    await page.reload();
+    await page.getByRole('button', { name: /Download & load/ }).click();
+    await page.locator('[data-model-status="ready"]').waitFor({ timeout: 600_000 });
+    await page.getByRole('textbox').first().fill('What is the capital of France? Answer in one short sentence.');
+    await page.keyboard.press('Enter');
+    await page.locator('.md').first().waitFor({ timeout: 300_000 });
+    await page.locator('[data-model-status="ready"]').waitFor({ timeout: 300_000 });
+    const answer = await page.locator('.md').last().innerText();
+    assert.match(answer, /Paris/);
+
+    // Offline: reload, the model auto-loads from IndexedDB and still answers.
+    await page.waitForFunction(() => navigator.serviceWorker?.controller, null, { timeout: 30_000 });
+    await context.setOffline(true);
+    await page.reload({ waitUntil: 'load' });
+    await page.locator('footer [data-connectivity="offline"]').waitFor();
+    await page.locator('[data-model-status="ready"]').waitFor({ timeout: 300_000 });
+    await page.getByRole('button', { name: /New chat/ }).click();
+    await page.getByRole('textbox').first().fill('What is the capital of Italy? Answer in one short sentence.');
+    await page.keyboard.press('Enter');
+    await page.locator('.md').first().waitFor({ timeout: 300_000 });
+    await page.locator('[data-model-status="ready"]').waitFor({ timeout: 300_000 });
+    assert.match(await page.locator('.md').last().innerText(), /Rome/);
+    await context.close();
+  });
+});
