@@ -1,0 +1,15 @@
+{
+  "_comment": "Fontes do portal de notícias. type=gnews monta uma busca no Google Notícias (últimos 7 dias); type=rss usa a URL diretamente.",
+  "feeds": [
+    { "cat": "patrimonial", "name": "Proteção patrimonial", "type": "gnews", "q": "\"proteção patrimonial\" OR \"holding familiar\" OR \"planejamento patrimonial\" OR \"blindagem patrimonial\"" },
+    { "cat": "offshore", "name": "Offshore", "type": "gnews", "q": "offshore (tributação OR \"Receita Federal\" OR \"Lei 14.754\" OR trust OR \"fundos exclusivos\")" },
+    { "cat": "sucessoes", "name": "Sucessões", "type": "gnews", "q": "ITCMD OR inventário OR herança OR \"planejamento sucessório\" OR testamento" },
+    { "cat": "tributario", "name": "Tributário", "type": "gnews", "q": "\"reforma tributária\" OR \"direito tributário\" OR \"Receita Federal\" tributação" },
+    { "cat": "tribunais", "name": "STF e STJ", "type": "gnews", "q": "(STF OR STJ) (julgamento OR decisão OR tese OR ministro)" },
+    { "cat": "empresarial", "name": "Empresarial", "type": "gnews", "q": "\"recuperação judicial\" OR \"direito societário\" OR falência OR \"direito empresarial\"" },
+    { "cat": "geral", "name": "Migalhas", "type": "gnews", "q": "site:migalhas.com.br", "source": "Migalhas" },
+    { "cat": "geral", "name": "Consultor Jurídico", "type": "rss", "url": "https://conjur.com.br/feed/", "source": "Consultor Jurídico" },
+    { "cat": "geral", "name": "JOTA", "type": "rss", "url": "https://www.jota.info/feed", "source": "JOTA" },
+    { "cat": "tribunais", "name": "Notícias do STF", "type": "rss", "url": "https://noticias.stf.jus.br/feed/", "source": "STF" }
+  ]
+}
