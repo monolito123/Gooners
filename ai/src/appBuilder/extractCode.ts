@@ -98,3 +98,21 @@ export function ensureDocument(code: string, title = 'App'): string {
   if (/<html[\s>]/i.test(code)) return code;
   return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${title}</title>\n</head>\n<body>\n${code}\n</body>\n</html>`;
 }
+
+/**
+ * Joins an answer that hit the output limit with the model's continuation: drops a reopened
+ * code fence and any text the model repeated from the end of the previous part. If the model
+ * started the document over, the new attempt replaces the old one.
+ */
+export function stitchContinuation(previous: string, continuation: string): string {
+  let next = continuation.replace(/^\s*(`{3,}|~{3,})[\w+#.-]*[^\n]*\n/, '');
+  if (/^\s*(<!doctype html|<html[\s>])/i.test(next)) return `\`\`\`html\n${next}`;
+  const tail = previous.slice(-600);
+  for (let n = Math.min(tail.length, next.length); n >= 8; n--) {
+    if (tail.endsWith(next.slice(0, n))) {
+      next = next.slice(n);
+      break;
+    }
+  }
+  return previous + next;
+}

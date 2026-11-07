@@ -244,6 +244,43 @@ try { parent.document.title = 'pwned'; } catch (e) { console.log('parent blocked
     assert.equal(chat.body.stream, true);
     assert.equal(chat.headers.authorization, undefined, 'no key is sent to a no-key provider');
     assert.equal(chat.body.messages.at(-1).content, 'hi');
+    assert.equal(chat.body.max_tokens, 1024 + 4096, 'room for reasoning on top of the answer budget');
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
+  test('App Builder continues an app that was cut off by the output limit', async () => {
+    const { context, page, errors } = await openApp('builder');
+    const bodies = [];
+    const parts = [
+      '```html\n<!DOCTYPE html>\n<html><head><title>Counter</title></head><body>\n<h1 id="n">0</h1>\n<button id="plus">Plus</button>\n<script>\n  let n = 0;\n  document.getElementById(',
+      '```html\n  let n = 0;\n  document.getElementById(\'plus\').onclick = () => { document.getElementById(\'n\').textContent = ++n; };\n</script>\n<button id="reset">Reset</button>\n</body></html>\n```',
+    ];
+    await context.route('https://text.pollinations.ai/openai', async (route) => {
+      const body = route.request().postDataJSON();
+      bodies.push(body);
+      const i = bodies.length - 1;
+      const events = [{ choices: [{ delta: { content: parts[i] } }] }, { choices: [{ delta: {}, finish_reason: i === 0 ? 'length' : 'stop' }] }];
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('') + 'data: [DONE]\n\n' });
+    });
+    await page.getByRole('button', { name: 'Use a free cloud model' }).click();
+    await page.locator('[data-model-status="ready"]').waitFor({ timeout: 10_000 });
+    await page.getByPlaceholder('Describe the app to build…').fill('A counter');
+    await page.getByTestId('builder-submit').click();
+    const frame = page.frameLocator('iframe').first();
+    await frame.getByRole('button', { name: 'Reset' }).waitFor({ timeout: 20_000 });
+    await frame.getByRole('button', { name: 'Plus' }).click();
+    await frame.getByRole('button', { name: 'Plus' }).click();
+    await frame.locator('#n').getByText('2').waitFor();
+    assert.equal(bodies.length, 2, 'one continuation request');
+    assert.equal(bodies[0].reasoning_effort, 'low');
+    const turns = bodies[1].messages;
+    assert.deepEqual(turns.map((m) => m.role), ['system', 'user', 'assistant', 'user']);
+    assert.equal(turns[2].content, parts[0]);
+    assert.match(turns[3].content, /cut off/);
+    const code = await page.evaluate(() => JSON.parse(localStorage.getItem('gooners-ai:projects')).state.projects[0].versions.at(-1).code);
+    assert.equal(code.match(/let n = 0/g).length, 1, 'the repeated line was dropped');
+    assert.equal(await page.getByText(/hit the token limit/).count(), 0);
     assert.deepEqual(errors, []);
     await context.close();
   });
@@ -263,6 +300,9 @@ try { parent.document.title = 'pwned'; } catch (e) { console.log('parent blocked
             ],
           },
         });
+      } else if (req.postDataJSON().max_tokens > 4096) {
+        // This model caps its output: the app must retry with the plain budget.
+        await route.fulfill({ status: 400, json: { error: { message: 'max_tokens must be at most 4096', code: 400 } } });
       } else {
         await route.fulfill({ status: 200, contentType: 'text/event-stream', body: `data: ${JSON.stringify({ choices: [{ delta: { content: 'Answer from OpenRouter' } }] })}\n\ndata: [DONE]\n\n` });
       }
@@ -282,7 +322,9 @@ try { parent.document.title = 'pwned'; } catch (e) { console.log('parent blocked
     await page.getByRole('textbox').first().fill('ping');
     await page.keyboard.press('Enter');
     await page.locator('.md').last().getByText('Answer from OpenRouter').waitFor();
-    const chat = seen.find((r) => r.url.endsWith('/chat/completions'));
+    const attempts = seen.filter((r) => r.url.endsWith('/chat/completions'));
+    assert.deepEqual(attempts.map((r) => r.body.max_tokens), [1024 + 4096, 1024], 'retried with the plain budget after a 400');
+    const chat = attempts.at(-1);
     assert.equal(chat.auth, 'Bearer sk-or-v1-test');
     assert.equal(chat.body.model, 'meta-llama/llama-3.3-70b-instruct:free');
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gooners-ai:settings')).state);

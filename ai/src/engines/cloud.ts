@@ -22,6 +22,8 @@ export interface CloudProvider {
   defaultModel: string;
   /** Sends stream_options.include_usage (some servers reject unknown fields). */
   usageInStream: boolean;
+  /** Sent as reasoning_effort: the free tier caps output, so less thinking leaves more answer. */
+  reasoningEffort?: 'low' | 'medium' | 'high';
   blurb: Localized;
 }
 
@@ -50,6 +52,7 @@ export const CLOUD_PROVIDERS: CloudProvider[] = [
     needsKey: false,
     defaultModel: 'openai',
     usageInStream: false,
+    reasoningEffort: 'low',
     blurb: {
       en: 'Free, no account or key needed. Rate-limited and slower at busy times.',
       pt: 'Gratuito, sem conta nem chave. Tem limite de uso e fica mais lento em horários de pico.',
@@ -256,6 +259,9 @@ export async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerato
   }
 }
 
+/** Extra output tokens for the hidden reasoning of thinking models (free on most free tiers). */
+export const REASONING_ALLOWANCE = 4096;
+
 /** Streams a chat completion from a cloud provider. */
 export async function* streamCloudChat(
   c: CloudConnection,
@@ -267,21 +273,39 @@ export async function* streamCloudChat(
   const provider = findProvider(c.provider);
   if (provider.needsKey && !c.key?.trim()) throw new Error(`${provider.label} needs an API key: add it in Settings → Cloud.`);
   const url = provider.chatPath.startsWith('http') ? provider.chatPath : `${baseOf(c)}${provider.chatPath}`;
+  // Reasoning models count their hidden thoughts in max_tokens: leave room for them so the
+  // visible answer still gets the budget set in Settings.
   const body: Record<string, unknown> = {
     model,
     messages,
     stream: true,
     temperature: params.temperature,
     top_p: params.topP,
-    max_tokens: params.maxTokens,
+    max_tokens: params.maxTokens + REASONING_ALLOWANCE,
   };
   if (provider.usageInStream) body.stream_options = { include_usage: true };
-  let res: Response;
-  try {
-    res = await fetch(url, { method: 'POST', headers: headersFor(c), body: JSON.stringify(body), signal });
-  } catch (error) {
-    if (signal.aborted) throw error;
-    throw new Error(`Could not reach ${provider.label} (${error instanceof Error ? error.message : String(error)}). Cloud models need an internet connection.`);
+  if (provider.reasoningEffort) body.reasoning_effort = provider.reasoningEffort;
+  const post = async () => {
+    try {
+      return await fetch(url, { method: 'POST', headers: headersFor(c), body: JSON.stringify(body), signal });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new Error(`Could not reach ${provider.label} (${error instanceof Error ? error.message : String(error)}). Cloud models need an internet connection.`);
+    }
+  };
+  let res = await post();
+  if (res.status === 400) {
+    // Some models cap their output below the allowance, or do not take a reasoning effort:
+    // retry once without what was refused.
+    const detail = await res.clone().text().catch(() => '');
+    const retry = { ...body };
+    if (/reasoning/i.test(detail)) delete retry.reasoning_effort;
+    if (/max_?(completion_)?tokens|maximum.*tokens|output.*tokens/i.test(detail)) retry.max_tokens = params.maxTokens;
+    if (JSON.stringify(retry) !== JSON.stringify(body)) {
+      Object.keys(body).forEach((k) => delete body[k]);
+      Object.assign(body, retry);
+      res = await post();
+    }
   }
   if (!res.ok || !res.body) throw new Error(await describeHttpError(res, provider));
   for await (const event of parseSse(res.body)) {
