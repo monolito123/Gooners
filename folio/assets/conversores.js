@@ -236,10 +236,23 @@
         try {
           setProgress(0, pages.length, 'Carregando o OCR…');
           await F.lib('tesseract');
-          let langPath = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/por@1.0.0/4.0.0_best_int';
-          // No claude.ai o modelo vai junto com a página (o quadro bloqueia downloads de outras origens)
-          if (window.claude && window.claude.use) { try { const r = await fetch('assets/ocr/por.traineddata.gz', { method: 'HEAD' }); if (r.ok) langPath = new URL('assets/ocr', location.href).href; } catch { /* usa a CDN */ } }
-          const worker = await window.Tesseract.createWorker('por', 1, { langPath });
+          const opts = { langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/por@1.0.0/4.0.0_best_int' };
+          // No claude.ai o quadro bloqueia downloads de outras origens: o modelo de português vai junto com a
+          // página (assets/ocr/por-traineddata.js) e um worker próprio o entrega ao Tesseract no lugar do fetch.
+          if (window.claude && window.claude.use) {
+            const local = new URL('assets/ocr/por-traineddata.js', location.href).href;
+            let hasLocal = false;
+            try { hasLocal = (await fetch(local, { method: 'HEAD' })).ok; } catch { hasLocal = false; }
+            if (hasLocal) {
+              const src = `importScripts(${JSON.stringify(local)});
+const b = atob(self.FOLIO_POR_TRAINEDDATA); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+const f0 = self.fetch.bind(self);
+self.fetch = (url, ...a) => String(url).endsWith('/por.traineddata.gz') ? Promise.resolve(new Response(u.slice(0))) : f0(url, ...a);
+importScripts('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js');`;
+              Object.assign(opts, { workerPath: URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), workerBlobURL: false, cacheMethod: 'none', langPath: 'https://modelo.local/tessdata' });
+            }
+          }
+          const worker = await window.Tesseract.createWorker('por', 1, opts);
           let k = 0;
           for (const n of pages) {
             setProgress(k, pages.length, `OCR: página ${n} (${k + 1} de ${pages.length})`);
