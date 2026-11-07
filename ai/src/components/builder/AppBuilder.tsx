@@ -17,9 +17,11 @@ import {
   Wand2,
 } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { ensureDocument, extractCode } from '../../appBuilder/extractCode.ts';
+import { ensureDocument, extractCode, stitchContinuation } from '../../appBuilder/extractCode.ts';
 import { splitReasoning } from '../../lib/reasoning.ts';
-import { APP_SYSTEM_PROMPT, type AppAsset, buildCreatePrompt, buildEditPrompt, editFits } from '../../appBuilder/prompts.ts';
+import { APP_SYSTEM_PROMPT, type AppAsset, buildContinuePrompt, buildCreatePrompt, buildEditPrompt, editFits } from '../../appBuilder/prompts.ts';
+import { estimateTokens } from '../../engines/context.ts';
+import type { ChatTurn } from '../../engines/textTypes.ts';
 import { textEngine } from '../../engines/TextEngine.ts';
 import { ensureTextModel, useTextEngine } from '../../hooks.ts';
 import { type TKey, useT } from '../../i18n/index.ts';
@@ -174,20 +176,23 @@ export default function AppBuilder() {
     let buffer = '';
     let lastExtract = 0;
     let lastPreview = 0;
+    const conversation: ChatTurn[] = [
+      { role: 'system', content: APP_SYSTEM_PROMPT },
+      { role: 'user', content },
+    ];
     try {
-      const { text: answer, stats } = await textEngine.generate(
-        [
-          { role: 'system', content: APP_SYSTEM_PROMPT },
-          { role: 'user', content },
-        ],
-        {
-          params: { temperature: 0.4, topP: 0.9, maxTokens },
+      // `before` is the answer so far when continuing an answer cut off by the output limit.
+      const run = (messages: ChatTurn[], tokens: number, before = '') => {
+        buffer = '';
+        return textEngine.generate(messages, {
+          params: { temperature: 0.4, topP: 0.9, maxTokens: tokens },
           onDelta: (delta) => {
             buffer += delta;
             const now = performance.now();
             if (now - lastExtract > 200) {
               lastExtract = now;
-              const code = extractCode(splitReasoning(buffer).answer);
+              const visible = splitReasoning(buffer).answer;
+              const code = extractCode(before ? stitchContinuation(before, visible) : visible);
               if (code.found) {
                 setStreamCode(code.code);
                 if (now - lastPreview > 1500) {
@@ -197,11 +202,23 @@ export default function AppBuilder() {
               }
             }
           },
-        },
-      );
-      setLastStats(stats);
+        });
+      };
+      let { text: answer, stats } = await run(conversation, maxTokens);
       // Reasoning models may sketch code while thinking: only the final answer counts.
-      const result = extractCode(splitReasoning(answer).answer);
+      answer = splitReasoning(answer).answer;
+      // Cut off by the output limit (small local budgets, capped free cloud tiers): ask the
+      // model to go on from where it stopped, while the context window has room.
+      for (let round = 0; round < 3 && stats.finishReason === 'length' && !extractCode(answer).complete; round++) {
+        const turns: ChatTurn[] = [...conversation, { role: 'assistant', content: answer }, { role: 'user', content: buildContinuePrompt(answer) }];
+        const room = model.contextWindow - turns.reduce((sum, m) => sum + estimateTokens(m.content), 0) - 64;
+        if (room < 384) break;
+        const next = await run(turns, Math.min(maxTokens, room), answer);
+        stats = next.stats;
+        answer = stitchContinuation(answer, splitReasoning(next.text).answer);
+      }
+      setLastStats(stats);
+      const result = extractCode(answer);
       if (!result.found) {
         addLog({ level: 'warn', text: t('builder.noCode'), time: Date.now() });
         addLog({ level: 'info', text: answer.slice(0, 2000), time: Date.now() });

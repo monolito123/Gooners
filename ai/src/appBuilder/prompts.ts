@@ -33,3 +33,8 @@ export function buildEditPrompt(request: string, currentCode: string, assets: Ap
 export function editFits(currentCode: string, contextWindow: number, maxTokens: number): boolean {
   return estimateTokens(APP_SYSTEM_PROMPT) + estimateTokens(currentCode) + 200 + maxTokens <= contextWindow;
 }
+
+/** Asks the model to finish an answer that was cut off by the output limit. */
+export function buildContinuePrompt(previous: string): string {
+  return `Your answer was cut off by the output limit. Continue the code exactly where it stopped, right after these last characters:\n<<<\n${previous.slice(-240)}\n>>>\nOutput only the remaining code, without repeating anything and without explanations, and close the code block with \`\`\`.`;
+}

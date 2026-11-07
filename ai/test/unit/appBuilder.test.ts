@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ensureDocument, extractCode } from '../../src/appBuilder/extractCode.ts';
+import { ensureDocument, extractCode, stitchContinuation } from '../../src/appBuilder/extractCode.ts';
 import { detectAppIntent } from '../../src/appBuilder/intent.ts';
 import { buildEditPrompt, editFits } from '../../src/appBuilder/prompts.ts';
 import { buildSandboxDocument } from '../../src/appBuilder/sandboxDoc.ts';
@@ -123,5 +123,28 @@ describe('extractCode with split files from small models', () => {
     const { code } = extractCode(doc);
     expect(code).toContain('src="https://cdn.example.com/x.js"');
     expect(code).not.toContain('extra()');
+  });
+});
+
+describe('stitchContinuation', () => {
+  const first = '```html\n<!DOCTYPE html>\n<html><body>\n<button id="b">+</button>\n<script>\n  const people = 1;\n  function calc';
+
+  it('appends the continuation and drops a reopened fence', () => {
+    const joined = stitchContinuation(first, '```html\nulate() { return people; }\n</script>\n</body></html>\n```');
+    expect(joined).toBe(`${first}ulate() { return people; }\n</script>\n</body></html>\n\`\`\``);
+    const code = extractCode(joined);
+    expect(code.complete).toBe(true);
+    expect(code.code).toContain('function calculate() { return people; }');
+  });
+
+  it('removes text the model repeated from the end of the previous part', () => {
+    const joined = stitchContinuation(first, '  const people = 1;\n  function calculate() {}\n</script></body></html>\n```');
+    expect(joined.match(/const people/g)).toHaveLength(1);
+    expect(joined).toContain('function calculate() {}');
+  });
+
+  it('keeps a restarted document instead of gluing two documents', () => {
+    const joined = stitchContinuation(first, '<!DOCTYPE html>\n<html><body>new</body></html>\n```');
+    expect(extractCode(joined)).toMatchObject({ complete: true, code: '<!DOCTYPE html>\n<html><body>new</body></html>' });
   });
 });
