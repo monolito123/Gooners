@@ -18,9 +18,10 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ensureDocument, extractCode } from '../../appBuilder/extractCode.ts';
+import { splitReasoning } from '../../lib/reasoning.ts';
 import { APP_SYSTEM_PROMPT, type AppAsset, buildCreatePrompt, buildEditPrompt, editFits } from '../../appBuilder/prompts.ts';
 import { textEngine } from '../../engines/TextEngine.ts';
-import { useTextEngine } from '../../hooks.ts';
+import { ensureTextModel, useTextEngine } from '../../hooks.ts';
 import { type TKey, useT } from '../../i18n/index.ts';
 import { assetDataUrl, useAssets } from '../../state/assets.ts';
 import { titleFrom } from '../../state/chats.ts';
@@ -72,6 +73,7 @@ export default function AppBuilder() {
   const [picker, setPicker] = useState(false);
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const [lastStats, setLastStats] = useState<Parameters<typeof StatsLine>[0]['stats']>();
+  const [waitingModel, setWaitingModel] = useState(false);
   const sandbox = useRef<AppSandboxHandle>(null);
   const logId = useRef(0);
   const editTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -106,8 +108,11 @@ export default function AppBuilder() {
 
   const ensureProject = useCallback(
     (title: string) => {
-      const current = useProjects.getState().projects.find((p) => p.id === useProjects.getState().activeId);
-      return current ?? useProjects.getState().projects.find((p) => p.id === create(title))!;
+      const state = useProjects.getState();
+      const current = state.projects.find((p) => p.id === state.activeId);
+      if (current) return current;
+      const id = create(title);
+      return useProjects.getState().projects.find((p) => p.id === id)!;
     },
     [create],
   );
@@ -130,7 +135,7 @@ export default function AppBuilder() {
 
   const pendingRequest = useUi((s) => s.appRequest);
   useEffect(() => {
-    if (pendingRequest && ready && !generating) {
+    if (pendingRequest && !generating && !waitingModel) {
       useUi.getState().requestApp(undefined);
       void generate(pendingRequest);
     }
@@ -142,12 +147,15 @@ export default function AppBuilder() {
 
   const generate = async (text = prompt) => {
     const request = text.trim();
-    if (!request || generating) return;
-    if (!ready) {
-      toast(t('chat.loadFirst'), 'error');
-      return;
-    }
+    if (!request || generating || waitingModel) return;
     const p = ensureProject(titleFrom(request));
+    if (textEngine.getState().status !== 'ready') {
+      // No model yet: load the recommended coding model, then continue with this request.
+      setWaitingModel(true);
+      setPrompt(request);
+      const ok = await ensureTextModel('code').finally(() => setWaitingModel(false));
+      if (!ok) return;
+    }
     if (!p.title) patch(p.id, { title: titleFrom(request) });
     const model = textEngine.getState().model!;
     const maxTokens = useSettings.getState().appMaxTokens;
@@ -179,7 +187,7 @@ export default function AppBuilder() {
             const now = performance.now();
             if (now - lastExtract > 200) {
               lastExtract = now;
-              const code = extractCode(buffer);
+              const code = extractCode(splitReasoning(buffer).answer);
               if (code.found) {
                 setStreamCode(code.code);
                 if (now - lastPreview > 1500) {
@@ -192,7 +200,8 @@ export default function AppBuilder() {
         },
       );
       setLastStats(stats);
-      const result = extractCode(answer);
+      // Reasoning models may sketch code while thinking: only the final answer counts.
+      const result = extractCode(splitReasoning(answer).answer);
       if (!result.found) {
         addLog({ level: 'warn', text: t('builder.noCode'), time: Date.now() });
         addLog({ level: 'info', text: answer.slice(0, 2000), time: Date.now() });
@@ -420,16 +429,19 @@ export default function AppBuilder() {
           ) : (
             <IconButton
               label={hasCode ? t('builder.apply') : t('builder.generate')}
-              disabled={!prompt.trim() || !ready}
+              disabled={!prompt.trim() || waitingModel}
               onClick={() => void generate()}
-              className={cx('size-10 rounded-xl', prompt.trim() && ready ? 'bg-neon-lime text-ink-950 hover:bg-[#cdff70] hover:text-ink-950' : 'bg-ink-700')}
+              data-testid="builder-submit"
+              className={cx('size-10 rounded-xl', prompt.trim() && !waitingModel ? 'bg-neon-lime text-ink-950 hover:bg-[#cdff70] hover:text-ink-950' : 'bg-ink-700')}
             >
-              {hasCode ? <Wand2 className="size-5" /> : <SendHorizontal className="size-5" />}
+              {waitingModel ? <Spinner className="size-5" /> : hasCode ? <Wand2 className="size-5" /> : <SendHorizontal className="size-5" />}
             </IconButton>
           )}
         </div>
         <div className="mx-auto mt-1.5 flex max-w-4xl flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-ink-400">
-          <span>{allowNetwork ? t('builder.networkOnHint') : t('builder.sandboxHint')}</span>
+          <span className={waitingModel ? 'text-neon-lime' : undefined}>
+            {waitingModel ? t('builder.waitingModel') : allowNetwork ? t('builder.networkOnHint') : t('builder.sandboxHint')}
+          </span>
           {lastStats && <StatsLine stats={lastStats} />}
           {project && !generating && (
             <button type="button" className="hover:text-white" onClick={() => select(create())}>

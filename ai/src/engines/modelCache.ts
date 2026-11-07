@@ -1,7 +1,7 @@
 /** Which text models are already on disk, and deleting them (WebLLM IndexedDB + CPU model files). */
 import type { AppConfig, ModelRecord } from '@mlc-ai/web-llm';
 import * as store from '../lib/blobStore.ts';
-import { TEXT_MODELS, TRANSFORMERS_GROUP, type TextModelInfo, resolveWebLLMId } from './models.ts';
+import { TEXT_MODELS, TRANSFORMERS_GROUP, type TextModelInfo, onnxFileFor, resolveWebLLMId } from './models.ts';
 
 let lib: Promise<typeof import('@mlc-ai/web-llm')> | undefined;
 export function webllmLib(): Promise<typeof import('@mlc-ai/web-llm')> {
@@ -12,7 +12,7 @@ export function webllmLib(): Promise<typeof import('@mlc-ai/web-llm')> {
 export async function webllmAppConfig(customModels: TextModelInfo[]): Promise<AppConfig> {
   const { prebuiltAppConfig } = await webllmLib();
   const custom: ModelRecord[] = customModels
-    .filter((m) => m.custom)
+    .filter((m) => m.custom && !m.mlc)
     .map((m) => ({
       model: m.custom!.modelUrl,
       model_id: m.id,
@@ -21,8 +21,18 @@ export async function webllmAppConfig(customModels: TextModelInfo[]): Promise<Ap
       low_resource_required: false,
       overrides: { context_window_size: m.contextWindow },
     }));
+  // Catalog models with community weights reuse the official record (library, overrides,
+  // memory figures) of the same architecture; the official integrity hashes do not apply.
+  const derived: ModelRecord[] = [...TEXT_MODELS, ...customModels].filter((m) => m.mlc).flatMap((m) => {
+    const base = prebuiltAppConfig.model_list.find((r) => r.model_id === m.mlc!.libFrom);
+    if (!base) return [];
+    const { integrity: _integrity, model_manifest: _manifest, ...rest } = base;
+    void _integrity;
+    void _manifest;
+    return [{ ...rest, model: m.mlc!.modelUrl, model_id: m.id }];
+  });
   // IndexedDB rather than Cache Storage: other service workers on this origin clear caches.
-  return { model_list: [...prebuiltAppConfig.model_list, ...custom], cacheBackend: 'indexeddb' };
+  return { model_list: [...prebuiltAppConfig.model_list, ...derived, ...custom], cacheBackend: 'indexeddb' };
 }
 
 const hfPrefix = (repo: string) => `https://huggingface.co/${repo}/resolve/`;
@@ -34,10 +44,11 @@ export async function cpuModelFiles(model: TextModelInfo): Promise<store.StoredF
 }
 
 export async function isTextModelCached(model: TextModelInfo, hasF16: boolean, customModels: TextModelInfo[] = []): Promise<boolean> {
+  if (model.backend === 'cloud') return true; // nothing to download
   try {
     if (model.backend === 'wasm') {
       const files = await cpuModelFiles(model);
-      return files.some((f) => f.complete && f.key.includes(`onnx/model_${model.dtype ?? 'q4'}.onnx`));
+      return files.some((f) => f.complete && f.key.endsWith(onnxFileFor(model.dtype)));
     }
     const { hasModelInCache } = await webllmLib();
     return await hasModelInCache(resolveWebLLMId(model, hasF16), await webllmAppConfig(customModels));

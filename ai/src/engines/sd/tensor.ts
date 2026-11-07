@@ -63,6 +63,19 @@ export function circularNoise(a: Float32Array, b: Float32Array, t: number): Floa
   return out;
 }
 
+/**
+ * Point on a small closed orbit around `a`: (a + r·(b·cos2πt + c·sin2πt)) / √(1+r²). Stays close
+ * to `a` (similar images) yet returns to it at t = 1, and keeps unit variance.
+ */
+export function orbitNoise(a: Float32Array, b: Float32Array, c: Float32Array, t: number, radius: number): Float32Array {
+  const cos = Math.cos(2 * Math.PI * t) * radius;
+  const sin = Math.sin(2 * Math.PI * t) * radius;
+  const k = 1 / Math.sqrt(1 + radius * radius);
+  const out = new Float32Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = (a[i] + cos * b[i] + sin * c[i]) * k;
+  return out;
+}
+
 export function lerp(a: Float32Array, b: Float32Array, t: number): Float32Array {
   const out = new Float32Array(a.length);
   for (let i = 0; i < a.length; i++) out[i] = a[i] + t * (b[i] - a[i]);

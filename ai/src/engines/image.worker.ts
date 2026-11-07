@@ -1,5 +1,6 @@
 /**
- * SD-Turbo text-to-image / image-to-image on ONNX Runtime Web (WebGPU), fully local.
+ * Text-to-image / image-to-image on ONNX Runtime Web, fully local, for every model in
+ * DIFFUSION_MODELS (SDXS fp16/fp32, SD-Turbo) on WebGPU or on the CPU (WebAssembly).
  * Pipeline: CLIP tokenizer → text encoder → UNet (1–4 Euler steps) → VAE decoder.
  * Also produces video frames: latent morphs/loops and a zoom feedback loop (img2img).
  */
@@ -9,48 +10,47 @@ import { gaussianNoise } from '../lib/prng.ts';
 import * as store from '../lib/blobStore.ts';
 import { exposeWorker } from '../lib/rpc.ts';
 import type { DiffusionFrame, DiffusionRequest, ImageWorkerApi } from './imageTypes.ts';
-import { SD_TURBO_FILES, SD_TURBO_GROUP, SD_TURBO_REPO } from './models.ts';
+import { type DiffusionDevice, type DiffusionModelInfo, type DiffusionRole, findDiffusionModel } from './models.ts';
 import { ClipTokenizer } from './sd/clipTokenizer.ts';
-import { VAE_SCALE, eulerStep, initNoiseSigma, makeSchedule, scaleModelInput } from './sd/scheduler.ts';
-import { IMAGE_SIZE, LATENT_LENGTH, LATENT_SIZE, chwToRgba, circularNoise, lerp, rgbaToChw, slerp } from './sd/tensor.ts';
+import { eulerStep, initNoiseSigma, makeSchedule, scaleModelInput } from './sd/scheduler.ts';
+import { IMAGE_SIZE, LATENT_LENGTH, LATENT_SIZE, chwToRgba, lerp, orbitNoise, rgbaToChw, slerp } from './sd/tensor.ts';
 
 type Session = ort.InferenceSession;
-interface Sessions {
+interface Loaded {
+  model: DiffusionModelInfo;
+  device: DiffusionDevice;
+  tokenizer: ClipTokenizer;
   text: Session;
   unet: Session;
   decoder: Session;
   encoder?: Session;
 }
 
-let sessions: Sessions | null = null;
-let tokenizer: ClipTokenizer | null = null;
+let loaded: Loaded | null = null;
 const embeddingCache = new Map<string, Float32Array>();
 
-const SESSION_BASE: ort.InferenceSession.SessionOptions = {
-  executionProviders: ['webgpu'],
-  enableMemPattern: false,
-  enableCpuMemArena: false,
-  graphOptimizationLevel: 'all',
-  extra: {
-    session: {
-      disable_prepacking: '1',
-      use_device_allocator_for_initializers: '1',
-      use_ort_model_bytes_directly: '1',
-      use_ort_model_bytes_for_initializers: '1',
+function sessionOptions(device: DiffusionDevice, dims?: Record<string, number>): ort.InferenceSession.SessionOptions {
+  if (device === 'wasm') return { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
+  return {
+    executionProviders: ['webgpu'],
+    enableMemPattern: false,
+    enableCpuMemArena: false,
+    graphOptimizationLevel: 'all',
+    freeDimensionOverrides: dims,
+    extra: {
+      session: {
+        disable_prepacking: '1',
+        use_device_allocator_for_initializers: '1',
+        use_ort_model_bytes_directly: '1',
+        use_ort_model_bytes_for_initializers: '1',
+      },
     },
-  },
-};
+  };
+}
 
-const DIMS: Record<string, Record<string, number>> = {
-  text_encoder: { batch_size: 1, sequence_length: 77 },
-  unet: { batch_size: 1, num_channels: 4, height: LATENT_SIZE, width: LATENT_SIZE, sequence_length: 77, steps: 1 },
-  vae_decoder: { batch_size: 1, num_channels_latent: 4, height_latent: LATENT_SIZE, width_latent: LATENT_SIZE },
-  vae_encoder: { batch_size: 1, num_channels: 3, height: IMAGE_SIZE, width: IMAGE_SIZE },
-};
-
-function fileFor(name: string) {
-  const f = SD_TURBO_FILES.find((x) => x.path.startsWith(`${name}/`));
-  if (!f) throw new Error(`Unknown model part ${name}`);
+function fileFor(model: DiffusionModelInfo, role: DiffusionRole) {
+  const f = model.files.find((x) => x.role === role);
+  if (!f) throw new Error(`${model.label} has no ${role}`);
   return f;
 }
 
@@ -67,6 +67,13 @@ function floatTensor(session: Session, name: string, data: Float32Array, dims: n
     : new ort.Tensor('float32', data, dims);
 }
 
+function intTensor(session: Session, name: string, values: ArrayLike<number>, dims: number[]): ort.Tensor {
+  const type = inputType(session, name, 'int64');
+  if (type === 'int64') return new ort.Tensor('int64', BigInt64Array.from(Array.from(values), (v) => BigInt(v)), dims);
+  if (type === 'int32') return new ort.Tensor('int32', Int32Array.from(Array.from(values)), dims);
+  return floatTensor(session, name, Float32Array.from(Array.from(values)), dims);
+}
+
 function readFloat(tensor: ort.Tensor): Float32Array {
   const data = tensor.data as unknown;
   if (data instanceof Float32Array) return data;
@@ -74,25 +81,29 @@ function readFloat(tensor: ort.Tensor): Float32Array {
   return Float32Array.from(data as ArrayLike<number>);
 }
 
-function output(result: ort.InferenceSession.OnnxValueMapType, preferred: string): ort.Tensor {
-  return (result[preferred] ?? Object.values(result)[0]) as ort.Tensor;
+function output(result: ort.InferenceSession.OnnxValueMapType, session: Session, preferred: string): ort.Tensor {
+  return (result[preferred] ?? result[session.outputNames[0]] ?? Object.values(result)[0]) as ort.Tensor;
+}
+
+function disposeAll(result: ort.InferenceSession.OnnxValueMapType): void {
+  for (const value of Object.values(result)) (value as ort.Tensor).dispose?.();
 }
 
 // ─── pipeline stages ────────────────────────────────────────────────────────────────────
+
+function requireLoaded(): Loaded {
+  if (!loaded) throw new Error('Image model is not loaded');
+  return loaded;
+}
 
 async function embed(prompt: string): Promise<Float32Array> {
   const key = prompt.trim();
   const hit = embeddingCache.get(key);
   if (hit) return hit;
-  const { text } = requireSessions();
-  const ids = tokenizer!.encode(key);
-  const type = inputType(text, 'input_ids', 'int32');
-  const input =
-    type === 'int64'
-      ? new ort.Tensor('int64', BigInt64Array.from(ids, (v) => BigInt(v)), [1, ids.length])
-      : new ort.Tensor('int32', ids, [1, ids.length]);
-  const result = await text.run({ input_ids: input });
-  const hidden = readFloat(output(result, 'last_hidden_state'));
+  const { text, tokenizer } = requireLoaded();
+  const ids = tokenizer.encode(key);
+  const result = await text.run({ input_ids: intTensor(text, 'input_ids', ids, [1, ids.length]) });
+  const hidden = readFloat(output(result, text, 'last_hidden_state'));
   disposeAll(result);
   if (embeddingCache.size > 16) embeddingCache.clear();
   embeddingCache.set(key, hidden);
@@ -100,23 +111,17 @@ async function embed(prompt: string): Promise<Float32Array> {
 }
 
 async function denoise(latent: Float32Array, embedding: Float32Array, steps: number, strength: number): Promise<Float32Array> {
-  const { unet } = requireSessions();
+  const { unet } = requireLoaded();
   const schedule = makeSchedule(steps, strength);
   const hiddenDims = [1, 77, embedding.length / 77];
   for (let i = 0; i < schedule.timesteps.length; i++) {
     const sigma = schedule.sigmas[i];
-    const t = schedule.timesteps[i];
-    const timestepType = inputType(unet, 'timestep', 'int64');
-    const timestep =
-      timestepType === 'int64'
-        ? new ort.Tensor('int64', BigInt64Array.from([BigInt(t)]), [1])
-        : floatTensor(unet, 'timestep', Float32Array.from([t]), [1]);
     const result = await unet.run({
       sample: floatTensor(unet, 'sample', scaleModelInput(latent, sigma), [1, 4, LATENT_SIZE, LATENT_SIZE]),
-      timestep,
+      timestep: intTensor(unet, 'timestep', [schedule.timesteps[i]], [1]),
       encoder_hidden_states: floatTensor(unet, 'encoder_hidden_states', embedding, hiddenDims),
     });
-    const eps = readFloat(output(result, 'out_sample'));
+    const eps = readFloat(output(result, unet, 'out_sample'));
     disposeAll(result);
     eulerStep(latent, eps, sigma, schedule.sigmas[i + 1]);
   }
@@ -124,26 +129,28 @@ async function denoise(latent: Float32Array, embedding: Float32Array, steps: num
 }
 
 async function decode(latent: Float32Array): Promise<Uint8ClampedArray> {
-  const { decoder } = requireSessions();
+  const { decoder, model } = requireLoaded();
   const scaled = new Float32Array(latent.length);
-  for (let i = 0; i < latent.length; i++) scaled[i] = latent[i] / VAE_SCALE;
-  const result = await decoder.run({
-    latent_sample: floatTensor(decoder, 'latent_sample', scaled, [1, 4, LATENT_SIZE, LATENT_SIZE]),
-  });
-  const pixels = readFloat(output(result, 'sample'));
+  for (let i = 0; i < latent.length; i++) scaled[i] = latent[i] / model.vaeScale;
+  const name = decoder.inputNames[0];
+  const result = await decoder.run({ [name]: floatTensor(decoder, name, scaled, [1, 4, LATENT_SIZE, LATENT_SIZE]) });
+  const pixels = readFloat(output(result, decoder, 'sample'));
   disposeAll(result);
   return chwToRgba(pixels, IMAGE_SIZE, IMAGE_SIZE);
 }
 
 async function encodeImage(rgba: Uint8ClampedArray): Promise<Float32Array> {
+  const { model } = requireLoaded();
+  if (!model.img2img) throw new Error(`${model.label} cannot start from an image; choose SD-Turbo for image-to-image`);
   const encoder = await ensureEncoder();
+  const name = encoder.inputNames[0];
   const result = await encoder.run({
-    sample: floatTensor(encoder, 'sample', rgbaToChw(rgba, IMAGE_SIZE, IMAGE_SIZE), [1, 3, IMAGE_SIZE, IMAGE_SIZE]),
+    [name]: floatTensor(encoder, name, rgbaToChw(rgba, IMAGE_SIZE, IMAGE_SIZE), [1, 3, IMAGE_SIZE, IMAGE_SIZE]),
   });
-  const latent = readFloat(output(result, 'latent_sample'));
+  const latent = readFloat(output(result, encoder, 'latent_sample'));
   disposeAll(result);
   const out = new Float32Array(latent.length);
-  for (let i = 0; i < latent.length; i++) out[i] = latent[i] * VAE_SCALE;
+  for (let i = 0; i < latent.length; i++) out[i] = latent[i] * model.vaeScale;
   return out;
 }
 
@@ -179,109 +186,104 @@ function transformFrame(rgba: Uint8ClampedArray, scale: number, rotateDeg: numbe
 
 // ─── session management ────────────────────────────────────────────────────────────────
 
-function requireSessions(): Sessions {
-  if (!sessions || !tokenizer) throw new Error('Image model is not loaded');
-  return sessions;
+async function createSession(role: DiffusionRole, onRead?: (fraction: number) => void): Promise<Session> {
+  const { model, device } = pending!;
+  const bytes = await store.readBytes(fileFor(model, role).key, (p) => onRead?.(p.loaded / p.total));
+  return ort.InferenceSession.create(bytes, sessionOptions(device, model.dims?.[role]));
 }
 
-function disposeAll(result: ort.InferenceSession.OnnxValueMapType): void {
-  for (const value of Object.values(result)) (value as ort.Tensor).dispose?.();
-}
-
-async function createSession(name: string, onRead?: (fraction: number) => void): Promise<Session> {
-  const bytes = await store.readBytes(fileFor(name).key, (p) => onRead?.(p.loaded / p.total));
-  return ort.InferenceSession.create(bytes, { ...SESSION_BASE, freeDimensionOverrides: DIMS[name] });
-}
+/** Model/device being loaded (createSession reads it). */
+let pending: { model: DiffusionModelInfo; device: DiffusionDevice } | null = null;
 
 async function ensureEncoder(): Promise<Session> {
-  const s = requireSessions();
-  s.encoder ??= await createSession('vae_encoder');
-  return s.encoder;
+  const l = requireLoaded();
+  if (!l.encoder) {
+    pending = { model: l.model, device: l.device };
+    l.encoder = await createSession('vae_encoder');
+  }
+  return l.encoder;
 }
 
-async function releaseSessions(): Promise<void> {
-  if (!sessions) return;
-  const list = [sessions.text, sessions.unet, sessions.decoder, sessions.encoder];
-  sessions = null;
+async function release(): Promise<void> {
+  if (!loaded) return;
+  const list = [loaded.text, loaded.unet, loaded.decoder, loaded.encoder];
+  loaded = null;
   embeddingCache.clear();
   for (const s of list) await s?.release().catch(() => undefined);
 }
 
 exposeWorker<ImageWorkerApi>({
-  async status() {
-    const files = await Promise.all(
-      SD_TURBO_FILES.map(async (f) => {
-        const stored = await store.getFile(f.key);
-        return { key: f.key, received: stored?.received ?? 0, size: f.size, complete: Boolean(stored?.complete) };
-      }),
-    );
-    return { files, loaded: sessions !== null };
-  },
-
-  async download(_params, { progress, signal }) {
+  async download({ modelId }, { progress, signal }) {
+    const model = findDiffusionModel(modelId);
     const done = new Map<string, number>();
-    const total = SD_TURBO_FILES.reduce((sum, f) => sum + f.size, 0);
+    const total = model.files.reduce((sum, f) => sum + f.size, 0);
     const report = (file: string) => {
-      let loaded = 0;
-      for (const v of done.values()) loaded += v;
-      progress({ loaded, total, file });
+      let sum = 0;
+      for (const v of done.values()) sum += v;
+      progress({ loaded: sum, total, file });
     };
-    for (const f of SD_TURBO_FILES) {
+    for (const f of model.files) {
       if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
       await store.download({
         key: f.key,
-        url: SD_TURBO_REPO + f.path,
-        group: SD_TURBO_GROUP,
+        url: f.url,
+        group: model.id,
         size: f.size,
         signal,
         onProgress: (p) => {
           done.set(f.key, p.loaded);
-          report(f.path);
+          report(f.role);
         },
       });
       done.set(f.key, f.size);
-      report(f.path);
+      report(f.role);
     }
     return undefined;
   },
 
-  async load(_params, { progress }) {
-    if (sessions) return { ms: 0 };
+  async load({ modelId, device }, { progress }) {
+    if (loaded?.model.id === modelId && loaded.device === device) return { ms: 0 };
+    await release();
     const start = performance.now();
-    if (!('gpu' in navigator) || !navigator.gpu) throw new Error('WebGPU is required for the diffusion model');
+    const model = findDiffusionModel(modelId);
+    if (device === 'webgpu' && !('gpu' in navigator && navigator.gpu)) throw new Error('WebGPU is not available; use the CPU instead');
     const [vocab, merges] = await Promise.all([
-      store.readBlob('sd-turbo/tokenizer/vocab.json').then((b) => b.text()),
-      store.readBlob('sd-turbo/tokenizer/merges.txt').then((b) => b.text()),
+      store.readBlob(fileFor(model, 'vocab').key).then((b) => b.text()),
+      store.readBlob(fileFor(model, 'merges').key).then((b) => b.text()),
     ]);
-    tokenizer = new ClipTokenizer(JSON.parse(vocab) as Record<string, number>, merges, { padToken: '!' });
-    const parts = ['text_encoder', 'unet', 'vae_decoder'] as const;
+    const tokenizer = new ClipTokenizer(JSON.parse(vocab) as Record<string, number>, merges, { padToken: model.padToken });
+    pending = { model, device };
+    const roles = ['text_encoder', 'unet', 'vae_decoder'] as const;
     const created: Session[] = [];
     try {
-      for (let i = 0; i < parts.length; i++) {
-        const file = parts[i];
-        const session = await createSession(file, (fraction) =>
-          progress({ stage: 'read', file, index: i, count: parts.length, fraction }),
-        );
-        progress({ stage: 'session', file, index: i, count: parts.length, fraction: 1 });
+      for (let i = 0; i < roles.length; i++) {
+        const role = roles[i];
+        const session = await createSession(role, (fraction) => progress({ stage: 'read', file: role, index: i, count: roles.length, fraction }));
+        progress({ stage: 'session', file: role, index: i, count: roles.length, fraction: 1 });
         created.push(session);
       }
     } catch (error) {
       for (const s of created) await s.release().catch(() => undefined);
+      const message = error instanceof Error ? error.message : String(error);
+      if (/bad_alloc|allocate|out of memory/i.test(message)) {
+        throw new Error(`Not enough memory to load ${model.label} on the ${device === 'wasm' ? 'CPU' : 'GPU'}. Close other tabs or pick a smaller model.`);
+      }
       throw error;
     }
-    sessions = { text: created[0], unet: created[1], decoder: created[2] };
+    loaded = { model, device, tokenizer, text: created[0], unet: created[1], decoder: created[2] };
     return { ms: performance.now() - start };
   },
 
   async generate(req: DiffusionRequest, { progress, signal }) {
-    requireSessions();
+    const { model } = requireLoaded();
     const start = performance.now();
     const total = Math.max(1, req.frames);
-    const steps = Math.min(4, Math.max(1, Math.round(req.steps)));
+    const steps = Math.min(model.maxSteps, Math.max(1, Math.round(req.steps)));
     const embA = await embed(req.prompt);
     const embB = req.mode === 'morph' && req.promptB?.trim() ? await embed(req.promptB) : embA;
     const noiseA = gaussianNoise(LATENT_LENGTH, req.seed);
     const noiseB = gaussianNoise(LATENT_LENGTH, req.seedB ?? req.seed + 7919);
+    const noiseC = req.mode === 'loop' ? gaussianNoise(LATENT_LENGTH, req.seed + 15485863) : noiseB;
     let previous: Uint8ClampedArray | undefined = req.init?.rgba;
 
     for (let index = 0; index < total; index++) {
@@ -300,7 +302,7 @@ exposeWorker<ImageWorkerApi>({
         else rgba = await img2img(transformFrame(previous, zoom.scale, zoom.rotateDeg), embA, req.seed + index, steps, zoom.strength);
         previous = rgba;
       } else {
-        const noise = req.mode === 'loop' ? circularNoise(noiseA, noiseB, t) : slerp(noiseA, noiseB, t);
+        const noise = req.mode === 'loop' ? orbitNoise(noiseA, noiseB, noiseC, t, req.radius ?? 0.45) : slerp(noiseA, noiseB, t * (req.walk ?? 1));
         const emb = embB === embA ? embA : lerp(embA, embB, t);
         rgba = await txt2img(noise, emb, steps);
       }
@@ -313,8 +315,7 @@ exposeWorker<ImageWorkerApi>({
   },
 
   async unload() {
-    await releaseSessions();
-    tokenizer = null;
+    await release();
     return undefined;
   },
 });

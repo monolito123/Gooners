@@ -23,7 +23,7 @@ export interface GenerationStats {
   prefillTokensPerSec?: number;
   finishReason: 'stop' | 'length' | 'abort';
   modelId: string;
-  backend: 'webgpu' | 'wasm';
+  backend: 'webgpu' | 'wasm' | 'cloud';
 }
 
 export type LoadPhase = 'download' | 'cache' | 'compile' | 'init' | 'ready';
@@ -43,7 +43,7 @@ export interface LoadProgress {
 /** RPC surface of the CPU (Transformers.js) worker. */
 export type WasmTextApi = {
   load: {
-    params: { repo: string; dtype: string };
+    params: { repo: string; dtype: string; revision?: string; externalData?: number };
     progress: { loaded: number; total: number; file: string };
     result: { fromCache: boolean };
   };

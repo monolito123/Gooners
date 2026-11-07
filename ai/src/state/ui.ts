@@ -11,7 +11,7 @@ export interface Toast {
   text: string;
 }
 
-export type SettingsTab = 'generation' | 'models' | 'storage' | 'interface';
+export type SettingsTab = 'generation' | 'models' | 'cloud' | 'storage' | 'interface';
 
 interface UiState {
   mode: Mode;

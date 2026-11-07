@@ -1,12 +1,12 @@
 import { Clapperboard, Dices, Download, Film, ImagePlus, Pause, Play, Save, Sparkles, Square } from 'lucide-react';
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { type FrameSet, type VideoFormat, encodeFrames } from '../../engines/encoder.ts';
-import type { DiffusionMode } from '../../engines/imageTypes.ts';
 import { imageEngine } from '../../engines/ImageEngine.ts';
 import { type SceneSpec, interpretPrompt } from '../../engines/procedural/artEngine.ts';
 import { canUseLLM, interpretWithLLM } from '../../engines/procedural/llmSpec.ts';
 import { IMAGE_EFFECTS, type ImageEffect } from '../../engines/procedural/shaders.ts';
-import { synthesizeDiffusionFrames, synthesizeImageEffectFrames, synthesizeShaderFrames } from '../../engines/VideoSynthesizer.ts';
+import { type AiMotion, synthesizeAiVideo, synthesizeImageEffectFrames, synthesizeShaderFrames } from '../../engines/VideoSynthesizer.ts';
+import { findDiffusionModel } from '../../engines/models.ts';
 import { useGpu, useImageEngine, useTextEngine } from '../../hooks.ts';
 import { useT } from '../../i18n/index.ts';
 import { formatBytes, formatDuration } from '../../lib/format.ts';
@@ -15,10 +15,10 @@ import { isAbortError } from '../../lib/rpc.ts';
 import { assetBlob, useAssets } from '../../state/assets.ts';
 import { useUi } from '../../state/ui.ts';
 import { SceneEditor } from '../image/ImageStudio.tsx';
-import { AssetCard, AssetChip, AssetPicker, DiffusionModelCard } from '../media.tsx';
+import { AssetCard, AssetChip, AssetPicker, DiffusionModelPanel } from '../media.tsx';
 import { Button, EmptyState, Field, IconButton, Panel, ProgressBar, Segmented, Slider, Toggle, downloadBlob, inputClass } from '../ui/primitives.tsx';
 
-type Source = 'shader' | 'image' | 'diffusion';
+type Source = 'ai' | 'image' | 'shader';
 type Aspect = 'square' | 'landscape' | 'portrait';
 
 const SIZES: Record<Aspect, [number, number]> = { square: [640, 640], landscape: [960, 540], portrait: [540, 960] };
@@ -102,12 +102,12 @@ function FramePlayer({ set }: { set: FrameSet }) {
 
 export default function VideoStudio() {
   const t = useT();
-  const gpu = useGpu();
   const sd = useImageEngine();
   const text = useTextEngine();
+  useGpu(); // re-render when the GPU capabilities are known
   const toast = useUi((s) => s.toast);
   const assets = useAssets((s) => s.assets);
-  const [source, setSource] = useState<Source>('shader');
+  const [source, setSource] = useState<Source>('ai');
   const [prompt, setPrompt] = useState('');
   const [seed, setSeed] = useState(randomSeed);
   const [override, setOverride] = useState<SceneSpec | null>(null);
@@ -118,21 +118,21 @@ export default function VideoStudio() {
   const [imageId, setImageId] = useState<string | null>(null);
   const [effect, setEffect] = useState<ImageEffect>('kenburns');
   const [strength, setStrength] = useState(1);
-  const [diffMode, setDiffMode] = useState<DiffusionMode>('loop');
-  const [promptB, setPromptB] = useState('');
-  const [diffFrames, setDiffFrames] = useState(16);
-  const [diffFps, setDiffFps] = useState(8);
-  const [zoomStrength, setZoomStrength] = useState(0.45);
+  const [motion, setMotion] = useState<AiMotion>('flow');
+  const [keyframes, setKeyframes] = useState(0);
   const [picker, setPicker] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<'keyframes' | 'frames'>('frames');
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [frames, setFrames] = useState<FrameSet | null>(null);
   const [encoding, setEncoding] = useState<{ fraction: number; stage: string } | null>(null);
   const [output, setOutput] = useState<{ blob: Blob; url: string; format: VideoFormat } | null>(null);
+  const [error, setError] = useState<string>();
   const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    void imageEngine.refresh();
     const handoff = useUi.getState().takeHandoff('video');
     if (handoff?.purpose === 'animate') {
       setSource('image');
@@ -145,11 +145,18 @@ export default function VideoStudio() {
 
   const derived = useMemo(() => interpretPrompt(prompt || 'abstract', seed), [prompt, seed]);
   const spec = override ?? derived;
-  const diffusionOk = gpu.supported && gpu.hasF16;
-  const sdOnDisk = ['downloaded', 'ready', 'generating'].includes(sd.status);
+  const sdModel = findDiffusionModel(sd.modelId);
+  const device = imageEngine.device(sdModel);
+  // Dream zoom repaints with img2img, which one-step models cannot do.
+  useEffect(() => {
+    if (motion === 'dream' && !sdModel.img2img) setMotion('flow');
+  }, [motion, sdModel.img2img]);
+  // Fewer diffusion passes on the CPU, where each one takes several seconds.
+  const keyCount = keyframes || (device === 'wasm' ? 4 : 8);
   const videos = assets.filter((a) => a.kind === 'video');
 
   const onFrame = (blob: Blob, index: number, total: number) => {
+    setStage('frames');
     setProgress({ done: index + 1, total });
     setPreviewUrl(URL.createObjectURL(blob));
   };
@@ -161,15 +168,35 @@ export default function VideoStudio() {
     setBusy(true);
     setFrames(null);
     setOutput(null);
+    setError(undefined);
     setProgress({ done: 0, total: 1 });
     try {
       const [width, height] = SIZES[aspect];
       let set: FrameSet;
-      if (source === 'shader') {
+      if (source === 'ai') {
+        if (!prompt.trim()) throw new Error(t('video.needPrompt'));
+        setStage('keyframes');
+        set = await synthesizeAiVideo({
+          prompt,
+          seed,
+          motion,
+          keyframes: keyCount,
+          fps,
+          seconds,
+          effect,
+          signal: controller.signal,
+          onKeyframe: (png, index, total) => {
+            setStage('keyframes');
+            setProgress({ done: index + 1, total });
+            setPreviewUrl(URL.createObjectURL(png));
+          },
+          onFrame,
+        });
+      } else if (source === 'shader') {
         let base = spec;
         if (useLLM && !override && prompt.trim()) base = await interpretWithLLM(prompt, spec);
         set = await synthesizeShaderFrames(base, { fps, seconds, width, height, signal: controller.signal, onFrame });
-      } else if (source === 'image') {
+      } else {
         if (!imageId) throw new Error(t('video.pickImage'));
         const bitmap = await createImageBitmap(await assetBlob(imageId));
         try {
@@ -177,24 +204,15 @@ export default function VideoStudio() {
         } finally {
           bitmap.close();
         }
-      } else {
-        if (!prompt.trim()) throw new Error(t('video.needPrompt'));
-        set = await synthesizeDiffusionFrames(
-          {
-            prompt,
-            seed,
-            steps: 1,
-            mode: diffMode,
-            promptB: diffMode === 'morph' ? promptB : undefined,
-            seedB: seed + 104729,
-            zoom: { scale: 1.035, rotateDeg: 0.6, strength: zoomStrength },
-          },
-          { frames: diffFrames, fps: diffFps, seconds: diffFrames / diffFps, signal: controller.signal, onFrame },
-        );
       }
       setFrames(set);
-    } catch (error) {
-      if (!isAbortError(error)) toast(error instanceof Error ? error.message : String(error), 'error');
+      setSeed(randomSeed());
+    } catch (err) {
+      if (!isAbortError(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        toast(message, 'error');
+      }
     } finally {
       setBusy(false);
       setProgress(null);
@@ -207,15 +225,18 @@ export default function VideoStudio() {
     const controller = new AbortController();
     abort.current = controller;
     setEncoding({ fraction: 0, stage: 'load' });
+    setError(undefined);
     try {
-      const blob = await encodeFrames(frames, {
-        format,
-        signal: controller.signal,
-        onProgress: (fraction, stage) => setEncoding({ fraction, stage }),
-      });
-      setOutput({ blob, url: URL.createObjectURL(blob), format });
-    } catch (error) {
-      if (!isAbortError(error)) toast(error instanceof Error ? error.message : String(error), 'error');
+      const blob = await encodeFrames(frames, { format, signal: controller.signal, onProgress: (fraction, s) => setEncoding({ fraction, stage: s }) });
+      const actual: VideoFormat = blob.type.includes('webm') ? 'webm' : blob.type.includes('gif') ? 'gif' : 'mp4';
+      if (actual !== format) toast(t('video.fallbackWebm'), 'info');
+      setOutput({ blob, url: URL.createObjectURL(blob), format: actual });
+    } catch (err) {
+      if (!isAbortError(err)) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        toast(message, 'error');
+      }
     } finally {
       setEncoding(null);
       abort.current = null;
@@ -227,7 +248,7 @@ export default function VideoStudio() {
     await useAssets.getState().add(output.blob, {
       kind: 'video',
       prompt: prompt || effect,
-      engine: source === 'diffusion' ? `sd-turbo ${diffMode}` : source === 'image' ? `fx ${effect}` : `shader ${spec.mode}`,
+      engine: source === 'ai' ? `${sdModel.label} · ${motion}` : source === 'image' ? `fx ${effect}` : `shader ${spec.mode}`,
       width: frames.width,
       height: frames.height,
       durationSec: frames.frames.length / frames.fps,
@@ -235,8 +256,13 @@ export default function VideoStudio() {
     toast(t('video.saved'), 'success');
   };
 
-  const totalFrames = source === 'diffusion' ? diffFrames : Math.round(fps * seconds);
-  const canRun = !busy && !encoding && (source === 'image' ? Boolean(imageId) : source === 'diffusion' ? Boolean(prompt.trim()) && sdOnDisk : true);
+  const totalFrames = Math.round(fps * seconds);
+  const sdBusy = sd.status === 'downloading' || sd.status === 'loading' || sd.status === 'generating';
+  const canRun =
+    !busy &&
+    !encoding &&
+    (source === 'image' ? Boolean(imageId) : source === 'ai' ? Boolean(prompt.trim()) && Boolean(device) && !sdBusy : true);
+  const needsDownload = source === 'ai' && (sd.status === 'absent' || sd.status === 'partial');
 
   return (
     <div className="flex h-full flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
@@ -247,19 +273,56 @@ export default function VideoStudio() {
           onChange={setSource}
           size="sm"
           options={[
-            { value: 'shader', label: t('video.source.shader') },
+            { value: 'ai', label: t('video.source.ai') },
             { value: 'image', label: t('video.source.image') },
-            { value: 'diffusion', label: t('video.source.diffusion'), disabled: !diffusionOk },
+            { value: 'shader', label: t('video.source.shader') },
           ]}
         />
-        <p className="text-xs text-ink-400">{t(`video.source.${source}.about` as 'video.source.shader.about')}</p>
+        <p className="text-xs text-ink-400">{t(`video.source.${source}.about` as 'video.source.ai.about')}</p>
 
-        {source === 'diffusion' && <DiffusionModelCard />}
+        {source === 'ai' && <DiffusionModelPanel disabled={busy} />}
 
         {source !== 'image' && (
           <Field label={t('video.prompt')}>
-            <textarea className={`${inputClass} min-h-20`} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t('video.prompt.placeholder')} />
+            <textarea
+              className={`${inputClass} min-h-20`}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={source === 'ai' ? t('video.prompt.placeholderAi') : t('video.prompt.placeholder')}
+            />
           </Field>
+        )}
+
+        {source === 'ai' && (
+          <>
+            <Field group label={t('video.motion')}>
+              <Segmented
+                value={motion}
+                onChange={setMotion}
+                size="sm"
+                options={[
+                  { value: 'flow', label: t('video.motion.flow') },
+                  { value: 'loop', label: t('video.motion.loop') },
+                  { value: 'camera', label: t('video.motion.camera') },
+                  { value: 'dream', label: t('video.motion.dream'), disabled: !sdModel.img2img, title: sdModel.img2img ? undefined : t('video.motion.dreamNeeds') },
+                ]}
+              />
+            </Field>
+            <p className="text-xs text-ink-400">{t(`video.motion.${motion}.about` as 'video.motion.dream.about')}</p>
+            {motion === 'camera' ? (
+              <Field label={t('video.effect')}>
+                <select className={inputClass} value={effect} onChange={(e) => setEffect(e.target.value as ImageEffect)}>
+                  {IMAGE_EFFECTS.map((fx) => (
+                    <option key={fx} value={fx}>
+                      {t(`fx.${fx}` as 'fx.kenburns')}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+              <Slider label={t('video.keyframes')} value={keyCount} min={2} max={16} step={1} onChange={setKeyframes} hint={t('video.keyframesHint')} />
+            )}
+          </>
         )}
 
         {source === 'image' &&
@@ -272,6 +335,21 @@ export default function VideoStudio() {
               {t('video.pickImage')}
             </Button>
           ))}
+
+        {source === 'image' && (
+          <>
+            <Field label={t('video.effect')}>
+              <select className={inputClass} value={effect} onChange={(e) => setEffect(e.target.value as ImageEffect)}>
+                {IMAGE_EFFECTS.map((fx) => (
+                  <option key={fx} value={fx}>
+                    {t(`fx.${fx}` as 'fx.kenburns')}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Slider label={t('video.strength')} value={strength} min={0.1} max={2} step={0.05} onChange={setStrength} format={(v) => v.toFixed(2)} />
+          </>
+        )}
 
         {source === 'shader' && (
           <>
@@ -289,70 +367,28 @@ export default function VideoStudio() {
           </>
         )}
 
-        {source === 'image' && (
-          <>
-            <Field label={t('video.effect')}>
-              <select className={inputClass} value={effect} onChange={(e) => setEffect(e.target.value as ImageEffect)}>
-                {IMAGE_EFFECTS.map((fx) => (
-                  <option key={fx} value={fx}>
-                    {t(`fx.${fx}` as 'fx.kenburns')}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Slider label={t('video.strength')} value={strength} min={0.1} max={2} step={0.05} onChange={setStrength} format={(v) => v.toFixed(2)} />
-          </>
+        {source !== 'ai' && (
+          <Field group label={t('video.aspect')}>
+            <Segmented
+              value={aspect}
+              onChange={setAspect}
+              size="sm"
+              options={[
+                { value: 'square', label: '1:1' },
+                { value: 'landscape', label: '16:9' },
+                { value: 'portrait', label: '9:16' },
+              ]}
+            />
+          </Field>
         )}
-
-        {source === 'diffusion' && (
-          <>
-            <Field group label={t('video.diffMode')}>
-              <Segmented
-                value={diffMode}
-                onChange={setDiffMode}
-                size="sm"
-                options={[
-                  { value: 'loop', label: t('video.diff.loop') },
-                  { value: 'morph', label: t('video.diff.morph') },
-                  { value: 'zoom', label: t('video.diff.zoom') },
-                ]}
-              />
-            </Field>
-            {diffMode === 'morph' && (
-              <Field label={t('video.promptB')}>
-                <input className={inputClass} value={promptB} onChange={(e) => setPromptB(e.target.value)} placeholder={t('video.promptB.placeholder')} />
-              </Field>
-            )}
-            {diffMode === 'zoom' && <Slider label={t('video.zoomStrength')} value={zoomStrength} min={0.2} max={0.8} step={0.05} onChange={setZoomStrength} format={(v) => v.toFixed(2)} />}
-            <Slider label={t('video.frames')} value={diffFrames} min={6} max={96} step={2} onChange={setDiffFrames} hint={t('video.framesHint')} />
-            <Slider label="FPS" value={diffFps} min={4} max={24} step={1} onChange={setDiffFps} />
-          </>
-        )}
-
-        {source !== 'diffusion' && (
-          <>
-            <Field group label={t('video.aspect')}>
-              <Segmented
-                value={aspect}
-                onChange={setAspect}
-                size="sm"
-                options={[
-                  { value: 'square', label: '1:1' },
-                  { value: 'landscape', label: '16:9' },
-                  { value: 'portrait', label: '9:16' },
-                ]}
-              />
-            </Field>
-            <Slider label={t('video.duration')} value={seconds} min={1} max={12} step={0.5} onChange={setSeconds} format={(v) => `${v}s`} />
-            <Field group label="FPS">
-              <Segmented value={String(fps)} onChange={(v) => setFps(Number(v))} size="sm" options={[12, 24, 30].map((v) => ({ value: String(v), label: String(v) }))} />
-            </Field>
-          </>
-        )}
+        <Slider label={t('video.duration')} value={seconds} min={1} max={12} step={0.5} onChange={setSeconds} format={(v) => `${v}s`} />
+        <Field group label="FPS">
+          <Segmented value={String(fps)} onChange={(v) => setFps(Number(v))} size="sm" options={[12, 24, 30].map((v) => ({ value: String(v), label: String(v) }))} />
+        </Field>
 
         <div className="flex gap-2">
-          <Button variant="primary" size="lg" className="flex-1" disabled={!canRun} busy={busy} icon={<Sparkles className="size-4.5" />} onClick={() => void synthesize()}>
-            {t('video.render', { n: totalFrames })}
+          <Button variant="primary" size="lg" className="flex-1" disabled={!canRun} busy={busy} icon={<Sparkles className="size-4.5" />} onClick={() => void synthesize()} data-testid="video-render">
+            {needsDownload ? t('image.downloadGenerate', { size: formatBytes(sd.totalBytes) }) : t('video.render', { n: totalFrames })}
           </Button>
           {busy && (
             <Button
@@ -368,20 +404,30 @@ export default function VideoStudio() {
             </Button>
           )}
         </div>
+        {error && !busy && <p className="rounded-lg border border-neon-red/40 bg-neon-red/5 p-2 text-xs break-words text-neon-red">{error}</p>}
       </section>
 
       <section className="min-h-0 flex-1 space-y-4 p-4 lg:overflow-y-auto">
-        {busy && progress && (
+        {busy && (
           <Panel className="space-y-3 p-4">
             <div className="flex items-center justify-between text-sm">
               <span className="flex items-center gap-2 text-white">
-                <Film className="size-4 animate-pulse text-neon-amber" /> {t('video.rendering')}
+                <Film className="size-4 animate-pulse text-neon-amber" />
+                {sd.status === 'downloading'
+                  ? t('image.stageDownload')
+                  : sd.status === 'loading'
+                    ? t('image.stageLoad')
+                    : stage === 'keyframes' && source === 'ai'
+                      ? t(device === 'wasm' ? 'video.keyframesCpu' : 'video.keyframesGpu')
+                      : t('video.rendering')}
               </span>
-              <span className="font-mono text-xs text-ink-300">
-                {progress.done}/{progress.total}
-              </span>
+              {progress && progress.total > 1 && (
+                <span className="font-mono text-xs text-ink-300">
+                  {progress.done}/{progress.total}
+                </span>
+              )}
             </div>
-            <ProgressBar value={progress.done / Math.max(1, progress.total)} tone="pink" />
+            <ProgressBar value={progress && progress.total > 1 ? progress.done / progress.total : undefined} indeterminate={!progress || progress.total <= 1} tone="pink" />
             {previewUrl && <img src={previewUrl} alt="" className="mx-auto max-h-[50vh] rounded-lg border border-ink-600" />}
           </Panel>
         )}

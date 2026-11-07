@@ -10,6 +10,7 @@ import { Observable } from '../lib/observable.ts';
 import { RpcAbortError, WorkerClient, isAbortError } from '../lib/rpc.ts';
 import { fitToContext } from './context.ts';
 import { webllmAppConfig, webllmLib } from './modelCache.ts';
+import { type CloudConnection, type CloudProviderId, type StreamEvent, findProvider, streamCloudChat } from './cloud.ts';
 import { type TextModelInfo, resolveWebLLMId } from './models.ts';
 import { parseWebLLMReport } from './progress.ts';
 import type { ChatTurn, GenerationParams, GenerationStats, LoadProgress, WasmTextApi } from './textTypes.ts';
@@ -76,7 +77,14 @@ export class TextEngine extends Observable<TextEngineState> {
       progress: { phase: 'init', fraction: 0, elapsedSec: 0, text: '' },
     });
     try {
-      if (model.backend === 'webgpu') {
+      if (model.backend === 'cloud') {
+        // Nothing to download: free local memory and check the connection details.
+        await this.unloadWebLLM();
+        await this.unloadWasm();
+        const connection = this.cloudConnection(model);
+        const provider = findProvider(connection.provider);
+        if (provider.needsKey && !connection.key?.trim()) throw new Error(`${provider.label} needs an API key: add it in Settings → Cloud.`);
+      } else if (model.backend === 'webgpu') {
         await this.unloadWasm();
         await this.loadWebLLM(runtimeId, opts.customModels ?? []);
       } else {
@@ -154,7 +162,9 @@ export class TextEngine extends Observable<TextEngineState> {
     };
     try {
       const stats =
-        model.backend === 'webgpu'
+        model.backend === 'cloud'
+          ? await this.generateCloud(model, fitted, options.params, controller.signal, onToken)
+          : model.backend === 'webgpu'
           ? await this.generateWebLLM(fitted, options.params, controller.signal, onToken)
           : await this.generateWasm(fitted, options.params, controller.signal, onToken);
       const end = performance.now();
@@ -298,7 +308,7 @@ export class TextEngine extends Observable<TextEngineState> {
     const totalMB = model.downloadMB;
     await this.wasm.call(
       'load',
-      { repo: model.repo, dtype: model.dtype ?? 'q4' },
+      { repo: model.repo, dtype: model.dtype ?? 'q4', revision: model.revision, externalData: model.externalData },
       {
         onProgress: ({ loaded, total }) => {
           if (this.state.status !== 'loading') return;
@@ -318,6 +328,47 @@ export class TextEngine extends Observable<TextEngineState> {
       },
     );
     this.setState({ progress: { phase: 'init', fraction: 1, elapsedSec: this.elapsed(), text: '' } });
+  }
+
+  // ─── Cloud (OpenAI-compatible APIs) ─────────────────────────────────────────────────
+
+  /** Supplies the API key / base URL for a cloud provider (set by the app from settings). */
+  cloudResolver?: (provider: CloudProviderId) => CloudConnection;
+
+  private cloudConnection(model: TextModelInfo): CloudConnection {
+    const provider = model.cloud!.provider;
+    return this.cloudResolver?.(provider) ?? { provider };
+  }
+
+  private async generateCloud(
+    model: TextModelInfo,
+    messages: ChatTurn[],
+    params: GenerationParams,
+    signal: AbortSignal,
+    onToken: (delta: string, count?: number) => void,
+  ): Promise<Partial<GenerationStats>> {
+    let finish: GenerationStats['finishReason'] = 'stop';
+    let usage: StreamEvent['usage'];
+    let thinking = false;
+    let answered = false;
+    for await (const event of streamCloudChat(this.cloudConnection(model), model.cloud!.model, messages, params, signal)) {
+      // Reasoning models stream their thoughts separately: show them as a <think> block.
+      if (event.reasoning && !answered) {
+        if (!thinking) onToken('<think>', 0);
+        thinking = true;
+        onToken(event.reasoning);
+      }
+      if (event.content) {
+        if (thinking) onToken('</think>\n\n', 0);
+        thinking = false;
+        answered = true;
+        onToken(event.content);
+      }
+      if (event.finish === 'length') finish = 'length';
+      if (event.usage) usage = event.usage;
+    }
+    if (thinking) onToken('</think>', 0);
+    return { finishReason: finish, completionTokens: usage?.completion_tokens, promptTokens: usage?.prompt_tokens };
   }
 
   private async generateWasm(

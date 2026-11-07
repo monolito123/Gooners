@@ -115,7 +115,8 @@ export class ShaderRenderer {
       this.texture ??= gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      // UNPACK_FLIP_Y is ignored for ImageBitmap uploads, so copy bitmaps to a canvas first.
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image instanceof ImageBitmap ? bitmapToCanvas(image) : image);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -147,6 +148,14 @@ export class ShaderRenderer {
   dispose(): void {
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
+}
+
+function bitmapToCanvas(bitmap: ImageBitmap): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+  return canvas;
 }
 
 function sourceSize(source: TexImageSource): { width: number; height: number } {

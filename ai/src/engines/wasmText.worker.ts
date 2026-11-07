@@ -54,8 +54,8 @@ interface FileProgress {
 }
 
 exposeWorker<WasmTextApi>({
-  async load({ repo, dtype }, { progress }) {
-    const key = `${repo}:${dtype}`;
+  async load({ repo, dtype, revision, externalData }, { progress }) {
+    const key = `${repo}:${dtype}:${revision ?? 'main'}`;
     if (loaded === key && model && tokenizer) return { fromCache: true };
     await model?.dispose();
     model = null;
@@ -75,10 +75,12 @@ exposeWorker<WasmTextApi>({
       }
       progress({ loaded: sumLoaded, total: sumTotal, file: info.file });
     };
-    tokenizer = await AutoTokenizer.from_pretrained(repo, { progress_callback: onProgress as never });
+    tokenizer = await AutoTokenizer.from_pretrained(repo, { revision, progress_callback: onProgress as never });
     model = await AutoModelForCausalLM.from_pretrained(repo, {
       dtype: dtype as never,
       device: 'wasm',
+      revision,
+      ...(externalData ? { use_external_data_format: externalData } : {}),
       progress_callback: onProgress as never,
     });
     loaded = key;

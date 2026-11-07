@@ -1,6 +1,7 @@
-// Checks the SD-Turbo pipeline code (CLIP tokenizer, Euler scheduler, latent/pixel conversions,
-// float16 handling) on the CPU with onnxruntime-node, using the same ONNX files as the browser.
-// Downloads ~2.6 GB on first run. Usage: npm run check:sd -- [output-dir] ["prompt"]
+// Checks the diffusion pipeline code (CLIP tokenizer, Euler scheduler, latent/pixel conversions,
+// float16 handling, img2img) on the CPU with onnxruntime-node, using the same ONNX files as the
+// browser. Usage: npm run check:sd -- [model-id] [output-dir] ["prompt"]
+// model-id: sdxs (0.9 GB), sdxs-fp32 (1.9 GB, default) or sd-turbo (2.6 GB).
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -9,38 +10,44 @@ import { deflateSync } from 'node:zlib';
 
 const ort = createRequire(import.meta.url)('onnxruntime-node');
 const { ClipTokenizer } = await import('../src/engines/sd/clipTokenizer.ts');
-const { VAE_SCALE, eulerStep, initNoiseSigma, makeSchedule, scaleModelInput } = await import('../src/engines/sd/scheduler.ts');
+const { eulerStep, initNoiseSigma, makeSchedule, scaleModelInput } = await import('../src/engines/sd/scheduler.ts');
 const { chwToRgba, rgbaToChw } = await import('../src/engines/sd/tensor.ts');
 const { gaussianNoise } = await import('../src/lib/prng.ts');
 const { float16ToFloat32, float32ToFloat16 } = await import('../src/lib/float16.ts');
-const { SD_TURBO_FILES, SD_TURBO_REPO } = await import('../src/engines/models.ts');
+const { findDiffusionModel } = await import('../src/engines/models.ts');
 
-const outDir = process.argv[2] ?? 'sd-check';
-const prompt = process.argv[3] ?? 'a red apple on a wooden table, studio photo';
-const modelDir = join(import.meta.dirname, '../node_modules/.cache/sd-turbo');
+const model = findDiffusionModel(process.argv[2] ?? 'sdxs-fp32');
+const outDir = process.argv[3] ?? 'sd-check';
+const prompt = process.argv[4] ?? 'a red apple on a wooden table, studio photo';
+const modelDir = join(import.meta.dirname, '../node_modules/.cache/diffusion');
+const pathOf = (role) => join(modelDir, model.files.find((f) => f.role === role).key);
 
-for (const f of SD_TURBO_FILES) {
-  const file = join(modelDir, f.path);
+for (const f of model.files) {
+  const file = join(modelDir, f.key);
   if (existsSync(file) && statSync(file).size === f.size) continue;
   mkdirSync(join(file, '..'), { recursive: true });
-  console.log(`downloading ${f.path}`);
-  execFileSync('curl', ['-fsSL', '--retry', '3', '-o', file, SD_TURBO_REPO + f.path], { stdio: 'inherit' });
-  if (statSync(file).size !== f.size) throw new Error(`size mismatch for ${f.path}`);
+  console.log(`downloading ${f.key}`);
+  execFileSync('curl', ['-fsSL', '--retry', '3', '-o', file, f.url], { stdio: 'inherit' });
+  if (statSync(file).size !== f.size) throw new Error(`size mismatch for ${f.key}`);
 }
+console.log(`model: ${model.label}`);
 
-const session = (name) => ort.InferenceSession.create(join(modelDir, name, 'model.onnx'), { executionProviders: ['cpu'] });
+const session = (role) => ort.InferenceSession.create(pathOf(role), { executionProviders: ['cpu'] });
+const typeOf = (s, name) => s.inputMetadata?.find((m) => m.name === name)?.type;
+const ints = (s, name, values, dims) =>
+  typeOf(s, name) === 'int64'
+    ? new ort.Tensor('int64', BigInt64Array.from(values, (v) => BigInt(v)), dims)
+    : typeOf(s, name) === 'int32'
+      ? new ort.Tensor('int32', Int32Array.from(values), dims)
+      : new ort.Tensor('float32', Float32Array.from(values), dims);
 const floats = (tensor) => (tensor.data instanceof Uint16Array ? float16ToFloat32(tensor.data) : Float32Array.from(tensor.data));
 const LATENT = [1, 4, 64, 64];
 
-const tokenizer = new ClipTokenizer(
-  JSON.parse(readFileSync(join(modelDir, 'tokenizer/vocab.json'), 'utf8')),
-  readFileSync(join(modelDir, 'tokenizer/merges.txt'), 'utf8'),
-  { padToken: '!' },
-);
+const tokenizer = new ClipTokenizer(JSON.parse(readFileSync(pathOf('vocab'), 'utf8')), readFileSync(pathOf('merges'), 'utf8'), { padToken: model.padToken });
 const [text, unet, decoder, encoder] = await Promise.all(['text_encoder', 'unet', 'vae_decoder', 'vae_encoder'].map(session));
 
 async function embed(p) {
-  const { last_hidden_state } = await text.run({ input_ids: new ort.Tensor('int32', tokenizer.encode(p), [1, 77]) });
+  const { last_hidden_state } = await text.run({ input_ids: ints(text, 'input_ids', tokenizer.encode(p), [1, 77]) });
   return last_hidden_state;
 }
 
@@ -49,12 +56,12 @@ async function denoise(latent, embedding, steps, strength) {
   for (let i = 0; i < schedule.timesteps.length; i++) {
     const { out_sample } = await unet.run({
       sample: new ort.Tensor('float32', scaleModelInput(latent, schedule.sigmas[i]), LATENT),
-      timestep: new ort.Tensor('int64', BigInt64Array.from([BigInt(schedule.timesteps[i])]), [1]),
+      timestep: ints(unet, 'timestep', [schedule.timesteps[i]], [1]),
       encoder_hidden_states: embedding,
     });
     eulerStep(latent, floats(out_sample), schedule.sigmas[i], schedule.sigmas[i + 1]);
   }
-  const { sample } = await decoder.run({ latent_sample: new ort.Tensor('float32', latent.map((v) => v / VAE_SCALE), LATENT) });
+  const { sample } = await decoder.run({ [decoder.inputNames[0]]: new ort.Tensor('float32', latent.map((v) => v / model.vaeScale), LATENT) });
   return chwToRgba(floats(sample), 512, 512);
 }
 
@@ -95,15 +102,16 @@ const image = await denoise(gaussianNoise(4 * 64 * 64, 1234).map((v) => v * sigm
 writeFileSync(join(outDir, 'txt2img.png'), png(image));
 console.log(`txt2img: ${Date.now() - start} ms → ${join(outDir, 'txt2img.png')}`);
 
-// img2img through the float16 VAE encoder, as the browser worker does.
+// img2img through the VAE encoder (float16 for SD-Turbo), as the browser worker does.
 start = Date.now();
-const half = encoder.inputMetadata?.find((m) => m.name === 'sample')?.type === 'float16';
+const encIn = encoder.inputNames[0];
+const half = typeOf(encoder, encIn) === 'float16';
 const chw = rgbaToChw(image, 512, 512);
-const { latent_sample } = await encoder.run({
-  sample: half ? new ort.Tensor('float16', float32ToFloat16(chw), [1, 3, 512, 512]) : new ort.Tensor('float32', chw, [1, 3, 512, 512]),
+const encoded = await encoder.run({
+  [encIn]: half ? new ort.Tensor('float16', float32ToFloat16(chw), [1, 3, 512, 512]) : new ort.Tensor('float32', chw, [1, 3, 512, 512]),
 });
-const latent = floats(latent_sample).map((v) => v * VAE_SCALE);
-const steps = 2;
+const latent = floats(encoded[encoder.outputNames[0]]).map((v) => v * model.vaeScale);
+const steps = Math.min(2, model.maxSteps);
 const strength = 0.5;
 const sigma = makeSchedule(steps, strength).sigmas[0];
 const noise = gaussianNoise(latent.length, 7);

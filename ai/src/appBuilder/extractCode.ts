@@ -48,14 +48,23 @@ function looksLikeHtml(body: string): boolean {
   return /<(!doctype|html|head|body|div|main|section|canvas|button|h1|style|script)\b/i.test(body);
 }
 
-/** Merges separate CSS/JS blocks into the HTML document. */
+/** References to local files (styles.css, script.js) that only exist as separate code blocks. */
+const LOCAL_STYLESHEET = /<link\b[^>]*\bhref=["'](?!https?:|\/\/|data:|blob:)[^"']+\.css["'][^>]*>\s*/gi;
+const LOCAL_SCRIPT = /<script\b[^>]*\bsrc=["'](?!https?:|\/\/|data:|blob:)[^"']+\.js["'][^>]*>\s*<\/script>\s*/gi;
+
+/** Merges separate CSS/JS blocks into the HTML document, replacing links to those local files. */
 function merge(html: string, css: string[], js: string[]): string {
-  let doc = html;
-  if (css.length) {
+  // Non-global copies: .test() on a /g regex keeps lastIndex between calls.
+  const linksCss = new RegExp(LOCAL_STYLESHEET.source, 'i').test(html);
+  const linksJs = new RegExp(LOCAL_SCRIPT.source, 'i').test(html);
+  const hasStyle = /<style[\s>]/i.test(html);
+  const hasInlineScript = /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?\S[\s\S]*?<\/script>/i.test(html);
+  let doc = html.replace(LOCAL_STYLESHEET, '').replace(LOCAL_SCRIPT, '');
+  if (css.length && (linksCss || !hasStyle)) {
     const style = `<style>\n${css.join('\n\n')}\n</style>`;
     doc = /<\/head>/i.test(doc) ? doc.replace(/<\/head>/i, `${style}\n</head>`) : `${style}\n${doc}`;
   }
-  if (js.length) {
+  if (js.length && (linksJs || !hasInlineScript)) {
     const script = `<script>\n${js.join('\n\n')}\n</script>`;
     doc = /<\/body>/i.test(doc) ? doc.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${script}\n</body>`) : `${doc}\n${script}`;
   }
@@ -71,8 +80,7 @@ export function extractCode(text: string): ExtractedCode {
     const best = open ?? htmlBlocks.reduce((a, b) => (b.body.length > a.body.length ? b : a));
     const css = blocks.filter((b) => CSS_LANGS.has(b.lang) && b.closed).map((b) => b.body);
     const js = blocks.filter((b) => JS_LANGS.has(b.lang) && b.closed).map((b) => b.body);
-    const hasInline = (tag: string) => new RegExp(`<${tag}[\\s>]`, 'i').test(best.body);
-    const code = merge(best.body, hasInline('style') && css.length === 0 ? [] : css, js.length && !hasInline('script') ? js : []);
+    const code = merge(best.body, css, js);
     return { code: code.trimEnd(), complete: best.closed, found: true };
   }
   // No fence: a bare document in the answer.

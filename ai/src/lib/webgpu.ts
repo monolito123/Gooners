@@ -70,7 +70,10 @@ export async function detectGpu(): Promise<GpuInfo> {
       architecture: info?.architecture || undefined,
       description: info?.description || undefined,
       device: info?.device || undefined,
-      isFallbackAdapter: Boolean((info as GPUAdapterInfo & { isFallbackAdapter?: boolean } | undefined)?.isFallbackAdapter),
+      // SwiftShader is a CPU emulation of a GPU: slower than WebAssembly for model inference.
+      isFallbackAdapter:
+        Boolean((info as (GPUAdapterInfo & { isFallbackAdapter?: boolean }) | undefined)?.isFallbackAdapter) ||
+        /swiftshader/i.test(`${info?.architecture ?? ''} ${info?.description ?? ''}`),
       hasF16: adapter.features.has('shader-f16'),
       features,
       maxBufferSizeMB: adapter.limits.maxBufferSize / 2 ** 20,

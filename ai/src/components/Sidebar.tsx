@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   AppWindow,
   Clapperboard,
+  Download,
   HardDrive,
   House,
   Image as ImageIcon,
@@ -15,6 +16,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { type TKey, useT } from '../i18n/index.ts';
 import { type Asset, assetUrl, useAssets } from '../state/assets.ts';
 import { useChats } from '../state/chats.ts';
+import { usePlatform } from '../state/platform.ts';
 import { useProjects } from '../state/projects.ts';
 import { type Mode, useUi } from '../state/ui.ts';
 import { IconButton, cx } from './ui/primitives.tsx';
@@ -212,6 +214,8 @@ function ContextPanel({ mode }: { mode: Mode }) {
 export function Sidebar() {
   const t = useT();
   const { mode, setMode, sidebarOpen, setSidebar, openSettings } = useUi();
+  const installPrompt = usePlatform((s) => s.installPrompt);
+  const install = usePlatform((s) => s.install);
   const body = (
     <div className="flex h-full w-[272px] flex-col border-r border-ink-700 bg-ink-900/95 backdrop-blur">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
@@ -256,6 +260,11 @@ export function Sidebar() {
         <button type="button" onClick={() => openSettings('storage')} className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-300 hover:bg-ink-800 hover:text-white">
           <HardDrive className="size-4" /> {t('nav.storage')}
         </button>
+        {installPrompt && (
+          <button type="button" onClick={() => void install()} className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-neon-lime hover:bg-ink-800">
+            <Download className="size-4" /> {t('storage.install')}
+          </button>
+        )}
         <a href="../" className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-300 hover:bg-ink-800 hover:text-white">
           <House className="size-4" /> {t('nav.hub')}
         </a>

@@ -61,6 +61,7 @@ export function ModelPicker({ purpose, compact }: { purpose?: 'chat' | 'code'; c
                 )}
                 {m.tags.includes('code') && <Badge tone="lime">code</Badge>}
                 {m.tags.includes('reasoning') && <Badge tone="pink">think</Badge>}
+                {m.tags.includes('uncensored') && <Badge tone="red">{t('model.uncensored')}</Badge>}
                 {isCached && (
                   <Badge tone="lime">
                     <Check className="size-2.5" /> {t('model.cached')}

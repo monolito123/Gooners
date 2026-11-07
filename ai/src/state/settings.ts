@@ -1,7 +1,8 @@
 /** User settings, persisted in localStorage. */
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { DEFAULT_CHAT_MODEL, DEFAULT_CODE_MODEL, type TextModelInfo } from '../engines/models.ts';
+import type { CloudProviderId } from '../engines/cloud.ts';
+import { DEFAULT_CHAT_MODEL, DEFAULT_CODE_MODEL, type DiffusionModelId, type TextModelInfo } from '../engines/models.ts';
 
 export type Language = 'pt' | 'en';
 
@@ -58,6 +59,20 @@ export interface SettingsState {
   appMaxTokens: number;
   sandboxNetwork: boolean;
   gpuWarningDismissed: boolean;
+  /** Image model chosen in the Image/Video studios (default depends on the GPU). */
+  imageModelId?: DiffusionModelId;
+  imageCpu: boolean;
+  /** Cloud provider shown in Settings → Cloud. */
+  cloudProvider: CloudProviderId;
+  /** API keys per provider; kept in this browser and only sent to that provider. */
+  cloudKeys: Partial<Record<CloudProviderId, string>>;
+  /** Base URL of the custom OpenAI-compatible server. */
+  cloudBaseUrl: string;
+  /** Cloud models the user picked (so saved ids keep resolving). */
+  cloudModels: TextModelInfo[];
+  /** Image engine in the Image Studio. */
+  imageEngine: 'local' | 'cloud' | 'abstract';
+  cloudImageModel?: string;
   set: (patch: Partial<Omit<SettingsState, 'set' | 'reset'>>) => void;
   reset: () => void;
 }
@@ -79,14 +94,29 @@ export const DEFAULT_SETTINGS = {
   appMaxTokens: 2500,
   sandboxNetwork: false,
   gpuWarningDismissed: false,
+  imageModelId: undefined as DiffusionModelId | undefined,
+  imageCpu: false,
+  cloudProvider: 'openrouter' as CloudProviderId,
+  cloudKeys: {} as Partial<Record<CloudProviderId, string>>,
+  cloudBaseUrl: 'http://localhost:11434/v1',
+  cloudModels: [] as TextModelInfo[],
+  imageEngine: 'local' as 'local' | 'cloud' | 'abstract',
+  cloudImageModel: undefined as string | undefined,
 };
+
+/** Every non-catalog model the user added (Hugging Face, custom MLC, cloud). */
+export function userModels(state: Pick<SettingsState, 'customModels' | 'cloudModels'>): TextModelInfo[] {
+  return [...state.customModels, ...state.cloudModels];
+}
 
 export const useSettings = create<SettingsState>()(
   persist(
     (set) => ({
       ...DEFAULT_SETTINGS,
       set: (patch) => set(patch),
-      reset: () => set({ ...DEFAULT_SETTINGS, language: browserLanguage() }),
+      // Resetting preferences keeps API keys and added models.
+      reset: () =>
+        set((s) => ({ ...DEFAULT_SETTINGS, language: browserLanguage(), cloudKeys: s.cloudKeys, cloudModels: s.cloudModels, customModels: s.customModels })),
     }),
     { name: 'gooners-ai:settings', version: 1, storage: createJSONStorage(() => localStorage) },
   ),

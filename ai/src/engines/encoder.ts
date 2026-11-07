@@ -73,7 +73,11 @@ export async function encodeFrames(set: FrameSet, options: EncodeOptions): Promi
     onProgress?.(0, 'load');
     ffmpeg = await loadFFmpeg();
   } catch (error) {
-    if (format === 'webm' && typeof MediaRecorder !== 'undefined') return recordWebM(set, onProgress, signal);
+    // Without ffmpeg (old browser, blocked worker, out of memory) still produce a video.
+    if (typeof MediaRecorder !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function') {
+      console.warn('ffmpeg.wasm unavailable, recording WebM instead', error);
+      return recordWebM(set, onProgress, signal);
+    }
     throw new Error(`ffmpeg.wasm could not start (${error instanceof Error ? error.message : String(error)})`);
   }
   const abort = () => {
@@ -93,7 +97,7 @@ export async function encodeFrames(set: FrameSet, options: EncodeOptions): Promi
     ffmpeg.on('progress', onFFmpegProgress);
     const out = `out.${format}`;
     const code = await ffmpeg.exec(args(format, set.fps, set.width));
-    if (code !== 0) throw new Error(`ffmpeg exited with code ${code}`);
+    if (code !== 0) throw new Error(`ffmpeg could not encode ${format.toUpperCase()} (exit code ${code})`);
     const data = await ffmpeg.readFile(out);
     await ffmpeg.deleteFile(out).catch(() => undefined);
     const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;

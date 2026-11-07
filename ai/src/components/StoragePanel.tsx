@@ -1,8 +1,9 @@
-import { Box, CloudOff, Database, HardDrive, Image as ImageIcon, Lock, MessageSquare, RefreshCw, Trash2, Zap } from 'lucide-react';
+import { Box, CloudOff, Database, Download, FolderDown, FolderUp, HardDrive, Image as ImageIcon, Lock, MessageSquare, RefreshCw, Trash2, Zap } from 'lucide-react';
+import { type BackupProgress, backupModels, canBackup, restoreModels } from '../lib/backup.ts';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { imageEngine } from '../engines/ImageEngine.ts';
 import { cpuModelFiles, deleteAllWebLLMData, deleteTextModel } from '../engines/modelCache.ts';
-import { SD_TURBO_GROUP, TEXT_MODELS } from '../engines/models.ts';
+import { DIFFUSION_MODELS, TEXT_MODELS } from '../engines/models.ts';
 import { textEngine } from '../engines/TextEngine.ts';
 import { invalidateModelCache, useCachedModels } from '../hooks.ts';
 import { useT } from '../i18n/index.ts';
@@ -15,7 +16,7 @@ import { usePlatform } from '../state/platform.ts';
 import { useProjects } from '../state/projects.ts';
 import { useSettings } from '../state/settings.ts';
 import { useUi } from '../state/ui.ts';
-import { Badge, Button, IconButton, ProgressBar } from './ui/primitives.tsx';
+import { Badge, Button, IconButton, ProgressBar, Toggle } from './ui/primitives.tsx';
 
 interface Row {
   id: string;
@@ -44,7 +45,10 @@ async function cacheStorageBytes(): Promise<number> {
 /** Inspect and clear everything Gooners AI keeps in this browser. */
 export function StoragePanel() {
   const t = useT();
-  const { storage, offline, refreshStorage } = usePlatform();
+  const { storage, offline, refreshStorage, persist, installPrompt, install } = usePlatform();
+  const [withAssets, setWithAssets] = useState(false);
+  const [backupBusy, setBackupBusy] = useState<'backup' | 'restore'>();
+  const [backupProgress, setBackupProgress] = useState<BackupProgress>();
   const cached = useCachedModels();
   const customModels = useSettings((s) => s.customModels);
   const assets = useAssets();
@@ -74,16 +78,18 @@ export function StoragePanel() {
         },
       });
     }
-    const sdBytes = await store.groupSize(SD_TURBO_GROUP);
-    if (sdBytes > 0) {
-      next.push({
-        id: 'sd-turbo',
-        icon: <ImageIcon className="size-4 text-neon-pink" />,
-        label: 'SD-Turbo',
-        detail: t('storage.imageModel'),
-        bytes: sdBytes,
-        remove: () => imageEngine.remove(),
-      });
+    for (const m of DIFFUSION_MODELS) {
+      const bytes = await store.groupSize(m.id);
+      if (bytes > 0) {
+        next.push({
+          id: `image:${m.id}`,
+          icon: <ImageIcon className="size-4 text-neon-pink" />,
+          label: m.label,
+          detail: t('storage.imageModel'),
+          bytes,
+          remove: () => imageEngine.remove(m.id),
+        });
+      }
     }
     const assetBytes = await store.groupSize(ASSET_GROUP);
     if (assetBytes > 0) {
@@ -149,7 +155,7 @@ export function StoragePanel() {
     setBusy('all');
     try {
       await textEngine.unload();
-      await imageEngine.remove();
+      for (const m of DIFFUSION_MODELS) await imageEngine.remove(m.id);
       await deleteAllWebLLMData();
       await store.deleteGroup('transformers');
       await useAssets.getState().clear();
@@ -159,6 +165,36 @@ export function StoragePanel() {
       toast(t('storage.cleared'), 'success');
     } finally {
       setBusy(undefined);
+      void collect();
+    }
+  };
+
+  const runBackup = async () => {
+    setBackupBusy('backup');
+    try {
+      const manifest = await backupModels({ includeAssets: withAssets, onProgress: setBackupProgress });
+      toast(t('backup.saved', { n: manifest.entries.length }), 'success');
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) toast(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      setBackupBusy(undefined);
+      setBackupProgress(undefined);
+    }
+  };
+
+  const runRestore = async () => {
+    setBackupBusy('restore');
+    try {
+      const n = await restoreModels({ onProgress: setBackupProgress });
+      invalidateModelCache();
+      await imageEngine.refresh();
+      await useAssets.getState().load();
+      toast(t('backup.restored', { n }), 'success');
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) toast(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      setBackupBusy(undefined);
+      setBackupProgress(undefined);
       void collect();
     }
   };
@@ -177,26 +213,70 @@ export function StoragePanel() {
           </span>
         </div>
         <ProgressBar value={usagePct} tone={usagePct && usagePct > 0.85 ? 'pink' : 'cyan'} />
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-neon-lime/30 bg-neon-lime/5 p-4" data-testid="permanent-storage">
+        <div className="flex flex-wrap items-center gap-2">
+          <Lock className="size-4 text-neon-lime" />
+          <p className="flex-1 text-sm font-semibold text-white">{t('storage.permanent')}</p>
           {storage.persisted ? (
             <Badge tone="lime">
               <Lock className="size-2.5" /> {t('storage.persisted')}
             </Badge>
           ) : (
+            <Badge tone="amber">{t('storage.notPersisted')}</Badge>
+          )}
+        </div>
+        <p className="text-xs text-ink-300">{storage.persisted ? t('storage.persistedHint') : t('storage.persistHint')}</p>
+        <div className="flex flex-wrap gap-2">
+          {!storage.persisted && (
             <Button
               size="sm"
-              variant="outline"
+              variant="primary"
               icon={<Lock className="size-3.5" />}
               onClick={async () => {
-                const ok = await navigator.storage?.persist?.();
+                const ok = await persist();
                 toast(ok ? t('storage.persistOk') : t('storage.persistNo'), ok ? 'success' : 'info');
-                void refreshStorage();
               }}
             >
               {t('storage.persist')}
             </Button>
           )}
-          <span className="text-xs text-ink-400">{t('storage.persistHint')}</span>
+          {installPrompt && (
+            <Button size="sm" variant="outline" icon={<Download className="size-3.5" />} onClick={() => void install()}>
+              {t('storage.install')}
+            </Button>
+          )}
+        </div>
+
+        <div className="border-t border-neon-lime/20 pt-3">
+          <p className="text-sm font-semibold text-white">{t('backup.title')}</p>
+          <p className="mt-1 text-xs text-ink-300">{t('backup.hint')}</p>
+          {canBackup() ? (
+            <>
+              <div className="mt-2 max-w-xs">
+                <Toggle checked={withAssets} onChange={setWithAssets} label={t('backup.includeGallery')} />
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" busy={backupBusy === 'backup'} disabled={Boolean(backupBusy)} icon={<FolderDown className="size-3.5" />} onClick={() => void runBackup()}>
+                  {t('backup.save')}
+                </Button>
+                <Button size="sm" variant="outline" busy={backupBusy === 'restore'} disabled={Boolean(backupBusy)} icon={<FolderUp className="size-3.5" />} onClick={() => void runRestore()}>
+                  {t('backup.restore')}
+                </Button>
+              </div>
+              {backupProgress && (
+                <div className="mt-2 space-y-1">
+                  <ProgressBar value={backupProgress.done / Math.max(1, backupProgress.total)} tone="lime" />
+                  <p className="truncate font-mono text-[10px] text-ink-400">
+                    {backupProgress.done}/{backupProgress.total} · {formatBytes(backupProgress.bytes)} · {backupProgress.item}
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-neon-amber">{t('backup.unsupported')}</p>
+          )}
         </div>
       </div>
 

@@ -73,6 +73,7 @@ export function TelemetryBar() {
         status={text.status}
       >
         <span className="max-w-[180px] truncate">{text.model ? text.model.label : t('telemetry.noModel')}</span>
+        {text.model?.backend === 'cloud' && <span className="rounded border border-neon-pink/40 px-1 text-[9px] text-neon-pink uppercase">{t('cloud.badge')}</span>}
         <span className={cx(statusTone, text.status === 'idle' && 'hidden')}>
           {text.status === 'loading' && progress
             ? `${Math.round(progress.fraction * 100)}%`
