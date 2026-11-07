@@ -14,8 +14,8 @@ self.addEventListener('fetch', (e) => {
   const req = e.request, url = new URL(req.url);
   if (req.method !== 'GET') return;
   const same = url.origin === location.origin;
-  // O Gooners AI (/ai/) e o SMA (/messenger/) têm service workers próprios.
-  if (same && /^\/(ai|messenger)\//.test(url.pathname.slice(new URL(self.registration.scope).pathname.length - 1))) return;
+  // O Gooners AI (/ai/) e o SMA (/messenger/) têm service workers próprios; o Fólio (/folio/) busca sempre da rede.
+  if (same && /^\/(ai|messenger|folio)\//.test(url.pathname.slice(new URL(self.registration.scope).pathname.length - 1))) return;
   if (!same && !CDN.test(req.url)) return; // APIs externas (CEP, CNPJ, moedas, notícias) sempre online
   const fresh = req.mode === 'navigate' || /\.(json|xml|html)$/.test(url.pathname) || url.pathname.endsWith('/');
   if (same && fresh) {

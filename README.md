@@ -6,6 +6,7 @@ Dois sites estáticos, indexáveis por buscadores e prontos para o GitHub Pages:
 |---|---|
 | `/` | **Gooners**: 62 ferramentas online gratuitas em 8 categorias (texto, geradores, validadores, consultas, conversores, calculadoras, desenvolvedor, tempo e produtividade). Cada ferramenta tem sua própria página. |
 | `/ai/` | **Gooners AI**: estúdio de IA que roda 100% no navegador (WebGPU/WebAssembly), sem servidor e offline depois do primeiro uso: chat com LLMs locais, inclusive modelos sem censura e qualquer modelo MLC ou ONNX adicionado pelo nome do repositório no Hugging Face (WebLLM, com Transformers.js na CPU como alternativa), modelos na nuvem opcionais (grátis pelo Pollinations ou com chave do OpenRouter, Hugging Face, Groq ou de um servidor local), modelos guardados de forma permanente com backup numa pasta, imagens de qualquer prompt (SDXS e SD-Turbo via ONNX Runtime Web, também na CPU), vídeos gerados por IA a partir do prompt (quadros-chave de difusão interpolados, codificados em MP4/WebM/GIF pelo ffmpeg.wasm) e um App Builder com prévia ao vivo em sandbox. Código em `ai/` (Vite + React + TypeScript); veja [`ai/README.md`](ai/README.md). |
+| `/folio/` | **Fólio Judiciário**: conversor de PDF para Markdown e ferramentas para analistas judiciários do TJDFT (prazos processuais com feriados do DF, número CNJ, dosimetria e prescrição, anonimização LGPD, ementa no padrão da Recomendação CNJ 154/2024, Word ↔ Markdown, juntar e dividir PDFs). Tudo roda no navegador. Código em `folio/` (HTML, CSS e JS sem build); veja [`folio/README.md`](folio/README.md). |
 | `/law/` | **Gooners Law**: assistência jurídica em proteção patrimonial e assessoria offshore, com simuladores, portal de notícias jurídicas em tempo real, glossário e artigos. |
 | `/messenger/` | **SMA**: arquitetura, especificação do protocolo e implementação de referência (TypeScript, testada) de um mensageiro sem servidores com criptografia pós-quântica (X-Wing/ML-KEM-768, ML-DSA-65). Não é publicado no site; veja [`messenger/README.md`](messenger/README.md). |
 | `/payments/` | **goonersPAY**: especificação de arquitetura e engenharia (REA/PRD) de uma plataforma de credenciamento Visa/Mastercard e BaaS, com ledger multi-nuvem, recibos e extratos assinados via Nostr, terminais Android (MPoC) e iOS, design system e uma verificação automática de tudo o que é calculável. Inclui uma implementação de referência em Go (`payments/platform`: switch ISO 8583, ledger, Pix via API Pix do BCB, recibos Nostr, API, chargebacks, conciliação de cartões e Pix, MED, backoffice com trilha de auditoria, métricas, simuladores), um guia de integração com subcredenciadora, Visa, Mastercard e bancos para Pix, o runbook de operação e a avaliação de segurança (`payments/integration`), e os apps do lojista para Android (Kotlin, Compose) e iOS (Swift, SwiftUI), testados contra um sandbox real (`payments/mobile`). Não é publicado no site; veja [`payments/README.md`](payments/README.md). |
@@ -14,7 +15,7 @@ Dois sites estáticos, indexáveis por buscadores e prontos para o GitHub Pages:
 
 ```bash
 python3 -m http.server 8000
-# http://localhost:8000  e  http://localhost:8000/law/
+# http://localhost:8000, http://localhost:8000/law/ e http://localhost:8000/folio/
 ```
 
 ## Estrutura

@@ -57,7 +57,7 @@ jobs:
           TOKEN: ${{ github.token }}
         run: |
           mkdir _site
-          cp -r index.html 404.html assets categorias contato ferramentas favoritos law manifest.webmanifest robots.txt sitemap.xml sw.js .nojekyll _site/
+          cp -r index.html 404.html assets categorias contato ferramentas favoritos folio law manifest.webmanifest robots.txt sitemap.xml sw.js .nojekyll _site/
           if [ -f messenger/app/dist/index.html ]; then mkdir -p _site/messenger && cp -r messenger/app/dist/. _site/messenger/; fi
           if [ -f ai/dist/index.html ]; then mkdir -p _site/ai && cp -r ai/dist/. _site/ai/; fi
           cd _site
