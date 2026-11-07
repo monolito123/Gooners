@@ -22,6 +22,9 @@ import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
 import { Marked, type Tokens } from 'marked';
+import { splitReasoning } from './reasoning.ts';
+
+export { splitReasoning };
 
 const languages = { bash, c, cpp, csharp, css, go, java, javascript, json, kotlin, markdown, php, python, ruby, rust, sql, swift, typescript, xml, yaml };
 for (const [name, lang] of Object.entries(languages)) hljs.registerLanguage(name, lang);
@@ -90,13 +93,6 @@ function configurePurify(): void {
 }
 
 const cache = new Map<string, Marked>();
-
-/** Splits `<think>…</think>` reasoning (Qwen3-style) from the visible answer. */
-export function splitReasoning(content: string): { reasoning: string | null; answer: string; thinking: boolean } {
-  const match = content.match(/^\s*<think>([\s\S]*?)(<\/think>|$)/);
-  if (!match) return { reasoning: null, answer: content, thinking: false };
-  return { reasoning: match[1].trim(), answer: content.slice(match[0].length), thinking: match[2] !== '</think>' };
-}
 
 export function renderMarkdown(content: string, labels: MarkdownLabels): string {
   configurePurify();

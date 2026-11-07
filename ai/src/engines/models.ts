@@ -3,8 +3,8 @@
  * the CPU through Transformers.js/ONNX Runtime WASM when WebGPU is unavailable. Sizes are the
  * download sizes of the published weights; VRAM figures come from WebLLM's model records.
  */
-export type TextBackend = 'webgpu' | 'wasm';
-export type ModelTag = 'chat' | 'code' | 'reasoning' | 'tiny' | 'multilingual' | 'uncensored';
+export type TextBackend = 'webgpu' | 'wasm' | 'cloud';
+export type ModelTag = 'chat' | 'code' | 'reasoning' | 'tiny' | 'multilingual' | 'uncensored' | 'cloud';
 export type Localized = { en: string; pt: string };
 
 export interface TextModelInfo {
@@ -21,9 +21,11 @@ export interface TextModelInfo {
   /** Needs the WebGPU shader-f16 feature; `f32Variant` is used on adapters without it. */
   requiresF16: boolean;
   f32Variant?: string;
-  /** CPU models: Hugging Face repo and ONNX dtype. */
+  /** CPU models: Hugging Face repo, ONNX dtype, pinned commit and external-data chunk count. */
   repo?: string;
   dtype?: 'q4' | 'q8' | 'int8' | 'fp16';
+  revision?: string;
+  externalData?: number;
   /** User-supplied MLC model (e.g. a community fine-tune). */
   custom?: { modelUrl: string; modelLib: string };
   /**
@@ -31,6 +33,8 @@ export interface TextModelInfo {
    * that model's compiled library (`libFrom`), with weights from `modelUrl`.
    */
   mlc?: { modelUrl: string; libFrom: string };
+  /** Cloud model (OpenAI-compatible API); prompts leave the device. */
+  cloud?: { provider: 'openrouter' | 'pollinations' | 'huggingface' | 'groq' | 'custom'; model: string };
   blurb: Localized;
 }
 
@@ -262,6 +266,11 @@ export const DEFAULT_CODE_MODEL = 'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC';
 export const DEFAULT_CPU_MODEL = 'wasm:HuggingFaceTB/SmolLM2-360M-Instruct';
 export const DEFAULT_CPU_CODE_MODEL = 'wasm:onnx-community/Qwen2.5-Coder-0.5B-Instruct';
 
+/** File name of a Transformers.js ONNX dtype (q8 is published as model_quantized.onnx). */
+export function onnxFileFor(dtype: TextModelInfo['dtype'] = 'q4'): string {
+  return `onnx/model${{ q4: '_q4', q8: '_quantized', int8: '_int8', fp16: '_fp16' }[dtype]}.onnx`;
+}
+
 export function findTextModel(id: string, custom: TextModelInfo[] = []): TextModelInfo | undefined {
   return TEXT_MODELS.find((m) => m.id === id || m.f32Variant === id) ?? custom.find((m) => m.id === id);
 }
@@ -273,7 +282,7 @@ export function resolveWebLLMId(model: TextModelInfo, hasF16: boolean): string {
 }
 
 export function isUsable(model: TextModelInfo, gpu: { supported: boolean; hasF16: boolean }): boolean {
-  if (model.backend === 'wasm') return true;
+  if (model.backend === 'wasm' || model.backend === 'cloud') return true;
   if (!gpu.supported) return false;
   return !(model.requiresF16 && !gpu.hasF16 && !model.f32Variant);
 }

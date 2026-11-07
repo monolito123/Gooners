@@ -138,6 +138,17 @@ export async function readBytes(key: string, onProgress?: (p: TransferProgress) 
   return out;
 }
 
+/** Restores a file exported by the backup (keeps its source URL so it is not downloaded again). */
+export async function importFile(meta: Pick<StoredFile, 'key' | 'url' | 'group' | 'contentType' | 'meta'>, blob: Blob): Promise<StoredFile> {
+  await deleteFile(meta.key);
+  let file: StoredFile = { ...meta, size: blob.size, received: 0, chunkCount: 0, complete: false, updatedAt: Date.now() };
+  await saveMeta(file);
+  for (let start = 0; start < blob.size; start += CHUNK_BYTES) file = await putChunk(file, blob.slice(start, start + CHUNK_BYTES));
+  file = { ...file, complete: true };
+  await saveMeta(file);
+  return file;
+}
+
 /** Stores an in-memory Blob (generated images, videos) as a complete file. */
 export async function putBlob(key: string, group: string, blob: Blob, meta?: Record<string, unknown>): Promise<StoredFile> {
   await deleteFile(key);

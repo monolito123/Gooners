@@ -13,11 +13,12 @@ import { isTextModelCached } from './engines/modelCache.ts';
 import { defaultDiffusionModel, diffusionDevice, findDiffusionModel, findTextModel, isUsable } from './engines/models.ts';
 import { textEngine } from './engines/TextEngine.ts';
 import { loadTextModel } from './hooks.ts';
-import { type TKey, useT } from './i18n/index.ts';
+import { type TKey, translate, useT } from './i18n/index.ts';
+import { completeOpenRouterConnect } from './engines/cloud.ts';
 import { registerServiceWorker } from './lib/sw.ts';
 import { useAssets } from './state/assets.ts';
 import { usePlatform } from './state/platform.ts';
-import { useSettings } from './state/settings.ts';
+import { useSettings, userModels } from './state/settings.ts';
 import { type Mode, useUi } from './state/ui.ts';
 
 const ChatArea = lazy(() => import('./components/chat/ChatArea.tsx'));
@@ -27,8 +28,29 @@ const AppBuilder = lazy(() => import('./components/builder/AppBuilder.tsx'));
 
 const TITLES: Record<Mode, TKey> = { chat: 'mode.chat', image: 'mode.image', video: 'mode.video', builder: 'mode.builder' };
 
+// Cloud providers read their key / base URL from the settings at request time.
+textEngine.cloudResolver = (provider) => {
+  const s = useSettings.getState();
+  return { provider, key: s.cloudKeys[provider], baseUrl: s.cloudBaseUrl };
+};
+
+/** Back from "Connect with OpenRouter": exchange the code for a key and keep it. */
+async function finishOpenRouterConnect(): Promise<void> {
+  try {
+    const key = await completeOpenRouterConnect();
+    if (!key) return;
+    const s = useSettings.getState();
+    s.set({ cloudKeys: { ...s.cloudKeys, openrouter: key }, cloudProvider: 'openrouter' });
+    useUi.getState().openSettings('cloud');
+    useUi.getState().toast(translate(s.language, 'cloud.connected'), 'success');
+  } catch (error) {
+    useUi.getState().toast(error instanceof Error ? error.message : String(error), 'error');
+  }
+}
+
 /** Detects the device, registers the offline worker and reloads the last model if it is cached. */
 async function bootstrap(): Promise<void> {
+  void finishOpenRouterConnect();
   const platform = usePlatform.getState();
   const [info] = await Promise.all([platform.detect(), platform.refreshStorage(), useAssets.getState().load()]);
   void registerServiceWorker();
@@ -39,7 +61,7 @@ async function bootstrap(): Promise<void> {
   imageEngine.setPreferCpu(settings.imageCpu);
   await imageEngine.select(saved && diffusionDevice(saved, caps) ? saved.id : defaultDiffusionModel(caps));
   if (!settings.autoLoad || !settings.lastModelId) return;
-  const model = findTextModel(settings.lastModelId, settings.customModels);
+  const model = findTextModel(settings.lastModelId, userModels(settings));
   if (!model || !isUsable(model, info.gpu)) return;
   if (textEngine.getState().status !== 'idle') return;
   if (await isTextModelCached(model, info.gpu.hasF16, settings.customModels)) void loadTextModel(model, { showModal: false });

@@ -103,7 +103,7 @@ export class ImageEngine extends Observable<ImageEngineState> {
     const speed = new Ema(0.2);
     let last: { t: number; loaded: number } | undefined;
     this.setState({ status: 'downloading', error: undefined });
-    void navigator.storage?.persist?.().catch(() => false);
+    void usePlatform.getState().persist();
     try {
       await this.worker().call('download', { modelId: model.id }, {
         signal: this.task.signal,

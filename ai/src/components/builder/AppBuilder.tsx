@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ensureDocument, extractCode } from '../../appBuilder/extractCode.ts';
+import { splitReasoning } from '../../lib/reasoning.ts';
 import { APP_SYSTEM_PROMPT, type AppAsset, buildCreatePrompt, buildEditPrompt, editFits } from '../../appBuilder/prompts.ts';
 import { textEngine } from '../../engines/TextEngine.ts';
 import { ensureTextModel, useTextEngine } from '../../hooks.ts';
@@ -186,7 +187,7 @@ export default function AppBuilder() {
             const now = performance.now();
             if (now - lastExtract > 200) {
               lastExtract = now;
-              const code = extractCode(buffer);
+              const code = extractCode(splitReasoning(buffer).answer);
               if (code.found) {
                 setStreamCode(code.code);
                 if (now - lastPreview > 1500) {
@@ -199,7 +200,8 @@ export default function AppBuilder() {
         },
       );
       setLastStats(stats);
-      const result = extractCode(answer);
+      // Reasoning models may sketch code while thinking: only the final answer counts.
+      const result = extractCode(splitReasoning(answer).answer);
       if (!result.found) {
         addLog({ level: 'warn', text: t('builder.noCode'), time: Date.now() });
         addLog({ level: 'info', text: answer.slice(0, 2000), time: Date.now() });

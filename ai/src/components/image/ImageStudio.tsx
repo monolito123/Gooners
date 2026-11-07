@@ -1,5 +1,6 @@
-import { Dices, Image as ImageIcon, ImagePlus, Lock, RotateCcw, Sparkles, Square, Unlock, Wand2 } from 'lucide-react';
+import { Dices, Image as ImageIcon, ImagePlus, Lock, RotateCcw, ShieldAlert, Sparkles, Square, Unlock, Wand2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { generateCloudImage, listCloudImageModels } from '../../engines/cloud.ts';
 import { imageEngine } from '../../engines/ImageEngine.ts';
 import { findDiffusionModel } from '../../engines/models.ts';
 import { SCENE_MODES, type SceneMode, type SceneSpec, interpretPrompt } from '../../engines/procedural/artEngine.ts';
@@ -18,7 +19,32 @@ import { useUi } from '../../state/ui.ts';
 import { AssetCard, AssetChip, AssetPicker, DiffusionModelPanel } from '../media.tsx';
 import { Button, EmptyState, Field, IconButton, Panel, ProgressBar, Segmented, Slider, Toggle, inputClass } from '../ui/primitives.tsx';
 
-type Engine = 'diffusion' | 'procedural';
+type Engine = 'diffusion' | 'cloud' | 'procedural';
+const ENGINE_SETTING = { diffusion: 'local', cloud: 'cloud', procedural: 'abstract' } as const;
+const SETTING_ENGINE = { local: 'diffusion', cloud: 'cloud', abstract: 'procedural' } as const;
+
+/** Image generation on Pollinations' servers (free, no key): model choice and privacy note. */
+function CloudImagePanel({ models, model, onModel }: { models: string[]; model?: string; onModel: (m: string) => void }) {
+  const t = useT();
+  return (
+    <Panel className="space-y-3 p-4">
+      <div className="flex gap-2 text-xs text-ink-300">
+        <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-neon-amber" />
+        <p>{t('cloudImage.about')}</p>
+      </div>
+      <Field label={t('cloudImage.model')}>
+        <select className={inputClass} value={model ?? models[0] ?? ''} onChange={(e) => onModel(e.target.value)}>
+          {models.length === 0 && <option value="">…</option>}
+          {models.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </Field>
+    </Panel>
+  );
+}
 
 export function SceneEditor({ spec, onChange, onReset, custom }: { spec: SceneSpec; onChange: (spec: SceneSpec) => void; onReset: () => void; custom: boolean }) {
   const t = useT();
@@ -76,7 +102,21 @@ export default function ImageStudio() {
   const toast = useUi((s) => s.toast);
   const sdModel = findDiffusionModel(sd.modelId);
   const sdDevice = imageEngine.device(sdModel);
-  const [engine, setEngine] = useState<Engine>('diffusion');
+  const [engine, setEngineState] = useState<Engine>(() => SETTING_ENGINE[useSettings.getState().imageEngine] ?? 'diffusion');
+  const setEngine = (value: Engine) => {
+    setEngineState(value);
+    useSettings.getState().set({ imageEngine: ENGINE_SETTING[value] });
+  };
+  const cloudImageModel = useSettings((s) => s.cloudImageModel);
+  const [cloudModels, setCloudModels] = useState<string[]>([]);
+  useEffect(() => {
+    if (engine !== 'cloud' || cloudModels.length) return;
+    const controller = new AbortController();
+    listCloudImageModels(controller.signal)
+      .then(setCloudModels)
+      .catch(() => setCloudModels(['flux']));
+    return () => controller.abort();
+  }, [engine, cloudModels.length]);
   const [prompt, setPrompt] = useState('');
   const [seed, setSeed] = useState(randomSeed);
   const [lockSeed, setLockSeed] = useState(false);
@@ -133,6 +173,16 @@ export default function ImageStudio() {
           },
           controller.signal,
         );
+      } else if (engine === 'cloud') {
+        const model = cloudImageModel && cloudModels.includes(cloudImageModel) ? cloudImageModel : cloudModels[0];
+        for (let i = 0; i < count; i++) {
+          if (controller.signal.aborted) break;
+          const t0 = performance.now();
+          const blob = await generateCloudImage(prompt, { width: size, height: size, seed: seed + i, model }, controller.signal);
+          await save(blob, `Pollinations${model ? ` ${model}` : ''}`, size, size);
+          setProgress({ done: i + 1, total: count });
+          setLastMs(performance.now() - t0);
+        }
       } else {
         let base = spec;
         if (useLLM && !override) base = await interpretWithLLM(prompt, spec);
@@ -165,7 +215,7 @@ export default function ImageStudio() {
   };
 
   const sdBusy = sd.status === 'downloading' || sd.status === 'loading' || sd.status === 'generating';
-  const canGenerate = Boolean(prompt.trim()) && !busy && (engine === 'procedural' || (Boolean(sdDevice) && !sdBusy));
+  const canGenerate = Boolean(prompt.trim()) && !busy && (engine !== 'diffusion' || (Boolean(sdDevice) && !sdBusy));
   const needsDownload = engine === 'diffusion' && (sd.status === 'absent' || sd.status === 'partial');
 
   return (
@@ -175,12 +225,20 @@ export default function ImageStudio() {
           className="w-full"
           value={engine}
           onChange={setEngine}
+          size="sm"
           options={[
             { value: 'diffusion', label: t('image.engine.diffusion') },
+            { value: 'cloud', label: t('image.engine.cloud') },
             { value: 'procedural', label: t('image.engine.procedural') },
           ]}
         />
-        {engine === 'diffusion' ? <DiffusionModelPanel disabled={busy} /> : <p className="text-xs text-ink-400">{t('image.procedural.about')}</p>}
+        {engine === 'diffusion' ? (
+          <DiffusionModelPanel disabled={busy} />
+        ) : engine === 'cloud' ? (
+          <CloudImagePanel models={cloudModels} model={cloudImageModel} onModel={(m) => useSettings.getState().set({ cloudImageModel: m })} />
+        ) : (
+          <p className="text-xs text-ink-400">{t('image.procedural.about')}</p>
+        )}
 
         <Field label={t('image.prompt')}>
           <textarea
@@ -190,7 +248,7 @@ export default function ImageStudio() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void generate();
             }}
-            placeholder={engine === 'diffusion' ? t('image.prompt.placeholder') : t('image.prompt.placeholderProc')}
+            placeholder={engine === 'procedural' ? t('image.prompt.placeholderProc') : t('image.prompt.placeholder')}
           />
         </Field>
 
@@ -240,13 +298,17 @@ export default function ImageStudio() {
                 ]}
               />
             </Field>
-            <SceneEditor spec={spec} custom={override !== null} onChange={setOverride} onReset={() => setOverride(null)} />
-            <Toggle
-              checked={useLLM && text.status === 'ready'}
-              onChange={setUseLLM}
-              label={t('proc.llm')}
-              hint={canUseLLM() ? t('proc.llmHint') : t('proc.llmNoModel')}
-            />
+            {engine === 'procedural' && (
+              <>
+                <SceneEditor spec={spec} custom={override !== null} onChange={setOverride} onReset={() => setOverride(null)} />
+                <Toggle
+                  checked={useLLM && text.status === 'ready'}
+                  onChange={setUseLLM}
+                  label={t('proc.llm')}
+                  hint={canUseLLM() ? t('proc.llmHint') : t('proc.llmNoModel')}
+                />
+              </>
+            )}
           </>
         )}
 
@@ -289,6 +351,12 @@ export default function ImageStudio() {
               <AssetCard key={a.id} asset={a} highlight={latest.includes(a.id)} onUseAsInit={useAsInit} />
             ))}
           </div>
+        )}
+        {busy && engine === 'cloud' && (
+          <Panel className="mt-4 flex items-center gap-3 p-3 text-xs text-ink-300">
+            <Wand2 className="size-4 animate-pulse text-neon-pink" />
+            {t('cloudImage.working', { done: progress?.done ?? 0, total: progress?.total ?? count })}
+          </Panel>
         )}
         {busy && engine === 'diffusion' && (
           <Panel className="mt-4 flex items-center gap-3 p-3 text-xs text-ink-300">
