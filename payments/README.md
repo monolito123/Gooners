@@ -38,6 +38,7 @@ Seven premises of the original brief would fail regulation, certification or phy
 | [docs/08-roadmap-risks.md](docs/08-roadmap-risks.md) | Phases, certification path, risk register, questions for counsel |
 | [docs/09-digital-assets-international-b3.md](docs/09-digital-assets-international-b3.md) | **Module 9**: crypto payments and holdings (Binance, Kraken, Coinbase), accounts abroad (USD, EUR, GBP through Wise), IOF, B3 shares through a broker, and the rules (BCB 519/520/521, DeCripto, CVM 30): sanctions screening of withdrawals and of who sends each deposit, the travel rule in IVMS101.2023, compliance cases |
 | [docs/10-integration-guide.md](docs/10-integration-guide.md) | **Integrating with the API**: who calls what, a sandbox quickstart, the first Pix payment, verifying webhooks (tested JavaScript and Python), the rules (idempotency, versions, rate limits, errors), going live and the providers checklist |
+| [integration/integration-points.md](integration/integration-points.md) | **Where the system meets the outside world**: every server, API, SDK and file exchange, the exact code seam for each, what is built and what remains |
 | [api/openapi.yaml](api/openapi.yaml) | OpenAPI 3.1 contract; every response the end-to-end tests receive is checked against it |
 | [api/goonerspay.postman_collection.json](api/goonerspay.postman_collection.json) | Postman collection generated from the contract (`npm run postman` in [tools/](tools)) |
 | [nostr/schemas/](nostr/schemas) | JSON Schema for each custom event kind |

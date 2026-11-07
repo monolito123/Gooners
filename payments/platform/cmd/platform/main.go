@@ -358,7 +358,10 @@ func serve(ctx context.Context) error {
 				// Withdrawals are refused (fail closed) until a refresh succeeds.
 				log.Error("sanctions lists not loaded", "err", err)
 			} else {
-				log.Info("sanctions lists loaded", "addresses", l.Size())
+				log.Info("sanctions lists loaded", "addresses", l.Size(), "names", l.HasNames())
+				if !l.HasNames() && c.Env == config.Production {
+					log.Error("no sanctions list holds names: travel-rule names go unscreened; add OFAC's SDN.CSV to SANCTIONS_LISTS")
+				}
 			}
 			go l.Refresh(ctx, 6*time.Hour, log.Error)
 			set = append(set, l)

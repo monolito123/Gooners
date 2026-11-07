@@ -99,7 +99,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `PAYOUT_BASE_URL` | Partner bank transfer API (generic adapter) |
 | `VAULT_KEK_HEX`, `VAULT_FINGERPRINT_KEY_HEX` | Software KEK and fingerprint key: **sandbox and certification only** |
 | `CARDDATA_DEV_KEY_HEX` | Development terminal format: **sandbox and certification only** |
-| `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page |
+| `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page; production needs relays and the hosted claim page, not the `goonerspay.example` placeholder ([integration points §6](../integration/integration-points.md#6-receipts-and-transparency)) |
 | `TRANSPARENCY_SECRET_HEX`, `TRANSPARENCY_PAD_TO` | Signs the daily public roots (enclave in production); log padding (default 4096 leaves). With the receipts key, turns on daily statements |
 | `APPATTEST_ROOT_CA`, `APPATTEST_APP_ID`, `APPATTEST_ENVIRONMENT` | Apple App Attestation Root CA (PEM file), `TEAMID.bundle`, `production` or development |
 | `ANDROID_ATTESTATION_STATUS` | Google's attestation certificate status list (default its URL; a file or a mirror also work), refreshed hourly; attestations are refused while it is missing or older than three days. `off` skips it, outside production only |
@@ -115,7 +115,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `EXCHANGES`, `BINANCE_*`, `KRAKEN_*`, `COINBASE_*`, `CRYPTO_AUTHORIZATION`, `CRYPTO_FEE_BPS`, `CRYPTO_SPREAD_BPS` | Crypto venues and pricing ([09 §7](../docs/09-digital-assets-international-b3.md#7-configuration)) |
 | `FX_PROVIDER`, `WISE_*`, `FX_AUTHORIZATION`, `FX_FEE_BPS`, `FX_SPREAD_BPS`, `IOF_FX_OUT_BPS`, `IOF_FX_IN_BPS` | Accounts abroad, câmbio pricing and IOF |
 | `BROKER_URL`, `BROKER_TOKEN`, `BROKER_NAME`, `BRAPI_TOKEN` | The B3 broker and display prices |
-| `SANCTIONS_LISTS`, `SCREENING_URL`, `SCREENING_TOKEN` | Sanctions screening of withdrawal addresses ([09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)); the sandbox refuses its own test addresses without them |
+| `SANCTIONS_LISTS`, `SCREENING_URL`, `SCREENING_TOKEN` | Sanctions screening of withdrawal addresses, deposit senders and travel-rule names ([09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)); a provider's contract screens addresses only, so production with crypto needs `SANCTIONS_LISTS` with OFAC's `SDN.CSV`; the sandbox refuses its own test addresses without them |
 | `REPORTING_NAME`, `REPORTING_URL` | The platform's name and URL in the DeCripto, beside `PLATFORM_DOCUMENT` |
 | `BITCOIN_ESPLORA_URL`, `ETHEREUM_RPC_URL`, `POLYGON_RPC_URL`, `TRON_API_URL`, `TRON_API_KEY`, `SENDER_LOOKUP_URL`, `SENDER_LOOKUP_TOKEN` | Where the senders of deposits are read ([09 §6.5](../docs/09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit)); comma-separated URLs are independent sources asked together; the sandbox's exchange answers for its own deposits |
 | `TRAVEL_RULE_URL`, `TRAVEL_RULE_TOKEN`, `TRAVEL_RULE_INBOUND_SECRET`, `TRAVEL_RULE_THRESHOLD_BRL`, `TRAVEL_RULE_REVIEW_BRL`, `TRAVEL_RULE_RETENTION_YEARS`, `PLATFORM_LEI` | The travel-rule network and its values ([09 §6.6](../docs/09-digital-assets-international-b3.md#66-the-travel-rule)); the sandbox uses an in-memory network |

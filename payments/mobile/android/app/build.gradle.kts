@@ -13,8 +13,6 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
-        // The sandbox server an emulator reaches on the host machine.
-        buildConfigField("String", "DEFAULT_API_URL", "\"http://10.0.2.2:8080\"")
         // Certificate pinning of the platform's API host: the SPKI hashes ("sha256/…") of its
         // current key and a backup key, set for release builds with
         // -Pgoonerspay.pins=sha256/AAA…,sha256/BBB… (payments/mobile/README.md).
@@ -26,7 +24,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // The sandbox server an emulator reaches on the host machine.
+            buildConfigField("String", "DEFAULT_API_URL", "\"http://10.0.2.2:8080\"")
+        }
         release {
+            // Release builds pair only over https (MainViewModel.pair): the production API, or
+            // -Pgoonerspay.apiUrl=https://… for a certification environment. Matches iOS Release.
+            buildConfigField("String", "DEFAULT_API_URL", "\"${providers.gradleProperty("goonerspay.apiUrl").getOrElse("https://api.goonerspay.com.br")}\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

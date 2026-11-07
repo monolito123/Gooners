@@ -36,6 +36,24 @@ func (c *Config) Integrations() []Integration {
 	out := []Integration{}
 	add := func(i Integration) { out = append(out, i) }
 
+	// The platform's own front door: phones sign the exact URL in every login and DPoP proof.
+	{
+		i := Integration{Name: "Public API (HTTPS)", For: "partners, the console and the merchant apps", Settings: []string{"PUBLIC_API_URL", "HTTP_TLS_CERT/KEY (or a TLS proxy with TRUST_PROXY)"}, Production: true}
+		if strings.HasPrefix(c.PublicURL, "https://") {
+			i.State, i.Detail = Live, c.PublicURL
+		} else {
+			i.State, i.Detail = Off, "PUBLIC_API_URL is not an https address (the sandbox's plain HTTP)"
+		}
+		add(i)
+		t := Integration{Name: "Terminal listener (mTLS)", For: "dedicated terminals that present a certificate (phones use DPoP sessions)", Settings: []string{"TERMINAL_ADDR", "TERMINAL_TLS_CERT/KEY/CA"}}
+		if c.TerminalAddr != "" && c.TerminalTLS != nil {
+			t.State, t.Detail = Live, c.TerminalAddr
+		} else {
+			t.State, t.Detail = Off, "no TERMINAL_ADDR: terminals with certificates cannot connect"
+		}
+		add(t)
+	}
+
 	// Card schemes: the authorization switch's routes to the acquirer or the schemes.
 	{
 		i := Integration{Name: "Scheme host (ISO 8583)", For: "card authorizations", Settings: []string{"ROUTES_FILE"}, Production: true}
@@ -67,10 +85,15 @@ func (c *Config) Integrations() []Integration {
 			i.State, i.Detail = Live, c.PixBaseURL
 		}
 		add(i)
-		p := Integration{Name: "Pix payouts", For: "payouts to Pix keys", Settings: []string{"PAYOUT_BASE_URL"}, Production: true}
-		if c.PayoutBaseURL == "" {
+		// The payout sender reuses the API Pix connection's OAuth token and mutual TLS
+		// (cmd/platform pixClients): without PIX_BASE_URL it is never built.
+		p := Integration{Name: "Pix payouts", For: "payouts to Pix keys", Settings: []string{"PAYOUT_BASE_URL", "the API Pix credentials above"}, Production: true}
+		switch {
+		case c.PayoutBaseURL == "":
 			p.State, p.Detail = Off, "PAYOUT_BASE_URL not set"
-		} else {
+		case c.PixBaseURL == "":
+			p.State, p.Detail = Partial, "needs PIX_BASE_URL: payouts use the API Pix connection's token and mutual TLS"
+		default:
 			p.State, p.Detail = Live, c.PayoutBaseURL
 		}
 		add(p)
@@ -82,6 +105,8 @@ func (c *Config) Integrations() []Integration {
 			Settings: []string{"APPATTEST_ROOT_CA", "APPATTEST_APP_ID", "ANDROID_ATTESTATION_ROOTS", "ANDROID_SIGNING_DIGESTS", "ANDROID_ATTESTATION_STATUS"}, Production: true}
 		apple, android := c.AppAttestRoots != "", c.AndroidAttestationRoots != ""
 		switch {
+		case apple && android && c.AndroidAttestationStatus == "off":
+			i.State, i.Detail = Partial, "Google's attestation status list is off (ANDROID_ATTESTATION_STATUS)"
 		case apple && android:
 			i.State, i.Detail = Live, "iOS and Android"
 		case apple || android:
@@ -136,8 +161,18 @@ func (c *Config) Integrations() []Integration {
 		add(i)
 	}
 	if usesCrypto {
-		add(state(Integration{Name: "Sanctions screening", For: "withdrawal addresses and deposit senders", Settings: []string{"SANCTIONS_LISTS", "SCREENING_URL", "SCREENING_TOKEN"}, Production: true},
-			len(c.SanctionsLists) > 0 || c.ScreeningURL != "", strings.TrimSpace(strings.Join(c.SanctionsLists, ", ")+" "+c.ScreeningURL), "SANCTIONS_LISTS or SCREENING_URL"))
+		{
+			i := Integration{Name: "Sanctions screening", For: "withdrawal addresses, deposit senders and the names in travel-rule data", Settings: []string{"SANCTIONS_LISTS", "SCREENING_URL", "SCREENING_TOKEN"}, Production: true}
+			switch {
+			case len(c.SanctionsLists) > 0:
+				i.State, i.Detail = Live, strings.TrimSpace(strings.Join(c.SanctionsLists, ", ")+" "+c.ScreeningURL)
+			case c.ScreeningURL != "":
+				i.State, i.Detail = Partial, "SCREENING_URL screens addresses only: names need SANCTIONS_LISTS (OFAC's SDN.CSV)"
+			default:
+				i.State, i.Detail = Off, "needs SANCTIONS_LISTS (OFAC's SDN.CSV)"
+			}
+			add(i)
+		}
 		{
 			i := Integration{Name: "Deposit sender lookups", For: "who sent each crypto deposit", Settings: []string{"BITCOIN_ESPLORA_URL", "ETHEREUM_RPC_URL", "POLYGON_RPC_URL", "TRON_API_URL", "TRON_API_KEY", "SENDER_LOOKUP_URL"}, Production: true}
 			networks := []string{}
@@ -157,8 +192,10 @@ func (c *Config) Integrations() []Integration {
 		}
 		add(state(Integration{Name: "Travel rule network", For: "IVMS101 data to and from other providers (Res. BCB 520/2025)", Settings: []string{"TRAVEL_RULE_URL", "TRAVEL_RULE_TOKEN", "TRAVEL_RULE_INBOUND_SECRET", "PLATFORM_LEI"}, Production: true},
 			c.TravelRuleURL != "" && c.TravelRuleSecret != "", c.TravelRuleURL, "TRAVEL_RULE_URL and TRAVEL_RULE_INBOUND_SECRET"))
-		add(state(Integration{Name: "DeCripto filing", For: "the monthly report to the Receita Federal (IN RFB 2.291/2025)", Settings: []string{"REPORTING_URL", "PLATFORM_DOCUMENT"}, Production: true},
-			c.ReportingURL != "" && c.PlatformDocument != "", c.ReportingURL, "REPORTING_URL and PLATFORM_DOCUMENT"))
+		// Not an API: the platform writes the file, and operations transmits it at the Coleta
+		// Nacional with the company's e-CNPJ certificate (runbook §4.10).
+		add(state(Integration{Name: "DeCripto (Receita Federal)", For: "the monthly crypto report (IN RFB 2.291/2025), transmitted by hand at the Coleta Nacional", Settings: []string{"PLATFORM_DOCUMENT", "REPORTING_NAME", "REPORTING_URL"}, Production: true},
+			c.ReportingURL != "" && c.PlatformDocument != "", "the platform is named in record 0000; operations files it with the e-CNPJ", "PLATFORM_DOCUMENT and REPORTING_URL (the platform's CNPJ and website)"))
 	}
 	{
 		i := Integration{Name: "FX provider", For: "accounts abroad and international payouts", Settings: []string{"FX_PROVIDER", "WISE_TOKEN", "WISE_PROFILE_ID", "WISE_BASE_URL", "FX_AUTHORIZATION"}}
@@ -193,13 +230,29 @@ func (c *Config) Integrations() []Integration {
 		add(q)
 	}
 	{
-		i := Integration{Name: "Nostr relays", For: "receipts, statements and the public transparency root", Settings: []string{"RELAYS"}}
+		// Every sale shows the customer a receipt QR: the wrap must be on a relay (NIP-42 reads)
+		// and the claim page must exist to open it.
+		i := Integration{Name: "Nostr relays", For: "customer receipts, the merchant's copies and the public transparency root", Settings: []string{"RELAYS"}, Production: true}
 		if len(c.Relays) == 0 {
-			i.State, i.Detail = Off, "nothing is published to relays"
+			i.State, i.Detail = Off, "nothing is published: the receipt QR leads nowhere"
 		} else {
 			i.State, i.Detail = Live, strings.Join(c.Relays, ", ")
 		}
 		add(i)
+		cp := Integration{Name: "Receipt claim page", For: "the static page the receipt QR opens (docs/03 §3.2)", Settings: []string{"RECEIPT_CLAIM_BASE"}, Production: true}
+		if strings.HasPrefix(c.ClaimBase, "https://") && !strings.Contains(c.ClaimBase, "goonerspay.example") {
+			cp.State, cp.Detail = Live, c.ClaimBase
+		} else {
+			cp.State, cp.Detail = Off, "RECEIPT_CLAIM_BASE is the placeholder "+c.ClaimBase+": host the page and set it"
+		}
+		add(cp)
+		m := Integration{Name: "Metrics (Prometheus)", For: "the alerts of the runbook (§3)", Settings: []string{"METRICS_ADDR"}}
+		if c.MetricsAddr != "" {
+			m.State, m.Detail = Live, c.MetricsAddr
+		} else {
+			m.State, m.Detail = Off, "no METRICS_ADDR: nothing for Prometheus to scrape"
+		}
+		add(m)
 	}
 	return out
 }

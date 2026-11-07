@@ -371,6 +371,13 @@ func (c *Config) Validate() error {
 	if strict && !strings.HasPrefix(c.PublicURL, "https://") {
 		return errors.New("config: PUBLIC_API_URL (https) is required outside the sandbox: app logins and DPoP proofs sign the exact URL")
 	}
+	// In every environment: a half-configured PSP connection fails at start, not at the first sale.
+	if c.PixBaseURL != "" && (c.PixTLS == nil || c.PixClientID == "" || c.PixKey == "") {
+		return errors.New("config: Pix needs PIX_TLS_CERT/KEY/CA, PIX_CLIENT_ID/SECRET and PIX_KEY (API Pix is mutual TLS)")
+	}
+	if c.PixWebhookAddr != "" && (c.PixWebhookTLS == nil || c.PixWebhookTLS.CA == "") {
+		return errors.New("config: the Pix webhook listener needs PIX_WEBHOOK_TLS_CERT/KEY and the PSP's CA in PIX_WEBHOOK_TLS_CA")
+	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")
 	}
@@ -390,14 +397,24 @@ func (c *Config) Validate() error {
 			return errors.New("config: production verifies device attestation: set APPATTEST_ROOT_CA/APPATTEST_APP_ID and ANDROID_ATTESTATION_ROOTS/ANDROID_SIGNING_DIGESTS")
 		case c.AndroidAttestationStatus == "off":
 			return errors.New("config: production checks Google's attestation status list: unset ANDROID_ATTESTATION_STATUS or point it at a mirror")
+		case c.PixBaseURL == "" || c.PixWebhookAddr == "":
+			return errors.New("config: production takes Pix through the PSP's API Pix and hears of payments through its webhook: set PIX_BASE_URL with its credentials, and PIX_WEBHOOK_ADDR")
+		case c.PayoutBaseURL == "":
+			return errors.New("config: production pays merchants out by Pix: set PAYOUT_BASE_URL (the bank's transfer API, through the pixout contract)")
+		case len(c.Relays) == 0:
+			return errors.New("config: production publishes every receipt for the customer's QR: set RELAYS")
+		case !strings.HasPrefix(c.ClaimBase, "https://") || strings.Contains(c.ClaimBase, "goonerspay.example"):
+			return errors.New("config: production prints a receipt QR on every sale: host the claim page (docs/03 §3.2) and set RECEIPT_CLAIM_BASE to its https address")
 		case slices.Contains(c.Exchanges, "sandbox") || c.FXProvider == "sandbox":
 			return errors.New("config: the sandbox exchange and FX provider do not run in production")
 		case len(c.Exchanges) > 0 && c.CryptoAuthorization == "":
 			return errors.New("config: crypto in production needs CRYPTO_AUTHORIZATION: the BCB authorization (Res. BCB 519/2025) or the authorized provider the platform acts for")
-		case len(c.Exchanges) > 0 && len(c.SanctionsLists) == 0 && c.ScreeningURL == "":
-			return errors.New("config: crypto in production screens withdrawal addresses: set SANCTIONS_LISTS (OFAC's SDN.CSV or address lists) and/or SCREENING_URL")
+		case len(c.Exchanges) > 0 && len(c.SanctionsLists) == 0:
+			// A screening provider's contract answers for addresses only; the names in
+			// travel-rule data are screened against a list that holds names (docs/09 §6.6).
+			return errors.New("config: crypto in production screens withdrawal addresses and the names in travel-rule data: set SANCTIONS_LISTS with OFAC's SDN.CSV (SCREENING_URL may add a provider for addresses)")
 		case len(c.Exchanges) > 0 && (c.PlatformDocument == "" || c.ReportingURL == ""):
-			return errors.New("config: crypto in production files the DeCripto: set PLATFORM_DOCUMENT (the CNPJ) and REPORTING_URL")
+			return errors.New("config: crypto in production files the DeCripto, whose record 0000 names the platform: set PLATFORM_DOCUMENT (the CNPJ) and REPORTING_URL (its website)")
 		case len(c.Exchanges) > 0 && c.SenderLookupURL == "" && len(c.SenderLookups) < 4:
 			return errors.New("config: crypto in production screens who sends each deposit: set BITCOIN_ESPLORA_URL, ETHEREUM_RPC_URL, POLYGON_RPC_URL and TRON_API_URL, or SENDER_LOOKUP_URL (which also covers solana)")
 		case len(c.Exchanges) > 0 && (c.TravelRuleURL == "" || c.TravelRuleSecret == ""):
@@ -416,12 +433,6 @@ func (c *Config) Validate() error {
 	}
 	if len(c.CardDataDevKey) != 32 {
 		return errors.New("config: CARDDATA_DEV_KEY_HEX (32 bytes) is required for terminal data outside production")
-	}
-	if c.PixBaseURL != "" && (c.PixTLS == nil || c.PixClientID == "" || c.PixKey == "") {
-		return errors.New("config: Pix needs PIX_TLS_CERT/KEY/CA, PIX_CLIENT_ID/SECRET and PIX_KEY (API Pix is mutual TLS)")
-	}
-	if c.PixWebhookAddr != "" && (c.PixWebhookTLS == nil || c.PixWebhookTLS.CA == "") {
-		return errors.New("config: the Pix webhook listener needs PIX_WEBHOOK_TLS_CERT/KEY and the PSP's CA in PIX_WEBHOOK_TLS_CA")
 	}
 	return nil
 }

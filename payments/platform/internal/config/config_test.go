@@ -53,7 +53,8 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 	c.PublicURL = "https://api.goonerspay.example"
 	c.Routes[0].TLS = &TLSFiles{CA: "ca.pem"}
 	c.Routes[0].DialectFile = "/etc/platform/sponsor.json"
-	for _, want := range []string{"VAULT_KEK_HEX", "card decryptor", "receipts key", "registers receivables", "device attestation", "status list", "fraud shield", "adapters"} {
+	for _, want := range []string{"VAULT_KEK_HEX", "card decryptor", "receipts key", "registers receivables", "device attestation", "status list",
+		"PIX_BASE_URL", "PAYOUT_BASE_URL", "RELAYS", "RECEIPT_CLAIM_BASE", "fraud shield", "adapters"} {
 		err := c.Validate()
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("want an error about %q, got %v", want, err)
@@ -73,6 +74,15 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 			c.RiskMode, c.AndroidAttestationStatus = "off", "off"
 		case "status list":
 			c.AndroidAttestationStatus = "https://android.googleapis.com/attestation/status"
+		case "PIX_BASE_URL":
+			productionPix(c)
+			c.PayoutBaseURL, c.Relays, c.ClaimBase = "", nil, ""
+		case "PAYOUT_BASE_URL":
+			c.PayoutBaseURL = "https://psp.example/pagamentos"
+		case "RELAYS":
+			c.Relays = []string{"wss://relay.goonerspay.com.br"}
+		case "RECEIPT_CLAIM_BASE":
+			c.ClaimBase = "https://r.goonerspay.com.br/c"
 		case "fraud shield":
 			c.RiskMode = "shadow"
 		}
@@ -82,9 +92,18 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 	}
 }
 
+// productionPix fills the PSP, payout, relay and claim-page settings production requires.
+func productionPix(c *Config) {
+	tls := &TLSFiles{CA: "psp-ca.pem", Cert: "c.pem", Key: "k.pem"}
+	c.PixBaseURL, c.PixTLS, c.PixClientID, c.PixKey = "https://psp.example/api/v2", tls, "client", "12345678000195"
+	c.PixWebhookAddr, c.PixWebhookTLS = ":8443", tls
+	c.PayoutBaseURL, c.Relays, c.ClaimBase = "https://psp.example/pagamentos", []string{"wss://relay.goonerspay.com.br"}, "https://r.goonerspay.com.br/c"
+}
+
 func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 	prod := func() *Config {
 		c := base()
+		productionPix(c)
 		c.Env, c.PublicURL = Production, "https://api.goonerspay.example"
 		c.Routes[0].TLS, c.Routes[0].DialectFile = &TLSFiles{CA: "ca.pem"}, "/etc/platform/sponsor.json"
 		c.VaultKEK, c.CardDataDevKey, c.ReceiptsSecret = nil, nil, nil
@@ -122,6 +141,10 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 	c := prod()
 	c.Exchanges, c.CryptoAuthorization, c.FXProvider, c.FXAuthorization = []string{"binance"}, "SPSAV autorizada pelo BCB", "wise", "Banco parceiro de câmbio"
 	c.ScreeningURL, c.ReportingURL = "https://screening.internal/v1/screen", "https://goonerspay.example"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "SANCTIONS_LISTS") {
+		t.Errorf("a provider's address screening alone leaves names unscreened: %v", err)
+	}
+	c.SanctionsLists = []string{"/etc/platform/sdn.csv"}
 	c.SenderLookups = map[string]string{"bitcoin": "https://esplora.internal", "ethereum": "https://eth.internal", "polygon": "https://polygon.internal", "tron": "https://tron.internal"}
 	c.TravelRuleURL, c.TravelRuleSecret, c.PlatformLEI = "https://travel-rule.internal", "whsec_x", "506700GE1G29325QX363"
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
@@ -157,7 +180,8 @@ func TestIntegrationsReport(t *testing.T) {
 		AppAttestRoots: "apple.pem", AppAttestAppID: "TEAM.br.com.gooners.pay", AndroidAttestationRoots: "google.pem",
 		Exchanges: []string{"binance"}, BinanceKey: "k", BinanceSecret: "s", CryptoAuthorization: "BCB 519",
 		SanctionsLists: []string{"https://lists.example/sdn.csv"}, SenderLookupURL: "https://chain.example", TravelRuleURL: "https://tr.example", TravelRuleSecret: "whsec_x",
-		ReportingURL: "https://coleta.example"}
+		ReportingURL: "https://goonerspay.com.br", PublicURL: "https://api.goonerspay.com.br",
+		Relays: []string{"wss://relay.goonerspay.com.br"}, ClaimBase: "https://r.goonerspay.com.br/c"}
 	is = p.Integrations()
 	for _, i := range is {
 		if i.Production && i.State != Live && i.Name != "Key custody (HSM/KMS)" {
@@ -167,5 +191,58 @@ func TestIntegrationsReport(t *testing.T) {
 	// Key custody stays the one gap the reference implementation leaves to the HSM adapters.
 	if Ready(is) {
 		t.Fatal("ready without the HSM adapters")
+	}
+
+	// What the report used to get wrong: payouts without the API Pix connection they ride on,
+	// a receipt QR without relays or with the placeholder claim page.
+	p.PixBaseURL, p.Relays, p.ClaimBase = "", nil, "https://r.goonerspay.example/c"
+	got := map[string]string{}
+	for _, i := range p.Integrations() {
+		got[i.Name] = i.State
+	}
+	if got["Pix payouts"] != Partial || got["Nostr relays"] != Off || got["Receipt claim page"] != Off {
+		t.Fatalf("payouts %s, relays %s, claim page %s", got["Pix payouts"], got["Nostr relays"], got["Receipt claim page"])
+	}
+}
+
+// Production refuses to start without each connection the report marks required, so the
+// report and the startup check cannot drift apart.
+func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
+	tls := &TLSFiles{CA: "ca.pem", Cert: "c.pem", Key: "k.pem"}
+	full := func() *Config {
+		c := base()
+		productionPix(c)
+		c.Env, c.PublicURL = Production, "https://api.goonerspay.com.br"
+		c.Routes[0].TLS, c.Routes[0].DialectFile = tls, "/etc/platform/sponsor.json"
+		c.VaultKEK, c.CardDataDevKey, c.ReceiptsSecret, c.TransparencySecret = nil, nil, nil, nil
+		c.RegistrarURL, c.PlatformDocument = "https://registrar.internal", "99999999000191"
+		c.AppAttestRoots, c.AppAttestAppID, c.AndroidAttestationRoots = "a.pem", "T.app", "g.pem"
+		c.AndroidAttestationStatus = "https://android.googleapis.com/attestation/status"
+		return c
+	}
+	if err := full().Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
+		t.Fatalf("a complete configuration stops only at the HSM adapters: %v", err)
+	}
+	for name, unset := range map[string]func(*Config){
+		"Pix PSP (API Pix)":  func(c *Config) { c.PixBaseURL = "" },
+		"Pix payouts":        func(c *Config) { c.PayoutBaseURL = "" },
+		"Nostr relays":       func(c *Config) { c.Relays = nil },
+		"Receipt claim page": func(c *Config) { c.ClaimBase = "https://r.goonerspay.example/c" },
+		"Public API (HTTPS)": func(c *Config) { c.PublicURL = "http://api.internal" },
+	} {
+		c := full()
+		unset(c)
+		var required bool
+		for _, i := range c.Integrations() {
+			if i.Name == name {
+				required = i.Production && i.State != Live
+			}
+		}
+		if !required {
+			t.Errorf("%s: the report does not flag it", name)
+		}
+		if err := c.Validate(); err == nil || strings.Contains(err.Error(), "adapters") {
+			t.Errorf("%s: production starts without it: %v", name, err)
+		}
 	}
 }

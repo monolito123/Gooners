@@ -155,15 +155,16 @@ The platform's side is the operator's: `platform integrations` lists every exter
 
 ## 8. The providers behind the platform
 
-Every external dependency sits behind an interface with a simulator for the sandbox and an adapter for the real provider. `platform integrations` reports each, from the environment alone:
+Every external dependency sits behind an interface with a simulator for the sandbox and an adapter for the real provider. [`integration/integration-points.md`](../integration/integration-points.md) lists each one with the exact place it plugs into the code, what exists and what remains to build. `platform integrations` reports each from the environment alone, and production refuses to start without the ones it marks required:
 
 ```
-   INTEGRATION              STATE      PRODUCTION  DETAIL
-○  Scheme host (ISO 8583)   off        required    no route
-○  Pix PSP (API Pix)        off        required    PIX_BASE_URL not set
-◐  Key custody (HSM/KMS)    simulated  required    software keys; production wires the HSM, payment-HSM and enclave adapters (integration/hsm.md)
-◐  Crypto exchanges         simulated              the sandbox exchange
-◐  FX provider              simulated              the sandbox FX provider
+   INTEGRATION                 STATE      PRODUCTION  DETAIL
+○  Public API (HTTPS)          off        required    PUBLIC_API_URL is not an https address (the sandbox's plain HTTP)
+○  Pix PSP (API Pix)           off        required    PIX_BASE_URL not set
+◐  Key custody (HSM/KMS)       simulated  required    software keys; production wires the HSM, payment-HSM and enclave adapters (integration/hsm.md)
+◐  Crypto exchanges            simulated              the sandbox exchange
+○  Nostr relays                off        required    nothing is published: the receipt QR leads nowhere
+○  Receipt claim page          off        required    RECEIPT_CLAIM_BASE is the placeholder https://r.goonerspay.example/c: host the page and set it
 ```
 
 (An excerpt: ● live, ◐ simulated, ◑ partly configured, ○ off.) `-json` prints the same for tooling.
@@ -172,17 +173,18 @@ Every external dependency sits behind an interface with a simulator for the sand
 |-------------|---------------|----------|------------|
 | Scheme host | The sponsor acquirer, then Visa and Mastercard ([integration](../integration/README.md)) | `ROUTES_FILE` (TLS, verified dialect files) | Required |
 | Pix PSP | Any bank with the Banco Central's API Pix ([integration/pix.md](../integration/pix.md)) | `PIX_BASE_URL`, `PIX_CLIENT_ID/SECRET`, `PIX_KEY`, `PIX_TLS_*`, `PIX_WEBHOOK_*` | Required |
-| Pix payouts | The bank's payout API | `PAYOUT_BASE_URL` | Required |
+| Pix payouts | The bank's transfer API, through the generic contract (it reuses the API Pix connection's token and mutual TLS) | `PAYOUT_BASE_URL` | Required |
 | Receivables registrar | CERC, Núclea, B3 or TAG, through the generic contract | `REGISTRAR_URL`, `PLATFORM_DOCUMENT` | Required |
 | Device attestation | Apple App Attest, Android key attestation | `APPATTEST_*`, `ANDROID_ATTESTATION_*` | Required |
 | Key custody | An HSM, a payment HSM and an enclave signer ([integration/hsm.md](../integration/hsm.md)) | Adapters to wire | Required |
 | Crypto exchanges | Binance, Kraken, Coinbase (adapters built) | `EXCHANGES`, each exchange's keys, `CRYPTO_AUTHORIZATION` | With crypto |
-| Sanctions screening | OFAC's `SDN.CSV`, address lists, or a screening provider | `SANCTIONS_LISTS`, `SCREENING_URL` | With crypto |
+| Sanctions screening | OFAC's `SDN.CSV` (names and addresses), address lists, and optionally a screening provider for addresses | `SANCTIONS_LISTS` (with the SDN file in production), `SCREENING_URL` | With crypto |
 | Deposit sender lookups | Esplora, Ethereum and Polygon JSON-RPC, a Tron node, or a provider | `*_ESPLORA_URL`, `*_RPC_URL`, `TRON_API_URL`, `SENDER_LOOKUP_URL` | With crypto |
 | Travel rule | A travel-rule network, through the generic contract | `TRAVEL_RULE_URL`, `TRAVEL_RULE_INBOUND_SECRET`, `PLATFORM_LEI` | With crypto |
-| DeCripto filing | The Receita Federal's Coleta Nacional | `REPORTING_URL`, `PLATFORM_DOCUMENT` | With crypto |
+| DeCripto | Not an API: the platform writes the file, and operations transmits it at the Receita Federal's Coleta Nacional with the e-CNPJ | `PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTING_URL` (record 0000) | With crypto |
 | FX provider | Wise Platform (adapter built) | `FX_PROVIDER`, `WISE_*`, `FX_AUTHORIZATION` | With accounts abroad |
 | Broker and market data | A B3 broker through the generic contract; brapi.dev quotes | `BROKER_*`, `BRAPI_TOKEN` | With B3 |
-| Nostr relays | Public or the operator's own relays | `RELAYS` | Optional |
+| Nostr relays | At least two relays with NIP-42 reads of gift wraps (operated or contracted) | `RELAYS` | Required: every sale's receipt QR |
+| Receipt claim page | A static page (not built yet, [03 §3.2](03-nostr-layer.md#32-claim-by-qr)) and the NIP-05 file | `RECEIPT_CLAIM_BASE` | Required |
 
 What each needs in contracts, certification and keys is in [`integration/README.md`](../integration/README.md); the regulatory side of crypto, câmbio and B3 in [09](09-digital-assets-international-b3.md).

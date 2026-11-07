@@ -35,6 +35,8 @@ The merchant app for Android and iOS: a phone becomes a payment terminal (card a
 
 **Certificate pinning.** Release builds pin the API host's keys: pass the SPKI hashes of its current and backup keys, in OkHttp's `sha256/<base64>` form, with `./gradlew -Pgoonerspay.pins=sha256/…,sha256/… :app:assembleRelease` and `xcodebuild GOONERSPAY_PINS='sha256/…,sha256/…'` (the host defaults to `api.goonerspay.com.br`; override with `goonerspay.pinnedHost` / `GOONERSPAY_PINNED_HOST`). A trusted chain that holds none of the pins is refused before any request leaves the phone. Without pins there is no pinning, as in the sandbox.
 
+**The platform's address.** The pairing screen starts with the production API in release builds (`https://api.goonerspay.com.br`; `-Pgoonerspay.apiUrl=…` / `GOONERSPAY_API_URL` for a certification environment) and with the local sandbox in debug builds. Release builds pair only over `https://`.
+
 Both apps refuse to pair a phone without a screen lock in release builds, keep secrets out of backups, block screenshots (Android) or hide the screen in the app switcher (iOS), and refuse redirects so a session token never follows a 3xx elsewhere. Release builds speak HTTPS only.
 
 Android also hides other apps' overlays from its window (Android 12+) and notes touches that reach it through one.

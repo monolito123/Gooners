@@ -1,6 +1,6 @@
 # Integration kit: card hosts, Visa, Mastercard and banks for Pix
 
-This folder explains how to connect the platform ([`../platform`](../platform)) to its real counterparties. For each one it covers what is already built and tested, what the counterparty must provide, and the steps to go from the simulators to their test environment and then to production.
+This folder explains how to connect the platform ([`../platform`](../platform)) to its real counterparties. [integration-points.md](integration-points.md) is the complete map: every server, provider, SDK and file exchange the system needs, the exact place each plugs into the code, and what remains to build. For each one it covers what is already built and tested, what the counterparty must provide, and the steps to go from the simulators to their test environment and then to production.
 
 ## Readiness at a glance
 

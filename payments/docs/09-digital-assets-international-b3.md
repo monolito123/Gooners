@@ -276,7 +276,7 @@ Neither the merchant's apps nor the payment's webhooks say why a payment is bein
 | `FX_FEE_BPS`, `FX_SPREAD_BPS`, `IOF_FX_OUT_BPS`, `IOF_FX_IN_BPS` | Conversion fee and spread; IOF out and in (defaults 350 and 38) |
 | `BROKER_URL`, `BROKER_TOKEN`, `BROKER_NAME` | The broker contract of §5.2; the sandbox uses an in-memory broker |
 | `BRAPI_TOKEN` | Display prices from brapi.dev |
-| `SANCTIONS_LISTS` | Lists of sanctioned addresses, comma-separated paths or https URLs: OFAC's `SDN.CSV`, or one address per line (§6.1) |
+| `SANCTIONS_LISTS` | Lists of sanctioned addresses, comma-separated paths or https URLs: OFAC's `SDN.CSV`, or one address per line (§6.1). Production with crypto requires it with the SDN file: names in travel-rule data are screened only against a list that holds names |
 | `SCREENING_URL`, `SCREENING_TOKEN` | A screening provider's adapter (§6.1). With the lists, production needs at least one source |
 | `PLATFORM_DOCUMENT`, `REPORTING_NAME`, `REPORTING_URL` | The platform's CNPJ, name and URL in the DeCripto (record 0000) and the travel rule; production needs the CNPJ and the URL with crypto on |
 | `BITCOIN_ESPLORA_URL`, `ETHEREUM_RPC_URL`, `POLYGON_RPC_URL`, `TRON_API_URL`, `TRON_API_KEY` | Where the senders of deposits are read on each network (§6.5); comma-separated URLs are independent sources asked together |
