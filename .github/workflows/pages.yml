@@ -35,6 +35,22 @@ jobs:
         run: |
           (cd messenger/reference && npm ci --no-audit --no-fund)
           (cd messenger/app && npm ci --no-audit --no-fund && npm run build)
+      # Gooners AI (ai/), publicado em /ai/. O build fica em cache pelo hash das fontes, então as
+      # execuções de 15 em 15 minutos (só notícias) não reinstalam nem recompilam o app.
+      - name: Cache do build do Gooners AI
+        id: ai-cache
+        uses: actions/cache@v4
+        with:
+          path: ai/dist
+          key: gooners-ai-dist-${{ hashFiles('ai/package-lock.json', 'ai/index.html', 'ai/vite.config.ts', 'ai/tsconfig*.json', 'ai/build/**', 'ai/public/**', 'ai/src/**') }}
+      - name: Gerar o Gooners AI
+        if: steps.ai-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        working-directory: ai
+        run: |
+          npm ci --no-audit --no-fund --ignore-scripts
+          # Sem dist/ parcial: um build quebrado não pode ir para o cache nem para o site.
+          npm run build || { rm -rf dist; exit 1; }
       # O GitHub Pages serve o branch gh-pages; cada execução o substitui pelo site recém-gerado.
       - name: Publicar no branch gh-pages
         env:
@@ -43,10 +59,15 @@ jobs:
           mkdir _site
           cp -r index.html 404.html assets categorias contato ferramentas favoritos law manifest.webmanifest robots.txt sitemap.xml sw.js .nojekyll _site/
           if [ -f messenger/app/dist/index.html ]; then mkdir -p _site/messenger && cp -r messenger/app/dist/. _site/messenger/; fi
+          if [ -f ai/dist/index.html ]; then mkdir -p _site/ai && cp -r ai/dist/. _site/ai/; fi
           cd _site
           git init -q -b gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Traz os objetos da publicação anterior: o push envia só arquivos que mudaram (os .wasm
+          # do Gooners AI têm ~60 MB), e o branch continua com um único commit.
+          git fetch -q --depth 1 origin gh-pages || true
           git add -A
           git commit -q -m "Publicar site (${GITHUB_SHA::7})"
-          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          git push -q -f origin gh-pages

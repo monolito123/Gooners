@@ -81,6 +81,7 @@ ${jsonld.map(ld).join('\n')}
   <a class="brand" href="${R}" aria-label="Gooners — página inicial"><img src="${R}assets/img/icon.svg" width="30" height="30" alt=""><span>Gooners</span></a>
   <button class="search-trigger" id="openPalette" aria-label="Buscar ferramentas">${ic('search')}<span>Buscar entre ${TOOLS.length} ferramentas…</span><kbd>Ctrl K</kbd></button>
   <div class="top-actions">
+    <a class="top-link hide-mobile" href="${R}ai/">${ic('sparkles')}<span>Gooners AI</span></a>
     <a class="top-link hide-mobile" href="${R}law/">${ic('scale')}<span>Gooners Law</span></a>
     <button class="icon-btn" id="installBtn" hidden aria-label="Instalar aplicativo" title="Instalar aplicativo">${ic('download')}</button>
     <button class="icon-btn hide-mobile" id="shortcutsBtn" aria-label="Atalhos de teclado" title="Atalhos (?)">${ic('keyboard')}</button>
@@ -96,6 +97,7 @@ ${jsonld.map(ld).join('\n')}
       ${navCat}
       <div id="navRecent" hidden><p class="nav-label">Recentes</p><div id="navRecentList"></div></div>
       <p class="nav-label">Gooners</p>
+      <a href="${R}ai/" class="nav-item" style="--c:#0891b2">${ic('cpu')}<span>Gooners AI</span><small>IA local</small></a>
       <a href="${R}contato/" class="nav-item${page === 'contact' ? ' active' : ''}">${ic('mail')}<span>Contato e sugestões</span></a>
       <a href="${WA('Olá! Vim pelo site do Gooners.')}" class="nav-item" target="_blank" rel="noopener" style="--c:#177a40">${ic('message-circle')}<span>WhatsApp</span></a>
     </nav>
@@ -119,7 +121,7 @@ ${body}
         <li><a href="${WA('Olá! Vim pelo site do Gooners.')}" target="_blank" rel="noopener">${ic('message-circle')}WhatsApp ${C.phoneDisplay}</a></li>
         <li><a href="mailto:${C.email}">${ic('mail')}${C.email}</a></li>
       </ul>
-      <p><a href="${R}contato/">Contato</a> · <a href="${R}law/">Gooners Law</a> · <a href="${R}law/noticias/">Notícias jurídicas</a> · <a href="${R}sitemap.xml">Mapa do site</a></p>
+      <p><a href="${R}contato/">Contato</a> · <a href="${R}ai/">Gooners AI</a> · <a href="${R}law/">Gooners Law</a> · <a href="${R}law/noticias/">Notícias jurídicas</a> · <a href="${R}sitemap.xml">Mapa do site</a></p>
     </div>
     <div class="footer-cols">${footCols}</div>
   </div>
@@ -362,7 +364,7 @@ for (const d of existsSync(ROOT + 'ferramentas') ? readdirSync(ROOT + 'ferrament
 
 // ---------- sitemap, robots, manifest ----------
 const lawPages = ['law/', 'law/noticias/', 'law/glossario/', 'law/artigos/', ...(existsSync(ROOT + 'law/artigos') ? readdirSync(ROOT + 'law/artigos').filter((d) => existsSync(`${ROOT}law/artigos/${d}/index.html`)).map((d) => `law/artigos/${d}/`) : [])];
-const urls = [['', '1.0', 'weekly'], ['contato/', '0.5', 'yearly'], ...CATEGORIES.map((c) => [`categorias/${c.id}/`, '0.8', 'weekly']), ...TOOLS.map((t) => [`ferramentas/${t.id}/`, POPULAR.includes(t.id) ? '0.9' : '0.7', 'monthly']),
+const urls = [['', '1.0', 'weekly'], ['ai/', '0.8', 'monthly'], ['contato/', '0.5', 'yearly'], ...CATEGORIES.map((c) => [`categorias/${c.id}/`, '0.8', 'weekly']), ...TOOLS.map((t) => [`ferramentas/${t.id}/`, POPULAR.includes(t.id) ? '0.9' : '0.7', 'monthly']),
   ...lawPages.map((p) => [p, p === 'law/noticias/' ? '0.9' : '0.8', p === 'law/noticias/' ? 'hourly' : 'monthly'])];
 writeFileSync(ROOT + 'sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(([p, pr, cf]) => `  <url><loc>${SITE_URL}${p}</loc><lastmod>${TODAY}</lastmod><changefreq>${cf}</changefreq><priority>${pr}</priority></url>`).join('\n')}\n</urlset>\n`);
 writeFileSync(ROOT + 'robots.txt', `User-agent: *\nAllow: /\nDisallow: /favoritos/\nDisallow: /scripts/\n\nSitemap: ${SITE_URL}sitemap.xml\n`);

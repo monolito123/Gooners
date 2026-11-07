@@ -7,12 +7,15 @@ self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  // Apaga só as versões antigas deste worker: /ai/ e /messenger/ têm caches próprios na mesma origem.
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => /^gooners-[0-9a-f]+$/.test(k) && k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', (e) => {
   const req = e.request, url = new URL(req.url);
   if (req.method !== 'GET') return;
   const same = url.origin === location.origin;
+  // O Gooners AI (/ai/) e o SMA (/messenger/) têm service workers próprios.
+  if (same && /^\/(ai|messenger)\//.test(url.pathname.slice(new URL(self.registration.scope).pathname.length - 1))) return;
   if (!same && !CDN.test(req.url)) return; // APIs externas (CEP, CNPJ, moedas, notícias) sempre online
   const fresh = req.mode === 'navigate' || /\.(json|xml|html)$/.test(url.pathname) || url.pathname.endsWith('/');
   if (same && fresh) {
