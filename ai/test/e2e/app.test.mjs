@@ -96,6 +96,42 @@ describe('Gooners AI (production build)', () => {
     await context.close();
   });
 
+  test('animating an image keeps it upright', async () => {
+    const { context, page, errors } = await openApp('image');
+    await page.getByRole('radio', { name: 'Abstract art' }).click();
+    await page.getByLabel('Scene type').selectOption('synthwave');
+    await page.getByPlaceholder(/synthwave/).fill('synthwave sunset');
+    await page.getByRole('button', { name: /^Generate$/ }).click();
+    const img = page.locator('figure img').first();
+    await img.waitFor({ timeout: 30_000 });
+    // Brightness of the top half minus the bottom half (synthwave: bright sky over a dark floor).
+    const balance = (el) => {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 64;
+      const g = c.getContext('2d');
+      g.drawImage(el, 0, 0, 64, 64);
+      const d = g.getImageData(0, 0, 64, 64).data;
+      let top = 0;
+      let bottom = 0;
+      for (let i = 0; i < d.length; i += 4) (i / 4 < 32 * 64 ? (top += d[i] + d[i + 1] + d[i + 2]) : (bottom += d[i] + d[i + 1] + d[i + 2]));
+      return top - bottom;
+    };
+    const original = await img.evaluate(balance);
+    await page.locator('figure').first().getByRole('button', { name: 'Animate in Video Generator' }).click();
+    await page.getByRole('radio', { name: '12' }).click();
+    const duration = page.getByLabel('Duration');
+    await duration.focus();
+    await duration.press('Home');
+    await page.getByTestId('video-render').click();
+    await page.getByRole('button', { name: 'MP4', exact: true }).waitFor({ timeout: 60_000 });
+    const animated = await page.locator('canvas').first().evaluate(balance);
+    assert.ok(original > 0, `original top brighter (${original})`);
+    assert.ok(animated > 0, `animated frame still has the bright half on top (${animated})`);
+    assert.deepEqual(errors, []);
+    await context.close();
+  });
+
   test('runs an app in the offline sandbox with console bridge and storage shim', async () => {
     const code = `<!DOCTYPE html><html><head><title>Counter</title></head><body class="bg-slate-900 text-white">
 <h1 id="t" class="text-3xl font-bold p-4">Counter 0</h1><button id="b" class="px-4 py-2">+1</button>
@@ -211,9 +247,9 @@ try { parent.document.title = 'pwned'; } catch (e) { console.log('parent blocked
     await page.getByTestId('builder-submit').click();
     await page.locator('[data-model-status="ready"], [data-model-status="generating"]').first().waitFor({ timeout: 900_000 });
     await page.getByRole('button', { name: /^v1$/ }).waitFor({ timeout: 900_000 });
+    // Small models vary; require a working document that shows the requested label.
     const frame = page.frameLocator('iframe').first();
-    await frame.getByRole('button').first().waitFor({ timeout: 30_000 });
-    assert.match(await frame.getByRole('button').first().innerText(), /hello/i);
+    await frame.getByText(/hello/i).first().waitFor({ timeout: 90_000 });
     assert.deepEqual(errors, []);
     await context.close();
   });

@@ -184,7 +184,7 @@ export const pt: Record<keyof typeof en, string> = {
   'sd.resume': 'Retomar download ({pct}%)',
   'sd.pause': 'Pausar',
   'sd.downloaded': 'No disco',
-  'sd.ready': 'Carregado na GPU',
+  'sd.ready': 'Carregado',
   'sd.unload': 'Descarregar',
   'sd.reading': 'Lendo',
   'sd.compiling': 'Preparando',

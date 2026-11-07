@@ -91,3 +91,37 @@ describe('sandbox document', () => {
     expect(html).toContain('a="<\\/script><b>"');
   });
 });
+
+describe('extractCode with split files from small models', () => {
+  const answer = [
+    'Here is the app:',
+    '```html',
+    '<!DOCTYPE html><html><head><title>Red</title><link rel="stylesheet" href="styles.css"></head>',
+    '<body><button class="red">Hello</button><script src="script.js"></script></body></html>',
+    '```',
+    '```css',
+    '.red { background: red; }',
+    '```',
+    '```javascript',
+    "document.querySelector('.red').onclick = () => alert('hi');",
+    '```',
+  ].join('\n');
+
+  it('inlines styles.css and script.js and drops the dead references', () => {
+    const { code } = extractCode(answer);
+    expect(code).not.toMatch(/href="styles\.css"|src="script\.js"/);
+    expect(code).toContain('<style>\n.red { background: red; }\n</style>\n</head>');
+    expect(code).toContain("<script>\ndocument.querySelector('.red').onclick = () => alert('hi');\n</script>\n</body>");
+  });
+
+  it('gives the same result on repeated calls (no regex state leaks)', () => {
+    expect(extractCode(answer).code).toBe(extractCode(answer).code);
+  });
+
+  it('keeps CDN scripts and inline scripts as they are', () => {
+    const doc = '```html\n<html><head><script src="https://cdn.example.com/x.js"></script></head><body><script>run()</script></body></html>\n```\n```js\nextra()\n```';
+    const { code } = extractCode(doc);
+    expect(code).toContain('src="https://cdn.example.com/x.js"');
+    expect(code).not.toContain('extra()');
+  });
+});

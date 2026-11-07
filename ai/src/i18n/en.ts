@@ -182,7 +182,7 @@ export const en = {
   'sd.resume': 'Resume download ({pct}%)',
   'sd.pause': 'Pause',
   'sd.downloaded': 'On disk',
-  'sd.ready': 'Loaded on GPU',
+  'sd.ready': 'Loaded',
   'sd.unload': 'Unload',
   'sd.reading': 'Reading',
   'sd.compiling': 'Preparing',
