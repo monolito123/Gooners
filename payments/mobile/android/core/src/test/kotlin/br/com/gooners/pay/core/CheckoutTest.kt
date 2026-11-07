@@ -27,10 +27,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** The two-tap checkout of docs/06 §5, against a scripted platform. */
 class CheckoutTest {
+    @Test fun localTimeAlwaysHasSeconds() {
+        // On the minute, OffsetDateTime.toString() would write "2026-11-07T22:03Z": not RFC 3339.
+        assertEquals("2026-11-07T22:03:00Z", CheckoutController.localTime(Instant.parse("2026-11-07T22:03:00Z")))
+        assertEquals("2026-11-07T22:03:07Z", CheckoutController.localTime(Instant.parse("2026-11-07T22:03:07.912Z")))
+        assertEquals("2026-01-01T00:00:00Z", CheckoutController.localTime(Instant.parse("2026-01-01T00:00:00Z")))
+    }
+
     private val server = MockWebServer()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val seen = CopyOnWriteArrayList<String>()

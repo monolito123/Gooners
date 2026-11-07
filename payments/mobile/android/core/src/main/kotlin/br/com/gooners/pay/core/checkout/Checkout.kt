@@ -26,8 +26,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import java.time.OffsetDateTime
+import java.time.Instant
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 /** How the customer pays. */
 enum class PayMethod(val label: String) { CREDIT("Crédito"), DEBIT("Débito"), PIX("Pix"), CRYPTO("Cripto") }
@@ -277,7 +278,7 @@ class CheckoutController(
                     "amount" to Journal.amount(amount.centavos), "terminal_id" to JsonPrimitive(terminal), "stan" to JsonPrimitive(stanValue)))) }.getOrNull() }
                 sent = true
                 val result = authed.authorize(TerminalAuthorization(intent.id, terminal, stanValue, application.wire,
-                    OffsetDateTime.now(ZoneOffset.UTC).withNano(0).toString(), Sred(card.format, card.ksn, card.base64Ciphertext()), tap?.id,
+                    localTime(Instant.now()), Sred(card.format, card.ksn, card.base64Ciphertext()), tap?.id,
                     DeviceRisk(report.milli / 1000.0, report.model, report.signals)))
                 risk.result(result.status)
                 log("auth_result", intent.id, amount, "result" to journalResult(result.status), "stan" to stanValue)
@@ -384,6 +385,14 @@ class CheckoutController(
     }
 
     companion object {
+        /**
+         * The terminal's time for an authorization, in RFC 3339 with its seconds always written
+         * ("…T22:03:00Z"). OffsetDateTime.toString() drops seconds that are zero ("…T22:03Z"),
+         * which the platform refuses: one sale a minute would fail.
+         */
+        fun localTime(at: Instant): String =
+            DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(at.atOffset(ZoneOffset.UTC).withNano(0))
+
         const val CRYPTO_REVIEW = "O pagamento chegou e passa por uma verificação de segurança. A venda entra no saldo assim que ela terminar; acompanhe em Vendas. Pode seguir atendendo."
         const val CRYPTO_RETURN = "Venda em cripto não se desfaz pelo app. A venda continua valendo: para devolver, peça o endereço da carteira do cliente e envie pelo console (Cripto › Enviar)."
 
