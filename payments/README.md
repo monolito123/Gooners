@@ -37,7 +37,9 @@ Seven premises of the original brief would fail regulation, certification or phy
 | [docs/07-enhancements.md](docs/07-enhancements.md) | **Module 7**: Instant Liquidity Engine, Zero-Knowledge Compliance, Autonomous Fraud Shield |
 | [docs/08-roadmap-risks.md](docs/08-roadmap-risks.md) | Phases, certification path, risk register, questions for counsel |
 | [docs/09-digital-assets-international-b3.md](docs/09-digital-assets-international-b3.md) | **Module 9**: crypto payments and holdings (Binance, Kraken, Coinbase), accounts abroad (USD, EUR, GBP through Wise), IOF, B3 shares through a broker, and the rules (BCB 519/520/521, DeCripto, CVM 30): sanctions screening of withdrawals and of who sends each deposit, the travel rule in IVMS101.2023, compliance cases |
-| [api/openapi.yaml](api/openapi.yaml) | OpenAPI 3.1 contract |
+| [docs/10-integration-guide.md](docs/10-integration-guide.md) | **Integrating with the API**: who calls what, a sandbox quickstart, the first Pix payment, verifying webhooks (tested JavaScript and Python), the rules (idempotency, versions, rate limits, errors), going live and the providers checklist |
+| [api/openapi.yaml](api/openapi.yaml) | OpenAPI 3.1 contract; every response the end-to-end tests receive is checked against it |
+| [api/goonerspay.postman_collection.json](api/goonerspay.postman_collection.json) | Postman collection generated from the contract (`npm run postman` in [tools/](tools)) |
 | [nostr/schemas/](nostr/schemas) | JSON Schema for each custom event kind |
 | [nostr/examples/](nostr/examples) | Real signed events, gift wraps, a settlement statement and Merkle proofs, from public test keys |
 | [design/tokens.json](design/tokens.json), [design/icons.json](design/icons.json) | Design tokens (W3C DTCG format) and line icons: the only source of each platform's colours, type, spacing and icons ([06 §8](docs/06-design-system.md#8-platform-mapping)) |

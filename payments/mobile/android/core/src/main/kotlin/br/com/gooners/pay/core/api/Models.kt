@@ -392,6 +392,8 @@ data class LastWeek(
     val gross: Long = 0,
     /** Null when last week sold nothing: there is nothing to compare with. */
     @SerialName("change_pct") val changePct: Double? = null,
+    /** That whole day by hour, for the comparison line. */
+    val hourly: List<Long> = emptyList(),
 )
 
 @Serializable
@@ -406,4 +408,35 @@ data class RecentPayment(
     /** Brand and last four digits, for a card. */
     val card: String? = null,
     @SerialName("created_at") val createdAt: String,
+)
+
+/** A merchant's sales by day over a period (GET /v1/merchants/{id}/summary/period, docs/02 §8.6). */
+@Serializable
+data class PeriodSummary(
+    val from: String,
+    val to: String,
+    val days: Int,
+    val sales: Long = 0,
+    val gross: Long = 0,
+    val refunded: Long = 0,
+    val fees: Long = 0,
+    val net: Long = 0,
+    @SerialName("average_ticket") val averageTicket: Long = 0,
+    @SerialName("by_method") val byMethod: List<MethodTotal> = emptyList(),
+    val daily: List<DayTotal> = emptyList(),
+    val previous: PreviousPeriod,
+)
+
+@Serializable
+data class DayTotal(val date: String, val sales: Long = 0, val gross: Long = 0)
+
+@Serializable
+data class PreviousPeriod(
+    val from: String,
+    val to: String,
+    val sales: Long = 0,
+    val gross: Long = 0,
+    @SerialName("change_pct") val changePct: Double? = null,
+    /** Gross by day, aligned with the period's days. */
+    val daily: List<Long> = emptyList(),
 )

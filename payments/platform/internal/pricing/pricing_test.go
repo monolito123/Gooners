@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -66,5 +67,25 @@ func TestSettlementDates(t *testing.T) {
 	}
 	if s := Split(31000, 3); s[0]+s[1]+s[2] != 31000 || s[0] != 10334 {
 		t.Fatalf("split %v", s)
+	}
+}
+
+// The API names the plan's fields in snake_case; plans stored or sent before it did, with the
+// Go field names, still read the same.
+func TestPlanJSON(t *testing.T) {
+	want := Plan{CreditBps: 319, DebitBps: 137, InstallmentBps: 499, PixBps: 0, Tier: "A", Instant: true}
+	for _, in := range []string{
+		`{"credit_bps":319,"debit_bps":137,"installment_bps":499,"pix_bps":0,"tier":"A","instant":true}`,
+		`{"CreditBps":319,"DebitBps":137,"InstallmentBps":499,"PixBps":0,"Tier":"A","Instant":true}`,
+		`{"CreditBps":1,"credit_bps":319,"DebitBps":137,"InstallmentBps":499,"tier":"A","Instant":true,"PixBps":null}`,
+	} {
+		var p Plan
+		if err := json.Unmarshal([]byte(in), &p); err != nil || p != want {
+			t.Fatalf("%s: %+v %v", in, p, err)
+		}
+	}
+	b, _ := json.Marshal(want)
+	if string(b) != `{"credit_bps":319,"debit_bps":137,"installment_bps":499,"pix_bps":0,"tier":"A","instant":true}` {
+		t.Fatalf("encoded as %s", b)
 	}
 }

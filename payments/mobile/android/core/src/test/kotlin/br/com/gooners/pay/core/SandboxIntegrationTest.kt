@@ -113,6 +113,10 @@ class SandboxIntegrationTest {
         // The day at a glance counts the sale.
         val day = authed.daySummary()
         assertTrue(day.sales >= 1 && day.gross == day.hourly.sum() && day.recent.isNotEmpty())
+        // The last 7 days by day, through a query string the DPoP proof leaves out (RFC 9449 §4.2).
+        val week = authed.periodSummary(from = java.time.LocalDate.parse(day.date).minusDays(6).toString(), to = day.date)
+        assertTrue(week.days == 7 && week.daily.size == 7 && week.daily.last().date == day.date)
+        assertTrue(week.gross >= day.gross && week.daily.sumOf { it.gross } == week.gross && week.previous.to < week.from)
 
         // Balance and a payout to a Pix key.
         val balance = authed.balance()

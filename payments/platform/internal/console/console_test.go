@@ -25,6 +25,8 @@ func TestServesTheAppUnderItsPolicy(t *testing.T) {
 		"/console/tokens.css":       "text/css",
 		"/console/icons.js":         "javascript",
 		"/console/icon-paths.js":    "javascript",
+		"/console/format.js":        "javascript",
+		"/console/chart.js":         "javascript",
 		"/console/vendor/qrcode.js": "javascript",
 	} {
 		r := get(t, path)
@@ -61,7 +63,7 @@ func TestNoInlineCodeOrStyle(t *testing.T) {
 		}
 	}
 	app := read("app.js")
-	for _, name := range []string{"app.js", "icons.js", "icon-paths.js"} {
+	for _, name := range []string{"app.js", "icons.js", "icon-paths.js", "format.js", "chart.js"} {
 		for _, bad := range []string{"innerHTML", "eval(", "new Function", "document.write", "setAttribute('style'", "'style'"} {
 			if strings.Contains(read(name), bad) {
 				t.Errorf("%s uses %q", name, bad)

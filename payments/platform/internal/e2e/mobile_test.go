@@ -182,7 +182,7 @@ func TestMerchantAppProtocol(t *testing.T) {
 	if c, b := owner.do("GET", "/v1/accounts/"+owner.account+"/balance", nil); c != 200 || num(b["available"]) <= 0 {
 		t.Fatalf("balance: %d %v", c, b)
 	}
-	c, q := owner.do("POST", "/v1/payouts/quotes", map[string]any{"account_id": owner.account, "amount": 1000, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}})
+	c, q := owner.do("POST", "/v1/payouts/quotes", map[string]any{"account_id": owner.account, "amount": 1000, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "12345678000195"}})
 	if c != 201 {
 		t.Fatalf("quote: %d %v", c, q)
 	}
@@ -238,16 +238,35 @@ func TestMerchantAppProtocol(t *testing.T) {
 		{"POST", "/v1/payment-intents/" + otherPI["id"].(string) + "/cancel", nil, 404},
 		{"POST", "/v1/payment-intents", map[string]any{"merchant_id": other, "amount": 100}, 404},
 		{"GET", "/v1/accounts/" + otherAccount + "/balance", nil, 404},
-		{"POST", "/v1/payouts/quotes", map[string]any{"account_id": otherAccount, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "1"}}, 404},
+		{"POST", "/v1/payouts/quotes", map[string]any{"account_id": otherAccount, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "1"}}, 404},
 		{"POST", "/v1/merchants/" + other + "/enrollment-codes", nil, 404},
 		{"POST", "/v1/refunds", map[string]any{"payment_intent_id": otherPI["id"], "amount": 100}, 404},
 		{"GET", "/v1/disputes", nil, 403},
 		{"POST", "/v1/merchants", map[string]any{}, 403},
 		{"POST", "/v1/webhook-endpoints", map[string]any{"url": "http://x"}, 403},
 		{"POST", "/v1/terminals", map[string]any{"merchant_id": merchant}, 403},
+		{"GET", "/v1/merchants/" + other + "/summary", nil, 404},
+		{"GET", "/v1/merchants/" + other + "/summary/period", nil, 404},
+		{"GET", "/v1/payment-intents?merchant_id=" + other, nil, 404},
+		{"POST", "/v1/sandbox/pix/payments/" + otherPI["id"].(string), nil, 404},
+		{"GET", "/v1/merchants", nil, 403},
+		{"GET", "/v1/webhook-endpoints", nil, 403},
 	} {
 		if code, out := owner.do(c.method, c.path, c.body); code != c.want {
 			t.Errorf("session %s %s: HTTP %d (want %d) %v", c.method, c.path, code, c.want, out)
+		}
+	}
+	// Its list of payments is its own merchant's, without asking.
+	if c, l := owner.do("GET", "/v1/payment-intents?limit=100", nil); c != 200 {
+		t.Errorf("session listing its payments: HTTP %d", c)
+	} else {
+		for _, x := range l["data"].([]any) {
+			if m := x.(map[string]any)["merchant_id"]; m != merchant {
+				t.Errorf("session lists a payment of %v", m)
+			}
+		}
+		if len(l["data"].([]any)) == 0 {
+			t.Error("session lists none of its own payments")
 		}
 	}
 	// A refund goes back to the payer only; the app may undo its own sales (docs/06 §5).

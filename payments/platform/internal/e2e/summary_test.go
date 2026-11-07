@@ -3,6 +3,8 @@ package e2e
 import (
 	"testing"
 	"time"
+
+	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 )
 
 // A merchant's day at a glance (docs/02 §8.5): what was sold, by method and by hour, against
@@ -31,8 +33,8 @@ func TestDaySummary(t *testing.T) {
 	st.call("POST", "/v1/payment-intents/"+pi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
 	// Last week's same weekday sold 8.000 by now: today's 12.000 is 50% more.
 	if _, err := st.pool.Exec(ctx, `INSERT INTO payment_intents (id, tenant_id, merchant_id, status, amount, currency, channel, capture_method, amount_captured, fee, captured_at, created_at)
-		VALUES ('pi_lastweek', $1, $2, 'captured', 8000, 'BRL', 'pix', 'automatic', 8000, 0, now() - interval '7 days' - interval '1 second', now() - interval '7 days' - interval '1 second')`,
-		tenant, merchant); err != nil {
+		VALUES ($3, $1, $2, 'captured', 8000, 'BRL', 'pix', 'automatic', 8000, 0, now() - interval '7 days' - interval '1 second', now() - interval '7 days' - interval '1 second')`,
+		tenant, merchant, ids.New("pi")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,6 +59,14 @@ func TestDaySummary(t *testing.T) {
 	lw := sum["last_week"].(map[string]any)
 	if num(lw["gross"]) != 8000 || lw["change_pct"].(float64) != 50 || lw["date"] != time.Now().In(brtLoc()).AddDate(0, 0, -7).Format("2006-01-02") {
 		t.Fatalf("last week: %v", lw)
+	}
+	// Last week's whole day by hour, for the comparison line: the 8.000 at the hour it sold.
+	var lwHourly int64
+	for _, v := range lw["hourly"].([]any) {
+		lwHourly += num(v)
+	}
+	if len(lw["hourly"].([]any)) != 24 || lwHourly != 8000 || num(lw["hourly"].([]any)[time.Now().Add(-time.Second).In(brtLoc()).Hour()]) != 8000 {
+		t.Fatalf("last week by hour: %v", lw["hourly"])
 	}
 	if w := sum["waiting"].(map[string]any); num(w["count"]) != 1 || num(w["amount"]) != 5000 {
 		t.Fatalf("waiting: %v", w)

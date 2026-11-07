@@ -6,8 +6,10 @@ enum Palette {
     static let midnight950: UInt32 = 0x0B0F19
     static let slate50: UInt32 = 0xF8FAFC
     static let slate100: UInt32 = 0xF1F5F9
+    static let slate200: UInt32 = 0xE2E8F0
     static let slate300: UInt32 = 0xCBD5E1
     static let slate400: UInt32 = 0x94A3B8
+    static let slate500: UInt32 = 0x64748B
     static let slate600: UInt32 = 0x475569
     static let slate700: UInt32 = 0x334155
     static let slate800: UInt32 = 0x1E293B
@@ -20,8 +22,14 @@ enum Palette {
     static let amber700: UInt32 = 0xB45309
     static let coral400: UInt32 = 0xFB7185
     static let coral700: UInt32 = 0xBE123C
-    static let teal400: UInt32 = 0x2DD4BF
-    static let teal700: UInt32 = 0x0F766E
+    static let vizBlueLight: UInt32 = 0x2A78D6
+    static let vizBlueDark: UInt32 = 0x3987E5
+    static let vizMagentaLight: UInt32 = 0xE87BA4
+    static let vizMagentaDark: UInt32 = 0xD55181
+    static let vizGreenLight: UInt32 = 0x008300
+    static let vizGreenDark: UInt32 = 0x008300
+    static let vizYellowLight: UInt32 = 0xEDA100
+    static let vizYellowDark: UInt32 = 0xC98500
     static let indigo400: UInt32 = 0x818CF8
     static let indigo700: UInt32 = 0x4338CA
     static let white: UInt32 = 0xFFFFFF
@@ -54,6 +62,9 @@ struct SemanticPalette {
     let chartPix: UInt32
     let chartCrypto: UInt32
     let chartOther: UInt32
+    let chartFocus: UInt32
+    let chartCompare: UInt32
+    let chartGrid: UInt32
 }
 
 enum Themes {
@@ -77,11 +88,14 @@ enum Themes {
         onAlert: 0x0B0F19,
         infoText: 0x818CF8,
         focusRing: 0x818CF8,
-        chartCredit: 0x818CF8,
-        chartDebit: 0x34D399,
-        chartPix: 0x2DD4BF,
-        chartCrypto: 0xF59E0B,
-        chartOther: 0x94A3B8
+        chartCredit: 0x3987E5,
+        chartDebit: 0xD55181,
+        chartPix: 0x008300,
+        chartCrypto: 0xC98500,
+        chartOther: 0x94A3B8,
+        chartFocus: 0x10B981,
+        chartCompare: 0x64748B,
+        chartGrid: 0x1E293B
     )
     static let light = SemanticPalette(
         canvas: 0xF8FAFC,
@@ -103,11 +117,14 @@ enum Themes {
         onAlert: 0x0B0F19,
         infoText: 0x4338CA,
         focusRing: 0x4338CA,
-        chartCredit: 0x4338CA,
-        chartDebit: 0x047857,
-        chartPix: 0x0F766E,
-        chartCrypto: 0xB45309,
-        chartOther: 0x475569
+        chartCredit: 0x2A78D6,
+        chartDebit: 0xE87BA4,
+        chartPix: 0x008300,
+        chartCrypto: 0xEDA100,
+        chartOther: 0x475569,
+        chartFocus: 0x047857,
+        chartCompare: 0x64748B,
+        chartGrid: 0xE2E8F0
     )
     static let sunlight = SemanticPalette(
         canvas: 0xFFFFFF,
@@ -129,11 +146,14 @@ enum Themes {
         onAlert: 0x000000,
         infoText: 0x4338CA,
         focusRing: 0x000000,
-        chartCredit: 0x4338CA,
-        chartDebit: 0x047857,
-        chartPix: 0x0F766E,
-        chartCrypto: 0xB45309,
-        chartOther: 0x0B0F19
+        chartCredit: 0x2A78D6,
+        chartDebit: 0xE87BA4,
+        chartPix: 0x008300,
+        chartCrypto: 0xEDA100,
+        chartOther: 0x0B0F19,
+        chartFocus: 0x047857,
+        chartCompare: 0x475569,
+        chartGrid: 0xCBD5E1
     )
 }
 

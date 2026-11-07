@@ -4,7 +4,9 @@
 // commitment, one primary action per card, calm errors that say what happened, what it means
 // for the money and what to do next.
 import * as verify from './verify.js';
-import { icon, sparkBars } from './icons.js';
+import { icon } from './icons.js';
+import { salesChart, methodMix } from './chart.js';
+import { chartFamily, dayView, methodName, parseQuantity, parseReais, periodView, statusOf } from './format.js';
 
 // ---------------------------------------------------------------- state and API
 
@@ -103,6 +105,9 @@ const badge = (text, tone) => h('span', { class: 'badge ' + (tone || '') }, text
 
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const brl = (c) => brlFmt.format((c || 0) / 100);
+
+const badAmount = () => flash('error', 'Valor inválido.', 'Digite em reais com vírgula nos centavos, por exemplo 1.234,56.');
+const badQuantity = () => flash('error', 'Quantia inválida.', 'Use vírgula para os decimais, por exemplo 0,5 ou 1.234,56.');
 const amountFmt = (s, code) => `${s} ${code}`;
 const price = (s) => 'R$ ' + Number(s).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: Number(s) >= 100 ? 2 : 4 });
 function relDay(iso) {
@@ -200,7 +205,7 @@ views.overview = async () => {
   const m = S.merchant;
   const [bal, day, entries, holdings] = await Promise.all([
     api('GET', `/v1/accounts/${m.account_id}/balance`),
-    // The day's summary is a newer endpoint: an older platform simply shows no "Hoje" card.
+    // The day's summary is a newer endpoint: an older platform simply shows no sales card.
     api('GET', `/v1/merchants/${m.id}/summary`).catch(() => null),
     api('GET', `/v1/accounts/${m.account_id}/entries?limit=8`),
     api('GET', `/v1/holdings?merchant_id=${m.id}`).catch(() => ({ data: [] })),
@@ -219,69 +224,77 @@ views.overview = async () => {
         ? h('ul', {}, holdings.data.map((x) => h('li', {}, amountFmt(x.amount, x.asset), x.value_brl != null ? h('span', { class: 'muted' }, ` ≈ ${brl(x.value_brl)}`) : '')))
         : h('p', { class: 'muted' }, 'Só reais por enquanto.'),
         h('div', { class: 'actions' }, h('a', { class: 'button', href: '#/crypto' }, 'Cripto'), h('a', { class: 'button', href: '#/international' }, 'Internacional'), h('a', { class: 'button', href: '#/investments' }, 'B3')))),
-    day ? dayCard(day) : null,
+    day ? salesSection(m, day) : null,
     h('div', { class: 'grid' },
       day ? h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Últimas vendas'), h('a', { href: '#/payments' }, 'Ver todas')), recentSales(day.recent)) : null,
       h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Movimentações recentes'), h('a', { href: '#/statements' }, 'Extratos')), entriesTable(entries.data || []))),
   ];
 };
 
-// How customers paid, in the merchant's words, and the chart colour of each (tokens: chart-*).
-const METHOD = { credit: 'Crédito', debit: 'Débito', prepaid: 'Pré-pago', card: 'Cartão', pix: 'Pix', crypto: 'Cripto' };
-const methodName = (k) => METHOD[k] || String(k).replaceAll('_', ' ');
-const methodSeg = (k) => 'seg-' + (['credit', 'debit', 'pix', 'crypto'].includes(k) ? k : 'other');
-// A payment's state as a chip: the word carries the meaning, the colour only repeats it.
-const STATUS = {
-  captured: ['Paga', 'ok'], partially_refunded: ['Estorno parcial', 'warn'], refunded: ['Estornada', 'info'],
-  requires_action: ['Aguardando', 'warn'], processing: ['Aguardando', 'warn'], requires_payment_method: ['Aguardando', 'warn'], failed: ['Recusada', 'bad'], canceled: ['Cancelada', ''],
-};
-const statusChip = (st) => badge(...(STATUS[st] || [String(st).replaceAll('_', ' '), '']));
+const statusChip = (st) => badge(...statusOf(st));
+const brasiliaToday = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+const PERIODS = [['1', 'Hoje'], ['7', '7 dias'], ['30', '30 dias']];
 
-/** Today in one card: the money first, then its shape over the day and how it was paid (docs/06 §6). */
-function dayCard(d) {
-  const today = d.date === new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
-  const when = new Date(d.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
-  const lw = d.last_week || {};
-  let delta = h('span', { class: 'muted small' }, 'Sem vendas no mesmo dia da semana passada');
-  if (lw.change_pct !== null && lw.change_pct !== undefined) {
-    const dir = lw.change_pct > 0 ? 'up' : lw.change_pct < 0 ? 'down' : 'flat';
-    const pct = Math.abs(lw.change_pct).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
-    delta = h('span', { class: 'delta ' + dir }, dir === 'flat' ? null : icon(dir, 16), `${dir === 'down' ? '−' : dir === 'up' ? '+' : ''}${pct}%`,
-      h('span', { class: 'muted' }, ` vs. ${new Date(lw.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short' })} passada${today ? ' até agora' : ''}`));
-  }
-  const total = d.by_method.reduce((a, x) => a + x.gross, 0);
-  const mix = h('div', { class: 'mix', role: 'img', 'aria-label': d.by_method.map((x) => `${methodName(x.method)} ${Math.round((100 * x.gross) / total)}%`).join(', ') },
-    d.by_method.map((x) => {
-      const seg = h('span', { class: methodSeg(x.method) });
-      seg.style.width = `${(100 * x.gross) / total}%`;
-      return seg;
-    }));
-  const peak = d.hourly.indexOf(Math.max(...d.hourly));
-  return h('section', { class: 'card wide', 'aria-labelledby': 'day-h' },
-    h('div', { class: 'card-head' }, h('h2', { id: 'day-h' }, today ? 'Hoje' : 'Dia'), h('span', { class: 'muted small' }, when)),
-    h('div', { class: 'kpis' },
-      h('div', { class: 'kpi lead' }, h('div', { class: 'label' }, 'Vendido'), h('div', { class: 'value money' }, brl(d.gross)), delta),
-      h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Você recebe'), h('div', { class: 'value money pos' }, brl(d.net)),
-        h('span', { class: 'muted small' }, d.fees ? `${brl(d.fees)} de taxas` : 'Sem taxas')),
-      h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Vendas'), h('div', { class: 'value' }, String(d.sales)),
-        d.refunded ? h('span', { class: 'muted small' }, `${brl(d.refunded)} estornados`) : null),
-      h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Ticket médio'), h('div', { class: 'value money' }, brl(d.average_ticket)))),
-    d.sales ? h('div', { class: 'day-charts' },
-      h('div', {}, h('div', { class: 'overline' }, 'Por hora'),
-        sparkBars(d.hourly, { label: `Vendas por hora; o pico foi às ${peak}h, com ${brl(d.hourly[peak])}` }),
-        h('div', { class: 'axis', 'aria-hidden': 'true' }, ['0h', '6h', '12h', '18h', '23h'].map((x) => h('span', {}, x)))),
-      h('div', {}, h('div', { class: 'overline' }, 'Como pagaram'), mix,
-        h('ul', { class: 'legend' }, d.by_method.map((x) => h('li', {}, h('span', { class: 'sw ' + methodSeg(x.method) }), h('span', {}, methodName(x.method)),
-          h('span', { class: 'money' }, brl(x.gross)), h('span', { class: 'pct' }, `${Math.round((100 * x.gross) / total)}%`))))))
-      : h('p', { class: 'muted' }, today ? 'Nenhuma venda ainda hoje. A primeira aparece aqui na hora.' : 'Nenhuma venda neste dia.'),
-    d.waiting.count ? h('a', { class: 'waiting', href: '#/payments' }, icon('clock', 20),
-      h('span', {}, h('strong', {}, `${d.waiting.count} ${d.waiting.count === 1 ? 'cobrança aguardando' : 'cobranças aguardando'}`), ` · ${brl(d.waiting.amount)}`)) : null);
+/**
+ * Sales over the chosen period: the filter row above it scopes the figures, the chart and the
+ * method mix together (docs/06 §6). Switching keeps the frame at reduced opacity while the next
+ * period loads, so nothing jumps.
+ */
+function salesSection(m, day) {
+  let period = PERIODS.some(([k]) => k === load('gp.period', '1')) ? load('gp.period', '1') : '1';
+  const body = h('div', { class: 'sales-body' });
+  const buttons = PERIODS.map(([k, label]) => h('button', { type: 'button', class: 'seg-button', 'aria-pressed': String(k === period), onclick: () => choose(k) }, label));
+  const filter = h('div', { class: 'filter-row', role: 'group', 'aria-label': 'Período' }, buttons);
+  const paint = (view, unit) => {
+    const dir = view.changeSign > 0 ? 'up' : view.changeSign < 0 ? 'down' : 'flat';
+    const delta = view.change
+      ? h('span', { class: 'delta ' + dir }, dir === 'flat' ? null : icon(dir, 16), view.change, h('span', { class: 'muted' }, ' ' + view.versus))
+      : h('span', { class: 'muted small' }, `Sem vendas ${/passado$/.test(view.compareName) ? 'no' : /passada$/.test(view.compareName) ? 'na' : 'nos'} ${view.compareName} para comparar`);
+    // replaceChildren, unlike h(), would print a null as the word "null": absent parts are dropped.
+    body.replaceChildren(...[
+      h('div', { class: 'card-head' }, h('h2', { id: 'day-h' }, view.title), h('span', { class: 'muted small' }, view.range)),
+      h('div', { class: 'kpis' },
+        h('div', { class: 'kpi lead' }, h('div', { class: 'label' }, 'Vendido'), h('div', { class: 'value money' }, brl(view.gross)), delta),
+        h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Você recebe'), h('div', { class: 'value money pos' }, brl(view.net)),
+          h('span', { class: 'muted small' }, view.fees ? `${brl(view.fees)} de taxas` : 'Sem taxas')),
+        h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Vendas'), h('div', { class: 'value' }, String(view.sales)),
+          view.refunded ? h('span', { class: 'muted small' }, `${brl(view.refunded)} estornados`) : null),
+        h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Ticket médio'), h('div', { class: 'value money' }, brl(view.averageTicket)))),
+      view.sales || view.compare.some((v) => v > 0)
+        ? h('div', { class: 'day-charts' },
+          h('div', {}, h('div', { class: 'overline' }, unit === 'hora' ? 'Por hora' : 'Por dia'), salesChart(view, { brl, unit })),
+          view.sales ? h('div', {}, h('div', { class: 'overline' }, 'Como pagaram'), methodMix(view, { brl, methodName, family: chartFamily })) : null)
+        : h('p', { class: 'muted' }, view.empty),
+      view.waitingCount ? h('a', { class: 'waiting', href: '#/payments' }, icon('clock', 20),
+        h('span', {}, h('strong', {}, `${view.waitingCount} ${view.waitingCount === 1 ? 'cobrança aguardando' : 'cobranças aguardando'}`), ` · ${brl(view.waitingAmount)}`)) : null,
+    ].filter(Boolean));
+  };
+  const choose = async (k) => {
+    period = k;
+    save('gp.period', k);
+    buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(PERIODS[i][0] === k)));
+    if (k === '1') return paint(dayView(day, day.date === brasiliaToday()), 'hora');
+    body.classList.add('refetching');
+    const from = new Date(Date.now() - (Number(k) - 1) * 86400000).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    try {
+      const p = await api('GET', `/v1/merchants/${m.id}/summary/period?from=${from}&to=${brasiliaToday()}`);
+      if (period === k) paint(periodView(p, brasiliaToday()), 'dia');
+    } catch (e) {
+      if (!(e instanceof ApiError)) throw e;
+      const [t, d] = explain(e);
+      body.replaceChildren(h('div', { class: 'banner error', role: 'alert' }, h('strong', {}, t), ' ', d));
+    } finally {
+      body.classList.remove('refetching');
+    }
+  };
+  choose(period);
+  return [filter, h('section', { class: 'card wide', 'aria-labelledby': 'day-h' }, body)];
 }
 
 function recentSales(rows) {
   if (!rows.length) return h('p', { class: 'muted' }, 'As vendas do dia aparecem aqui.');
   return h('ul', { class: 'sales' }, rows.map((p) => h('li', {},
-    h('span', { class: 'dot', 'aria-hidden': 'true' }, h('span', { class: methodSeg(p.method) })),
+    h('span', { class: 'dot', 'aria-hidden': 'true' }, h('span', { class: 'seg-' + chartFamily(p.method) })),
     h('div', { class: 'what' }, h('div', {}, p.card || methodName(p.method)),
       h('div', { class: 'muted small' }, [new Date(p.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }), p.card ? methodName(p.method) : null].filter(Boolean).join(' · '))),
     h('div', { class: 'end' }, h('span', { class: 'money' }, brl(p.amount)), statusChip(p.status)))));
@@ -330,8 +343,14 @@ function onboarding() {
 
 views.merchants = async () => {
   const open = input({ placeholder: 'mer_…' });
-  const list = card('Seus lojistas', S.merchants.length
-    ? h('ul', {}, S.merchants.map((m) => h('li', {}, h('button', { type: 'button', onclick: () => choose(m) }, `${m.trade_name} · ${m.id}`), S.merchant?.id === m.id ? ' ' : '', S.merchant?.id === m.id ? badge('em uso', 'ok') : '')))
+  // The tenant's merchants from the platform; the ones this browser used, when the key cannot list them.
+  const listed = await api('GET', '/v1/merchants?limit=100').then((l) => l.data).catch(() => null);
+  const known = listed ?? S.merchants;
+  const status = { active: ['ativo', 'ok'], kyb_in_review: ['em análise', 'warn'], action_required: ['pendência', 'warn'], restricted: ['restrito', 'bad'], closed: ['encerrado', ''] };
+  const list = card('Seus lojistas', known.length
+    ? h('ul', { class: 'merchant-list' }, known.map((m) => h('li', {}, h('button', { type: 'button', onclick: () => choose(m) }, m.trade_name || m.id),
+      h('span', { class: 'muted small mono' }, ' ', m.id, ' '), m.status && status[m.status] ? badge(...status[m.status]) : null,
+      S.merchant?.id === m.id ? badge('em uso', 'info') : null)))
     : h('p', { class: 'muted' }, 'Nenhum ainda. Cadastre um abaixo ou abra pelo ID.'),
     h('div', { class: 'row' }, field('Abrir pelo ID', open), h('div', {}, h('button', { type: 'button', onclick: async (ev) => {
       const m = await act(ev.target, () => api('GET', `/v1/merchants/${open.value.trim()}`));
@@ -348,7 +367,7 @@ views.merchants = async () => {
     h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
       const m = await act(ev.target, () => api('POST', '/v1/merchants', {
         legal: { document: { type: 'cnpj', number: f.doc.value.replace(/\D/g, '') }, legal_name: f.legal.value, trade_name: f.trade.value, mcc: f.mcc.value, city: f.city.value },
-        plan: { CreditBps: 319, DebitBps: 137, InstallmentBps: 499, PixBps: 0, Tier: f.tier.value, Instant: f.instant.value === 'true' },
+        plan: { credit_bps: 319, debit_bps: 137, installment_bps: 499, pix_bps: 0, tier: f.tier.value, instant: f.instant.value === 'true' },
       }), 'Lojista cadastrado.');
       if (m) choose(m);
     } }, 'Cadastrar')));
@@ -403,12 +422,12 @@ views.charge = async () => {
   const payerRow = h('div', { class: 'row', hidden: true }, field('Nome do cliente', payerName), field('CPF ou CNPJ do cliente', payerDoc));
   method.addEventListener('change', () => { payerRow.hidden = method.value === 'pix'; });
   const out = h('div', { class: 'stack' });
-  const cents = () => Math.round(parseFloat(amount.value.replace(/\./g, '').replace(',', '.')) * 100);
+  const cents = () => parseReais(amount.value);
   return [card('Nova cobrança',
     h('div', { class: 'row' }, field('Valor (R$)', amount), field('Forma', method)), payerRow,
     h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
       const n = cents();
-      if (!(n > 0)) return flash('error', 'Valor inválido.', 'Digite o valor em reais, por exemplo 129,90.');
+      if (!(n > 0)) return badAmount();
       const isPix = method.value === 'pix';
       const [asset, network] = method.value.split('/');
       const pi = await act(ev.target, async () => {
@@ -463,28 +482,72 @@ function showCharge(out, pi) {
 
 views.payments = async () => {
   const id = input({ placeholder: 'pi_…' });
+  const f = {
+    status: select([['', 'Todas as situações'], ['captured', 'Pagas'], ['requires_action', 'Aguardando'], ['partially_refunded', 'Estorno parcial'], ['refunded', 'Estornadas'], ['failed', 'Recusadas'], ['canceled', 'Canceladas']]),
+    method: select([['', 'Todas as formas'], ['credit', 'Crédito'], ['debit', 'Débito'], ['pix', 'Pix'], ['crypto', 'Cripto']]),
+    from: input({ type: 'date' }), to: input({ type: 'date' }),
+  };
   const out = h('div', { class: 'stack' });
+  const rows = h('tbody');
+  const note = h('p', { class: 'muted small' });
+  let cursor = null;
+  const more = h('button', { type: 'button', hidden: true, onclick: (ev) => act(ev.target, () => page(true)) }, 'Carregar mais');
+  const query = (after) => {
+    const q = new URLSearchParams({ limit: '20' });
+    if (S.merchant) q.set('merchant_id', S.merchant.id);
+    for (const k of ['status', 'method', 'from', 'to']) if (f[k].value) q.set(k, f[k].value);
+    if (after) q.set('starting_after', after);
+    return '/v1/payment-intents?' + q;
+  };
+  const how = (pi) => {
+    const c = pi.latest_attempt?.card;
+    if (c) return `${c.brand} •••• ${c.last4}`;
+    return { pix: 'Pix', crypto: 'Cripto', card_present: 'Cartão' }[pi.channel] || pi.channel;
+  };
+  const page = async (append) => {
+    const l = await api('GET', query(append ? cursor : null));
+    if (!append) rows.replaceChildren();
+    rows.append(...l.data.map((pi) => h('tr', {},
+      h('td', {}, new Date(pi.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })),
+      h('td', {}, how(pi)), h('td', {}, statusChip(pi.status)), h('td', { class: 'num money' }, brl(pi.amount)),
+      h('td', { class: 'num' }, h('button', { type: 'button', class: 'small', onclick: () => show(pi) }, 'Abrir')))));
+    cursor = l.next_cursor;
+    more.hidden = !l.has_more;
+    note.textContent = rows.children.length ? '' : 'Nenhum pagamento com esses filtros.';
+    return true;
+  };
   const show = (pi) => {
     const refund = input({ inputmode: 'decimal', placeholder: 'valor (vazio: total)' });
     out.replaceChildren(card(`Pagamento ${pi.id}`,
-      kv([['Situação', pi.status], ['Valor', brl(pi.amount)], ['Capturado', brl(pi.amount_captured)], ['Estornado', brl(pi.amount_refunded)], ['Canal', pi.channel],
+      kv([['Situação', statusOf(pi.status)[0]], ['Valor', brl(pi.amount)], ['Capturado', brl(pi.amount_captured)], ['Estornado', brl(pi.amount_refunded)], ['Forma', how(pi)],
         ['Lojista', pi.merchant_id], ['Criado', new Date(pi.created_at).toLocaleString('pt-BR')], ['Recibo (Nostr)', pi.receipt?.nostr_event_id]]),
       h('details', {}, h('summary', {}, 'Detalhes técnicos'), h('pre', { class: 'mono small' }, JSON.stringify(pi, null, 2))),
       h('div', { class: 'row' }, field('Estornar (R$)', refund)),
       h('div', { class: 'actions' },
         h('button', { type: 'button', onclick: async (ev) => {
-          const v = refund.value.trim() ? Math.round(parseFloat(refund.value.replace(',', '.')) * 100) : undefined;
+          const v = refund.value.trim() ? parseReais(refund.value) : undefined;
+          if (v === null || v === 0) return badAmount();
           if (await act(ev.target, () => api('POST', '/v1/refunds', { payment_intent_id: pi.id, amount: v }), 'Estorno enviado.')) show(await api('GET', `/v1/payment-intents/${pi.id}`));
         } }, 'Estornar'),
         h('button', { class: 'danger', type: 'button', onclick: async (ev) => {
           const r = await act(ev.target, () => api('POST', `/v1/payment-intents/${pi.id}/cancel`), 'Pagamento cancelado.');
           if (r) show(r);
         } }, 'Cancelar pagamento'))));
+    out.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   };
-  return [card('Buscar pagamento', h('div', { class: 'row' }, field('ID', id), h('div', {}, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
-    const pi = await act(ev.target, () => api('GET', `/v1/payment-intents/${id.value.trim()}`));
-    if (pi) show(pi);
-  } }, 'Buscar')))), out];
+  await page(false);
+  return [
+    card(S.merchant ? `Pagamentos de ${S.merchant.trade_name}` : 'Pagamentos',
+      h('div', { class: 'row' }, field('Situação', f.status), field('Forma', f.method), field('De', f.from), field('Até', f.to),
+        h('div', {}, h('button', { class: 'primary', type: 'button', onclick: (ev) => act(ev.target, () => page(false)) }, 'Filtrar'))),
+      h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Quando'), h('th', {}, 'Forma'), h('th', {}, 'Situação'),
+        h('th', { class: 'num' }, 'Valor'), h('th', {}))), rows)), note, h('div', { class: 'actions' }, more)),
+    out,
+    card('Buscar pelo ID', h('div', { class: 'row' }, field('ID', id), h('div', {}, h('button', { type: 'button', onclick: async (ev) => {
+      const pi = await act(ev.target, () => api('GET', `/v1/payment-intents/${id.value.trim()}`));
+      if (pi) show(pi);
+    } }, 'Buscar')))),
+  ];
 };
 
 views.payouts = async () => {
@@ -496,7 +559,9 @@ views.payouts = async () => {
   return [card('Sacar por Pix', h('p', { class: 'muted' }, 'Você vê a tarifa e o valor que chega antes de confirmar.'),
     h('div', { class: 'row' }, field('Valor (R$)', amount), field('Tipo de chave', keyType), field('Chave Pix', key)),
     h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
-      const q = await act(ev.target, () => api('POST', '/v1/payouts/quotes', { account_id: S.merchant.account_id, amount: Math.round(parseFloat(amount.value.replace(',', '.')) * 100),
+      const n = parseReais(amount.value);
+      if (!n) return badAmount();
+      const q = await act(ev.target, () => api('POST', '/v1/payouts/quotes', { account_id: S.merchant.account_id, amount: n,
         destination: { type: 'pix', key_type: keyType.value, key: key.value.trim() } }));
       if (!q) return;
       const timer = h('span', { class: 'muted' });
@@ -601,10 +666,14 @@ function conversionForm(assetsList, title, note) {
   return card(title, note ? h('p', { class: 'muted' }, note) : null,
     h('div', { class: 'row' }, field('Operação', side), field('Ativo', asset), field('Quantia', amount)),
     h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
-      const v = amount.value.replace(',', '.').trim();
       const body = { merchant_id: S.merchant.id, side: side.value, asset: asset.value };
-      if (side.value === 'buy') body.brl_amount = Math.round(parseFloat(v) * 100);
-      else body.amount = v;
+      if (side.value === 'buy') {
+        body.brl_amount = parseReais(amount.value);
+        if (!body.brl_amount) return badAmount();
+      } else {
+        body.amount = parseQuantity(amount.value);
+        if (!body.amount || !(Number(body.amount) > 0)) return badQuantity();
+      }
       const q = await act(ev.target, () => api('POST', '/v1/conversions', body));
       if (!q) return;
       const timer = h('span', { class: 'muted' });
@@ -634,7 +703,7 @@ views.crypto = async () => {
   w.kind.addEventListener('change', () => { vaspRow.hidden = w.kind.value !== 'exchange'; });
   const withdrawal = () => {
     const body = { merchant_id: S.merchant.id, asset: w.asset.value, network: w.network.value, address: w.address.value.trim(), memo: w.memo.value.trim(),
-      amount: w.amount.value.replace(',', '.'), destination_type: w.kind.value };
+      amount: parseQuantity(w.amount.value), destination_type: w.kind.value };
     if (w.owner.value === 'third') {
       const doc = w.ownerDoc.value.replace(/\D/g, '');
       body.beneficiary = { type: doc.length === 14 ? 'legal' : 'natural', name: w.ownerName.value.trim(), document: doc || undefined, country: 'BR' };
@@ -654,6 +723,7 @@ views.crypto = async () => {
       h('div', { class: 'row' }, field('Ativo', w.asset), field('Rede', w.network), field('Quantia', w.amount)), h('div', { class: 'row' }, field('Endereço', w.address), field('Memo/tag', w.memo), field('Destino', w.kind)),
       vaspRow, h('div', { class: 'row' }, field('Titular do destino', w.owner)), ownerRow,
       h('div', { class: 'actions' }, h('button', { class: 'danger', type: 'button', onclick: async (ev) => {
+        if (!(Number(parseQuantity(w.amount.value)) > 0)) return badQuantity();
         const r = await act(ev.target, withdrawal);
         if (r) flash('success', 'Envio solicitado.', r.travel_rule ? (r.travel_rule.status === 'accepted' ? 'A corretora de destino aceitou os dados da regra de viagem.' : 'A declaração do titular ficou registrada.') : '');
       } }, 'Enviar'))),
@@ -675,12 +745,12 @@ views.international = async () => {
     card('Pagar no exterior', h('div', { class: 'row' }, field('Moeda', p.currency), field('Valor', p.amount), field('Referência', p.reference)),
       h('div', { class: 'row' }, field('Beneficiário', p.name), field('Tipo', p.type), field('País', p.country)),
       h('div', { class: 'row' }, field('IBAN', p.iban), field('BIC', p.bic), field('Routing', p.routing), field('Conta', p.account), field('Sort code', p.sort)),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: (ev) => act(ev.target, () => api('POST', '/v1/international/payouts', {
-        merchant_id: S.merchant.id, currency: p.currency.value, amount: p.amount.value.replace(',', '.'), reference: p.reference.value,
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: (ev) => !(Number(parseQuantity(p.amount.value)) > 0) ? badQuantity() : act(ev.target, () => api('POST', '/v1/international/payouts', {
+        merchant_id: S.merchant.id, currency: p.currency.value, amount: parseQuantity(p.amount.value), reference: p.reference.value,
         beneficiary: { name: p.name.value, type: p.type.value, country: p.country.value.toUpperCase(), iban: p.iban.value, bic: p.bic.value, routing_number: p.routing.value, account_number: p.account.value, sort_code: p.sort.value },
       }), 'Pagamento enviado.') }, 'Enviar pagamento'))),
     S.env !== 'production' ? card('Sandbox: receber do exterior', h('div', { class: 'row' }, field('Moeda', credit.currency), field('Valor', credit.amount)),
-      h('div', { class: 'actions' }, h('button', { type: 'button', onclick: async (ev) => (await act(ev.target, () => api('POST', '/v1/sandbox/international/credits', { merchant_id: S.merchant.id, currency: credit.currency.value, amount: credit.amount.value, payer: 'Cliente no exterior' }), 'Crédito recebido.')) && render() }, 'Simular crédito'))) : null,
+      h('div', { class: 'actions' }, h('button', { type: 'button', onclick: async (ev) => (await act(ev.target, () => api('POST', '/v1/sandbox/international/credits', { merchant_id: S.merchant.id, currency: credit.currency.value, amount: parseQuantity(credit.amount.value) || credit.amount.value, payer: 'Cliente no exterior' }), 'Crédito recebido.')) && render() }, 'Simular crédito'))) : null,
   ];
 };
 

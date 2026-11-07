@@ -225,19 +225,25 @@ type TerminalAuth struct {
 	JournalEventID  string
 }
 
+// IssuerResponse is what the issuer sent back for the card (DE 55): the ARPC and any issuer
+// scripts, hex, for the terminal to hand to the card.
+type IssuerResponse struct {
+	ARPCAndScripts string `json:"arpc_and_scripts"`
+}
+
 // TerminalResult is returned to the terminal.
 type TerminalResult struct {
-	Status          string         `json:"status"`
-	PaymentIntentID string         `json:"payment_intent_id"`
-	ResponseCode    string         `json:"response_code,omitempty"`
-	AuthCode        string         `json:"authorization_code,omitempty"`
-	RRN             string         `json:"rrn,omitempty"`
-	DeclineCode     string         `json:"decline_code,omitempty"`
-	CustomerMessage string         `json:"customer_message,omitempty"`
-	Card            map[string]any `json:"card,omitempty"`
-	IssuerEMV       string         `json:"issuer_response,omitempty"`
-	Receipt         map[string]any `json:"receipt,omitempty"`
-	Settlement      map[string]any `json:"settlement,omitempty"`
+	Status          string          `json:"status"`
+	PaymentIntentID string          `json:"payment_intent_id"`
+	ResponseCode    string          `json:"response_code,omitempty"`
+	AuthCode        string          `json:"authorization_code,omitempty"`
+	RRN             string          `json:"rrn,omitempty"`
+	DeclineCode     string          `json:"decline_code,omitempty"`
+	CustomerMessage string          `json:"customer_message,omitempty"`
+	Card            map[string]any  `json:"card,omitempty"`
+	IssuerResponse  *IssuerResponse `json:"issuer_response,omitempty"`
+	Receipt         map[string]any  `json:"receipt,omitempty"`
+	Settlement      map[string]any  `json:"settlement,omitempty"`
 }
 
 // AuthorizeTerminal decrypts the card data, authorizes through the switch and, on approval,
@@ -345,7 +351,10 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 		fail("processing_error")
 		return nil, err
 	}
-	out := &TerminalResult{PaymentIntentID: pi.ID, ResponseCode: res.ResponseCode, AuthCode: res.AuthCode, RRN: res.RRN, Card: cardView, IssuerEMV: res.IssuerEMVHex}
+	out := &TerminalResult{PaymentIntentID: pi.ID, ResponseCode: res.ResponseCode, AuthCode: res.AuthCode, RRN: res.RRN, Card: cardView}
+	if res.IssuerEMVHex != "" {
+		out.IssuerResponse = &IssuerResponse{ARPCAndScripts: strings.ToUpper(res.IssuerEMVHex)}
+	}
 	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET auth_id = $3, card_brand = $4, card_last4 = $5, card_funding = $6, pan_token = $7, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, authID, brand, stored.Last4, funding, stored.Token); err != nil {
 		return nil, err

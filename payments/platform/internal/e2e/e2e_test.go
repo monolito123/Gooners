@@ -445,7 +445,7 @@ func TestEndToEnd(t *testing.T) {
 	// ---- 8. payout: quote and Pix out ----
 	avail := num(st.balance(account)["available"])
 	_, q := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": avail, "speed": "instant",
-		"destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}}, 201)
+		"destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "12345678000195"}}, 201)
 	_, po := st.call("POST", "/v1/payouts", map[string]any{"quote_id": q["id"]}, 201)
 	if po["status"] != "paid" || len(po["end_to_end_id"].(string)) != 32 {
 		t.Fatalf("payout %v", po)

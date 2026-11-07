@@ -22,8 +22,12 @@ servers:
     description: Card-present terminals (CDE)
   - url: https://api.sandbox.goonerspay.example
     description: Sandbox
+  - url: http://localhost:8080
+    description: A local stack (docker compose up, or go run ./cmd/smoke -serve), with the sandbox's simulators
 security:
+  - apiKey: []
   - mtlsBoundToken: []
+  - dpopSession: []
 tags:
   - name: auth
     description: Token and session issuance
@@ -53,9 +57,10 @@ tags:
 paths:
   /oauth2/token:
     post:
+      x-goonerspay-availability: planned
       tags: [auth]
       operationId: issueToken
-      summary: Issue an mTLS-bound access token (client credentials)
+      summary: "Planned: Issue an mTLS-bound access token (client credentials)"
       security: []
       requestBody:
         required: true
@@ -82,6 +87,8 @@ paths:
         "400":
           $ref: "#/components/responses/Problem"
         "401":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/auth/nostr:
@@ -120,6 +127,8 @@ paths:
                 $ref: "#/components/schemas/Session"
         "401":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/enrollment:
     get:
@@ -151,6 +160,8 @@ paths:
                     $ref: "#/components/schemas/Timestamp"
         "401":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
     post:
       tags: [auth]
       operationId: enrollDevice
@@ -174,6 +185,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Device"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/merchants/{id}/enrollment-codes:
@@ -203,6 +216,8 @@ paths:
                     $ref: "#/components/schemas/Timestamp"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/payment-intents:
     post:
@@ -229,6 +244,57 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+    get:
+      tags: [payments]
+      operationId: listPaymentIntents
+      summary: List payment intents, newest first (payments:read, or the merchant's own app session)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/MerchantQuery"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [requires_payment_method, requires_action, processing, captured, failed, canceled, partially_refunded, refunded]
+        - name: method
+          in: query
+          description: How the customer paid, as the summaries name it.
+          schema:
+            type: string
+            enum: [credit, debit, prepaid, card, pix, crypto]
+        - name: from
+          in: query
+          description: Created on or after this Brasília day.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: Created on or before this Brasília day.
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StartingAfter"
+      responses:
+        "200":
+          description: A page of payment intents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/PaymentIntent"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/payment-intents/{id}:
     get:
@@ -246,6 +312,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntent"
         "404":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/payment-intents/{id}/confirm:
@@ -274,6 +342,8 @@ paths:
           $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/payment-intents/{id}/capture:
     post:
@@ -300,6 +370,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntent"
         "409":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/payment-intents/{id}/cancel:
@@ -328,6 +400,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntent"
         "409":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/terminal/journal:
@@ -366,6 +440,8 @@ paths:
                 $ref: "#/components/schemas/JournalStatus"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
     get:
       tags: [terminals]
       operationId: getTerminalJournal
@@ -380,6 +456,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/JournalStatus"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/payment-intents/{id}/journal:
@@ -404,6 +482,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/NostrEvent"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/terminal/authorizations:
@@ -444,6 +524,8 @@ paths:
                 $ref: "#/components/schemas/TerminalAuthorizationResult"
         "401":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/refunds:
     post:
@@ -479,6 +561,8 @@ paths:
                 $ref: "#/components/schemas/Refund"
         "422":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/refunds/{id}:
     get:
@@ -497,12 +581,15 @@ paths:
                 $ref: "#/components/schemas/Refund"
         "404":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/payment-methods:
     post:
+      x-goonerspay-availability: planned
       tags: [vault]
       operationId: createPaymentMethod
-      summary: Tokenize a card (vault host, CDE)
+      summary: "Planned: Tokenize a card (vault host, CDE)"
       servers:
         - url: https://vault.goonerspay.example
       security:
@@ -526,12 +613,15 @@ paths:
                 $ref: "#/components/schemas/PaymentMethod"
         "422":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/payment-methods/{id}:
     delete:
+      x-goonerspay-availability: planned
       tags: [vault]
       operationId: deletePaymentMethod
-      summary: Delete a payment method and its network tokens
+      summary: "Planned: Delete a payment method and its network tokens"
       servers:
         - url: https://vault.goonerspay.example
       parameters:
@@ -541,6 +631,8 @@ paths:
         "204":
           description: Deleted
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/disputes:
@@ -576,6 +668,8 @@ paths:
                           $ref: "#/components/schemas/Dispute"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/disputes/{id}:
     get:
@@ -593,6 +687,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Dispute"
         "404":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/disputes/{id}/evidence:
@@ -633,6 +729,8 @@ paths:
                 $ref: "#/components/schemas/Dispute"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/disputes/{id}/accept:
     post:
@@ -651,6 +749,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Dispute"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/risk/reviews:
@@ -687,6 +787,8 @@ paths:
                           $ref: "#/components/schemas/RiskReview"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/risk/reviews/{id}:
     get:
@@ -704,6 +806,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/RiskReview"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/risk/reviews/{id}/resolve:
@@ -744,12 +848,15 @@ paths:
                 $ref: "#/components/schemas/RiskReview"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/accounts:
     post:
+      x-goonerspay-availability: planned
       tags: [accounts]
       operationId: createAccount
-      summary: Open a sub-ledger account
+      summary: "Planned: Open a sub-ledger account"
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -781,6 +888,8 @@ paths:
                 $ref: "#/components/schemas/Account"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/accounts/{id}/balance:
     get:
@@ -798,6 +907,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Balance"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/accounts/{id}/entries:
@@ -826,12 +937,15 @@ paths:
                           $ref: "#/components/schemas/Entry"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/transfers:
     post:
+      x-goonerspay-availability: planned
       tags: [accounts]
       operationId: createTransfer
-      summary: Move funds between accounts of one tenant
+      summary: "Planned: Move funds between accounts of one tenant"
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -861,6 +975,8 @@ paths:
                 $ref: "#/components/schemas/Transfer"
         "422":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/payouts/quotes:
     post:
@@ -876,7 +992,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [account_id, amount, speed, destination]
+              required: [account_id, amount, destination]
               properties:
                 account_id:
                   $ref: "#/components/schemas/Id"
@@ -885,6 +1001,7 @@ paths:
                 speed:
                   type: string
                   enum: [instant, standard]
+                  default: instant
                 destination:
                   $ref: "#/components/schemas/PixDestination"
       responses:
@@ -895,6 +1012,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PayoutQuote"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/payouts:
@@ -935,6 +1054,8 @@ paths:
                 $ref: "#/components/schemas/Payout"
         "410":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/merchants:
     post:
@@ -958,6 +1079,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/Merchant"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+    get:
+      tags: [merchants]
+      operationId: listMerchants
+      summary: List the tenant's merchants, newest first
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [kyb_in_review, action_required, active, restricted, closed]
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StartingAfter"
+      responses:
+        "200":
+          description: A page of merchants
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Merchant"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/merchants/{id}:
+    get:
+      tags: [merchants]
+      operationId: getMerchant
+      summary: Retrieve a merchant (merchants:write, or the merchant's own app session)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The merchant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/merchants/{id}/summary:
@@ -987,6 +1158,41 @@ paths:
                 $ref: "#/components/schemas/DaySummary"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/merchants/{id}/summary/period:
+    get:
+      tags: [merchants]
+      operationId: getMerchantPeriodSummary
+      summary: The merchant's sales by day over a period, against the period before (payments:read, or the merchant's own app session)
+      description: |
+        From one Brasília day to another, both included, at most 92 days; the last 30 days
+        ending today by default. Each day is listed, days without sales included. The previous
+        period is as long and ends the day before; when the period ends today the previous one
+        ends at the same time of day, so the comparison is fair.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeriodSummary"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/merchants/{id}/devices:
     post:
@@ -1011,6 +1217,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Device"
         "422":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/terminals:
@@ -1072,8 +1280,10 @@ paths:
           $ref: "#/components/responses/Problem"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
-  /v1/terminals/{terminal_id}/revoke:
+  /v1/terminals/{id}/revoke:
     post:
       tags: [merchants]
       operationId: revokeTerminal
@@ -1085,9 +1295,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
-        - name: terminal_id
+        - name: id
           in: path
           required: true
+          description: The terminal ID (DE 41).
           schema:
             type: string
             pattern: "^[A-Z0-9]{8}$"
@@ -1125,6 +1336,8 @@ paths:
         "409":
           $ref: "#/components/responses/Problem"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/settlements:
@@ -1169,6 +1382,8 @@ paths:
                     type: [string, "null"]
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/settlements/{id}/statement:
     get:
@@ -1186,6 +1401,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/NostrEvent"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/transparency/{date}:
@@ -1227,6 +1444,8 @@ paths:
                     format: date-time
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/settlements/{id}:
     get:
@@ -1244,6 +1463,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Settlement"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/settlements/{id}/proofs/{receipt_event_id}:
@@ -1267,6 +1488,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/InclusionProof"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/webhook-endpoints:
@@ -1314,6 +1537,68 @@ paths:
                     pattern: "^whsec_[A-Za-z0-9+/=]+$"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+    get:
+      tags: [webhooks]
+      operationId: listWebhookEndpoints
+      summary: List the tenant's webhook endpoints, enabled or not (never their secrets)
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+      responses:
+        "200":
+          description: The endpoints, newest first
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WebhookEndpoint"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/webhook-endpoints/{id}:
+    get:
+      tags: [webhooks]
+      operationId: getWebhookEndpoint
+      summary: Retrieve a webhook endpoint
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The endpoint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      tags: [webhooks]
+      operationId: disableWebhookEndpoint
+      summary: Stop sending to an endpoint, for good
+      description: |
+        No new events are queued for it and its pending deliveries are abandoned. It stays
+        listed, disabled, with its history; replaying to it answers 409, so create a new
+        endpoint and replay there. Calling it again answers the same. Recorded in the audit trail.
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The endpoint, disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/webhook-endpoints/{id}/replay:
     post:
@@ -1356,6 +1641,8 @@ paths:
                     minimum: 0
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/crypto/markets:
     get:
@@ -1380,6 +1667,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/CryptoMarket"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/crypto/withdrawals:
@@ -1413,6 +1702,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/CryptoWithdrawal"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/webhook-endpoints/{id}/rotate-secret:
@@ -1449,6 +1740,8 @@ paths:
                 $ref: "#/components/schemas/RotatedSecret"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/compliance/cases:
     get:
@@ -1484,6 +1777,8 @@ paths:
                           $ref: "#/components/schemas/ComplianceCase"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/compliance/cases/{id}:
     get:
@@ -1501,6 +1796,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ComplianceCase"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/compliance/cases/{id}/decision:
@@ -1539,6 +1836,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/ComplianceCase"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/compliance/screenings:
@@ -1581,6 +1880,8 @@ paths:
                           $ref: "#/components/schemas/AddressScreening"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/travel-rule/messages:
     get:
@@ -1612,6 +1913,8 @@ paths:
                           $ref: "#/components/schemas/TravelRuleMessage"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/travel-rule/messages/{id}:
     get:
@@ -1633,6 +1936,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/TravelRuleMessage"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/travel-rule/inbound:
@@ -1676,6 +1981,8 @@ paths:
                 $ref: "#/components/schemas/TravelRuleAnswer"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/holdings:
     get:
@@ -1701,6 +2008,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/Holding"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/conversions:
@@ -1729,6 +2038,8 @@ paths:
                 $ref: "#/components/schemas/Conversion"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/conversions/{id}:
     get:
@@ -1746,6 +2057,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Conversion"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/conversions/{id}/execute:
@@ -1768,6 +2081,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/Conversion"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/international/accounts:
@@ -1795,6 +2110,8 @@ paths:
                       $ref: "#/components/schemas/InternationalAccount"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/international/payouts:
     post:
@@ -1819,6 +2136,8 @@ paths:
                 $ref: "#/components/schemas/InternationalPayout"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/investments/quotes/{ticker}:
     get:
@@ -1842,6 +2161,8 @@ paths:
                 $ref: "#/components/schemas/InstrumentQuote"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/investments/profile:
     get:
@@ -1859,6 +2180,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/InvestorProfile"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
     put:
       tags: [assets]
@@ -1886,6 +2209,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/InvestorProfile"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/investments/orders:
@@ -1926,6 +2251,8 @@ paths:
                 $ref: "#/components/schemas/InvestmentOrder"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
   /v1/investments/positions:
     get:
@@ -1943,6 +2270,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/Portfolio"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/sandbox/pix/payments/{id}:
+    post:
+      tags: [payments]
+      operationId: sandboxPixPayment
+      summary: Sandbox only. The customer pays a Pix charge
+      description: |
+        The PSP simulator pays the charge as a bank app would; its webhook then captures the
+        payment, and the partner's webhooks follow. The answer waits up to five seconds for the
+        capture. The charge must be a Pix payment intent confirmed and waiting (requires_action).
+      servers:
+        - url: https://api.sandbox.goonerspay.example
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The payment intent, captured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntent"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/sandbox/crypto/payments/{id}:
@@ -1976,6 +2329,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/PaymentIntent"
         "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
           $ref: "#/components/responses/Problem"
 
   /v1/sandbox/international/credits:
@@ -2017,6 +2372,8 @@ paths:
                       $ref: "#/components/schemas/InternationalAccount"
         "4XX":
           $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
 
 webhooks:
   paymentIntentCaptured:
@@ -2035,6 +2392,20 @@ webhooks:
 
 components:
   securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: API key (sk_test_… in the sandbox, sk_live_… in production)
+      description: |
+        A partner API key with scopes, issued by the operator (platform apikey). Keys expire
+        (401 key_expired); see 02 §3.1. This is how partners authenticate today; the
+        certificate-bound OAuth token below is the planned production edge.
+    dpopSession:
+      type: http
+      scheme: dpop
+      description: |
+        A merchant app session: Authorization DPoP <session_token> with a DPoP proof (RFC 9449)
+        signed by the device's hardware key, from POST /v1/auth/nostr.
     mtlsBoundToken:
       type: http
       scheme: bearer
@@ -2057,7 +2428,11 @@ components:
     ApiVersion:
       name: Api-Version
       in: header
-      required: true
+      required: false
+      description: |
+        The contract version the client was written against. Absent, the current version
+        (2026-10-01) applies; every response names the version it answered in its own Api-Version
+        header. An unknown version answers 400 unsupported_api_version.
       schema:
         type: string
         pattern: "^\\d{4}-\\d{2}-\\d{2}$"
@@ -2252,7 +2627,10 @@ components:
 
     PaymentIntentCreate:
       type: object
-      required: [amount, currency, merchant_id, payment_method_types]
+      description: |
+        currency defaults to BRL, and payment_method_types follows channel when absent.
+        merchant_id is required with an API key; an app session always charges its own merchant.
+      required: [amount]
       properties:
         amount:
           $ref: "#/components/schemas/MinorUnits"
@@ -2542,7 +2920,10 @@ components:
 
     TerminalAuthorizationRequest:
       type: object
-      required: [payment_intent_id, terminal_id, stan, sred, attestation]
+      description: |
+        attestation is optional: an Android phone may send its Play Integrity verdict for the
+        sale; an iPhone signs these exact bytes with its App Attest key instead (05 §2.4).
+      required: [payment_intent_id, terminal_id, stan, sred]
       properties:
         payment_intent_id:
           $ref: "#/components/schemas/Id"
@@ -2971,12 +3352,18 @@ components:
 
     Entry:
       type: object
-      required: [id, journal_id, direction, amount, type, posted_at]
+      required: [id, journal_id, seq, direction, amount, type, posted_at]
       properties:
         id:
-          $ref: "#/components/schemas/Id"
+          type: string
+          pattern: "^jr_[0-9A-HJKMNP-TV-Z]{26}\\.[0-9]+$"
+          description: The posting's id, its journal and place in it (jr_….2). Pass the last one as starting_after for the next page.
         journal_id:
           $ref: "#/components/schemas/Id"
+        seq:
+          type: integer
+          minimum: 0
+          description: The posting's place in its journal.
         direction:
           type: string
           enum: [debit, credit]
@@ -3105,7 +3492,7 @@ components:
 
     MerchantCreate:
       type: object
-      required: [legal, root_npub]
+      required: [legal]
       properties:
         legal:
           type: object
@@ -3138,6 +3525,7 @@ components:
                 additionalProperties: true
         root_npub:
           $ref: "#/components/schemas/Npub"
+          description: The merchant's root key. Optional here; the owner's phone sets it when it enrolls (03 §4.1).
         contact:
           type: object
           additionalProperties: true
@@ -3159,9 +3547,7 @@ components:
           maxLength: 15
           description: Merchant ID sent in DE 42. Assigned by the platform when absent (sub-acquirer model).
         plan:
-          type: object
-          description: Pricing (basis points per product, risk tier, instant settlement).
-          additionalProperties: true
+          $ref: "#/components/schemas/Plan"
 
     DaySummary:
       type: object
@@ -3208,7 +3594,7 @@ components:
             $ref: "#/components/schemas/MinorUnits"
         last_week:
           type: object
-          required: [date, sales, gross, change_pct]
+          required: [date, sales, gross, change_pct, hourly]
           properties:
             date:
               type: string
@@ -3219,6 +3605,13 @@ components:
               $ref: "#/components/schemas/MinorUnits"
             change_pct:
               type: [number, "null"]
+            hourly:
+              type: array
+              minItems: 24
+              maxItems: 24
+              description: That whole day's gross by hour, for the comparison line in the charts.
+              items:
+                $ref: "#/components/schemas/MinorUnits"
         waiting:
           type: object
           required: [count, amount]
@@ -3246,14 +3639,132 @@ components:
               created_at:
                 type: string
                 format: date-time
+    PeriodSummary:
+      type: object
+      required: [object, merchant_id, from, to, days, sales, gross, refunded, fees, net, average_ticket, by_method, daily, previous]
+      properties:
+        object:
+          const: period_summary
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        days:
+          type: integer
+          minimum: 1
+          maximum: 92
+        sales:
+          type: integer
+        gross:
+          $ref: "#/components/schemas/MinorUnits"
+        refunded:
+          $ref: "#/components/schemas/MinorUnits"
+        fees:
+          $ref: "#/components/schemas/MinorUnits"
+        net:
+          $ref: "#/components/schemas/MinorUnits"
+        average_ticket:
+          $ref: "#/components/schemas/MinorUnits"
+        by_method:
+          type: array
+          items:
+            type: object
+            required: [method, sales, gross]
+            properties:
+              method:
+                type: string
+              sales:
+                type: integer
+              gross:
+                $ref: "#/components/schemas/MinorUnits"
+        daily:
+          type: array
+          description: One entry per day of the period, days without sales included.
+          items:
+            type: object
+            required: [date, sales, gross]
+            properties:
+              date:
+                type: string
+                format: date
+              sales:
+                type: integer
+              gross:
+                $ref: "#/components/schemas/MinorUnits"
+        previous:
+          type: object
+          required: [from, to, sales, gross, change_pct, daily]
+          properties:
+            from:
+              type: string
+              format: date
+            to:
+              type: string
+              format: date
+            sales:
+              type: integer
+            gross:
+              $ref: "#/components/schemas/MinorUnits"
+            change_pct:
+              type: [number, "null"]
+              description: The period's gross against this one's, in percent; null when this one sold nothing.
+            daily:
+              type: array
+              description: Gross by day, aligned with the period's days (day i against day i).
+              items:
+                $ref: "#/components/schemas/MinorUnits"
+
+    WebhookEndpoint:
+      type: object
+      required: [id, object, url, events, status]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: webhook_endpoint
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [enabled, disabled]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        disabled_at:
+          $ref: "#/components/schemas/Timestamp"
+
     Merchant:
       type: object
-      required: [id, object, status, root_npub]
+      required: [id, object, account_id, legal_name, trade_name, mcc, status, plan]
       properties:
         id:
           $ref: "#/components/schemas/Id"
         object:
           const: merchant
+        account_id:
+          $ref: "#/components/schemas/Id"
+        legal_name:
+          type: string
+        trade_name:
+          type: string
+        mcc:
+          type: string
+          pattern: "^[0-9]{4}$"
+        scheme_mid:
+          type: string
+          description: The merchant ID sent in DE 42.
+        city:
+          type: string
+        plan:
+          $ref: "#/components/schemas/Plan"
         status:
           type: string
           enum: [kyb_in_review, action_required, active, restricted, closed]
@@ -3267,8 +3778,36 @@ components:
           additionalProperties: true
         root_npub:
           $ref: "#/components/schemas/Npub"
-        created_at:
-          $ref: "#/components/schemas/Timestamp"
+          description: The merchant's root key, once the owner's phone set it at enrollment (03 §4.1).
+
+    Plan:
+      type: object
+      description: |
+        Pricing: basis points per product, the risk tier and whether the merchant settles
+        instantly. Older clients may send the same fields as CreditBps, DebitBps,
+        InstallmentBps, PixBps, Tier and Instant; responses always use these names.
+      properties:
+        credit_bps:
+          type: integer
+          minimum: 0
+          description: Single-payment credit MDR.
+        debit_bps:
+          type: integer
+          minimum: 0
+        installment_bps:
+          type: integer
+          minimum: 0
+          description: Merchant installments (parcelado lojista).
+        pix_bps:
+          type: integer
+          minimum: 0
+        tier:
+          type: string
+          enum: [A, B, C, D]
+          description: Risk tier; D is not eligible for instant settlement.
+        instant:
+          type: boolean
+          description: Instant settlement requested.
 
     DeviceCreate:
       type: object

@@ -168,6 +168,12 @@ class GoonersPayApi(
         suspend fun daySummary(date: String? = null): DaySummary =
             call("GET", "/v1/merchants/${session.merchantId}/summary" + (date?.let { "?date=$it" } ?: ""), null, DaySummary.serializer())
 
+        /** Sales by day from one Brasília day to another (docs/02 §8.6); the last 30 days by default. */
+        suspend fun periodSummary(from: String? = null, to: String? = null): PeriodSummary {
+            val q = listOfNotNull(from?.let { "from=$it" }, to?.let { "to=$it" }).joinToString("&")
+            return call("GET", "/v1/merchants/${session.merchantId}/summary/period" + (if (q.isEmpty()) "" else "?$q"), null, PeriodSummary.serializer())
+        }
+
         suspend fun entries(limit: Int = 20): Entries = call("GET", "/v1/accounts/${session.accountId}/entries?limit=$limit", null, Entries.serializer())
 
         suspend fun quote(amount: Long, destination: PixDestination): Quote =

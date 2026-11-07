@@ -128,11 +128,42 @@ details summary { cursor: pointer; color: var(--info-text); min-height: 32px; }
 .delta.flat { color: var(--text-secondary); }
 .day-charts { display: grid; gap: var(--space-xl); grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); margin-top: var(--space-xl); }
 @media (max-width: 860px) { .day-charts { grid-template-columns: minmax(0, 1fr); } }
-.spark { display: block; width: 100%; height: 72px; margin-top: var(--space-sm); }
-.spark .bar { fill: var(--action-border); }
-.spark .bar.empty { fill: var(--border); }
-.axis { display: flex; justify-content: space-between; font-size: 12px; line-height: 16px; color: var(--text-secondary); font-variant-numeric: tabular-nums; margin-top: var(--space-xs); }
-.mix { display: flex; gap: 2px; height: 12px; border-radius: var(--radius-pill); overflow: hidden; background: var(--surface-raised); margin-top: var(--space-sm); }
+/* The period filter: one row above everything it scopes. */
+.filter-row { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-md); background: var(--surface-raised); border: 1px solid var(--border); }
+.seg-button { min-height: 40px; padding: 0 var(--space-lg); border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--text-secondary); font-weight: 600; }
+.seg-button[aria-pressed="true"] { background: var(--surface); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.seg-button:hover { border-color: transparent; color: var(--text-primary); }
+.sales-body { transition: opacity var(--motion-standard); }
+.sales-body.refetching { opacity: .5; } /* the previous render holds while the next loads */
+
+/* The sales chart: thin marks, a hairline grid, quiet axes; the data is the loud part. */
+.chart { margin-top: var(--space-sm); }
+.legend-row { display: flex; flex-wrap: wrap; gap: var(--space-lg); font-size: 13px; color: var(--text-secondary); margin-bottom: var(--space-xs); }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.swatch.focus { background: var(--chart-focus); }
+.line-key { display: inline-block; width: 16px; height: 2px; border-radius: 1px; background: var(--chart-compare); }
+.plot { position: relative; outline-offset: 4px; border-radius: var(--radius-sm); }
+.plot svg { display: block; width: 100%; overflow: visible; }
+.plot .grid { stroke: var(--chart-grid); stroke-width: 1; shape-rendering: crispEdges; }
+.plot .tick { fill: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.plot .bar { fill: var(--chart-focus); transition: opacity var(--motion-standard); }
+.plot .bar.on { opacity: .75; }
+.plot .compare-line { fill: none; stroke: var(--chart-compare); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.plot .cross { stroke: var(--text-secondary); stroke-width: 1; shape-rendering: crispEdges; }
+.plot .hit { fill: transparent; cursor: crosshair; }
+.tip { position: absolute; z-index: 2; min-width: 168px; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface-raised); color: var(--text-primary); box-shadow: 0 6px 18px rgba(0,0,0,.18); pointer-events: none; font-size: 13px; }
+.tip-title { color: var(--text-secondary); margin-bottom: 2px; }
+.tip-row { display: grid; grid-template-columns: 16px auto 1fr; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; }
+.tip-row strong { font-size: 14px; }
+.tip-row .swatch { width: 10px; }
+.table-view { margin-top: var(--space-sm); font-size: 14px; }
+.table-view summary { font-size: 13px; }
+.table-view table { margin-top: var(--space-xs); }
+
+/* How customers paid: a thin bar, 2px card-surface gaps between parts, rounded ends. */
+.mix { display: flex; gap: 2px; height: 8px; border-radius: var(--radius-pill); overflow: hidden; margin-top: var(--space-sm); }
 .mix > span { display: block; height: 100%; min-width: 4px; }
 .legend { list-style: none; padding: 0; margin: var(--space-md) 0 0; display: grid; gap: var(--space-sm); }
 .legend li { display: grid; grid-template-columns: 12px 1fr auto auto; gap: var(--space-sm); align-items: center; font-size: 14px; }
@@ -162,3 +193,7 @@ details summary { cursor: pointer; color: var(--info-text); min-height: 32px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.merchant-list { list-style: none; padding: 0; margin: 0; }
+.merchant-list li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; }
+button.small { min-height: 36px; padding: 0 var(--space-md); font-size: 14px; }

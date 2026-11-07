@@ -31,7 +31,7 @@ const leaves = (group) => Object.entries(group).filter(([k]) => !k.startsWith('$
 const palette = [];
 for (const [family, shades] of leaves(tokens.color)) {
   if (shades.$value) palette.push([camel(family), hex(shades.$value)]);
-  else for (const [shade, t] of leaves(shades)) palette.push([camel(family) + shade, hex(t.$value)]);
+  else for (const [shade, t] of leaves(shades)) palette.push([camel(family) + (/^\d/.test(shade) ? shade : shade[0].toUpperCase() + shade.slice(1)), hex(t.$value)]);
 }
 const themes = Object.fromEntries(leaves(tokens.theme).map(([name, roles]) => [name, leaves(roles).map(([role, t]) => [role, hex(t.$value)])]));
 const roles = themes.dark.map(([r]) => r);

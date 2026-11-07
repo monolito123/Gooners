@@ -1,0 +1,2732 @@
+{
+  "info": {
+    "name": "goonersPAY API",
+    "description": "Generated from api/openapi.yaml (2026-10-01) by tools/gen-postman.mjs. Set baseUrl (the sandbox, or http://localhost:8080 for a local stack) and apiKey (sk_test_…) in the collection variables; see docs/10-integration-guide.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "apiKey",
+      "value": "sk_test_"
+    }
+  ],
+  "item": [
+    {
+      "name": "auth",
+      "description": "Token and session issuance",
+      "item": [
+        {
+          "name": "Exchange a NIP-98 event for a DPoP-bound session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/nostr",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "nostr"
+              ]
+            },
+            "description": "Exchange a NIP-98 event for a DPoP-bound session",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dpop_jwk\": {\n    \"kty\": \"EC\",\n    \"crv\": \"P-256\",\n    \"x\": \"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU\",\n    \"y\": \"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0\"\n  },\n  \"device_id\": \"dev_01JB9A2B3C4D5E6F7G8H9J0K1M\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Resolve an enrollment code before building the device list",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/enrollment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "enrollment"
+              ]
+            },
+            "description": "Resolve an enrollment code before building the device list\n\nA phone presents a single-use enrollment code (Authorization: Enrollment <code>) and learns\nwhich merchant it is enrolling for, and whether the merchant already has a root key.\nWithout one, this phone creates it.\n"
+          }
+        },
+        {
+          "name": "Enroll this phone with a single-use code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/enrollment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "enrollment"
+              ]
+            },
+            "description": "Enroll this phone with a single-use code\n\nSame body as POST /v1/merchants/{id}/devices. The code is spent. On the merchant's first\nenrollment the device list's signer becomes the merchant's root key.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_npub\": \"npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr\",\n  \"platform\": \"android\",\n  \"model\": \"Pixel 9\",\n  \"attestation\": {\n    \"type\": \"android_key_attestation\",\n    \"certificate_chain\": [\n      \"MIICyjCCAm+gAwIBAgIBATAKBggqhkjOPQQDAjA5MQwwCgYDVQQMDANURUUxKTAnBgNVBAUTIGQ0Y2Q2…\"\n    ],\n    \"play_integrity_token\": \"eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0…\"\n  },\n  \"authorization_event\": {\n    \"id\": \"eeb8fda719fa5813d637989236a770842af723e978911f8c8506f14f4923e8bf\",\n    \"pubkey\": \"f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0\",\n    \"created_at\": 1793275930,\n    \"kind\": 17710,\n    \"tags\": [\n      [\n        \"v\",\n        \"1\"\n      ],\n      [\n        \"merchant\",\n        \"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"\n      ],\n      [\n        \"device\",\n        \"6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2\",\n        \"android\",\n        \"Caixa 1\",\n        \"1793275930\"\n      ],\n      [\n        \"device\",\n        \"68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510\",\n        \"ios\",\n        \"iPad balcão\",\n        \"1793275930\"\n      ]\n    ],\n    \"content\": \"\",\n    \"sig\": \"b19a1314953b8b64b8bc51bdac2ef1d9350d64e6b8818d28bd23d394a51c35239dadfdcc491ac62379d86587af0123317ce08f81ad6fb8dd244911abbef222ad\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "merchants",
+      "description": "Onboarding, devices and terminals",
+      "item": [
+        {
+          "name": "Create a single-use enrollment code for a phone (valid 15 minutes)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants/:id/enrollment-codes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants",
+                ":id",
+                "enrollment-codes"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Create a single-use enrollment code for a phone (valid 15 minutes)"
+          }
+        },
+        {
+          "name": "Start merchant onboarding (KYB)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants"
+              ]
+            },
+            "description": "Start merchant onboarding (KYB)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legal\": {\n    \"document\": {\n      \"type\": \"cnpj\",\n      \"number\": \"12345678000195\"\n    },\n    \"legal_name\": \"Cafe Aurora Ltda\",\n    \"trade_name\": \"Café Aurora\",\n    \"mcc\": \"5812\",\n    \"address\": {\n      \"street\": \"Rua Augusta\",\n      \"number\": \"1500\",\n      \"city\": \"São Paulo\",\n      \"state\": \"SP\",\n      \"postal_code\": \"01304-001\",\n      \"country\": \"BR\"\n    },\n    \"representatives\": [\n      {\n        \"cpf\": \"12345678909\",\n        \"name\": \"Ana Souza\",\n        \"birth_date\": \"1990-04-12\",\n        \"role\": \"partner\"\n      }\n    ]\n  },\n  \"root_npub\": \"npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9\",\n  \"contact\": {\n    \"email\": \"ana@cafeaurora.example\",\n    \"phone\": \"+5511999990000\"\n  },\n  \"settlement\": {\n    \"default_speed\": \"instant\",\n    \"pix_key\": {\n      \"type\": \"cnpj\",\n      \"key\": \"12345678000195\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List the tenant's merchants, newest first",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List the tenant's merchants, newest first"
+          }
+        },
+        {
+          "name": "Retrieve a merchant (merchants:write, or the merchant's own app session)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a merchant (merchants:write, or the merchant's own app session)"
+          }
+        },
+        {
+          "name": "The merchant's day at a glance (payments:read, or the merchant's own app session)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants/:id/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants",
+                ":id",
+                "summary"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "",
+                  "disabled": true,
+                  "description": "The day, YYYY-MM-DD in Brasília time; today when absent."
+                }
+              ]
+            },
+            "description": "The merchant's day at a glance (payments:read, or the merchant's own app session)\n\nSales, gross, fees and net captured on a Brasília day, split by payment method and by hour, against the same weekday a week before (up to the same time of day for today), the charges still waiting, and the day's latest payments.\n"
+          }
+        },
+        {
+          "name": "The merchant's sales by day over a period, against the period before (payments:read, or the merchant's own app session)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants/:id/summary/period",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants",
+                ":id",
+                "summary",
+                "period"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The merchant's sales by day over a period, against the period before (payments:read, or the merchant's own app session)\n\nFrom one Brasília day to another, both included, at most 92 days; the last 30 days\nending today by default. Each day is listed, days without sales included. The previous\nperiod is as long and ends the day before; when the period ends today the previous one\nends at the same time of day, so the comparison is fair.\n"
+          }
+        },
+        {
+          "name": "Bind a device key authorized by the merchant root key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/merchants/:id/devices",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "merchants",
+                ":id",
+                "devices"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Bind a device key authorized by the merchant root key",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_npub\": \"npub1dg3wg0xfhkl044l50narr545m2j2za3ygkmygvzm3kdfp7m7ml3q22cfxr\",\n  \"platform\": \"android\",\n  \"model\": \"Pixel 9\",\n  \"attestation\": {\n    \"type\": \"android_key_attestation\",\n    \"certificate_chain\": [\n      \"MIICyjCCAm+gAwIBAgIBATAKBggqhkjOPQQDAjA5MQwwCgYDVQQMDANURUUxKTAnBgNVBAUTIGQ0Y2Q2…\"\n    ],\n    \"play_integrity_token\": \"eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2R0NNIn0…\"\n  },\n  \"authorization_event\": {\n    \"id\": \"eeb8fda719fa5813d637989236a770842af723e978911f8c8506f14f4923e8bf\",\n    \"pubkey\": \"f8a0ec16b67563d55336c381b5703960ef8b379c1e1a6ad2824efd26f1cfbfb0\",\n    \"created_at\": 1793275930,\n    \"kind\": 17710,\n    \"tags\": [\n      [\n        \"v\",\n        \"1\"\n      ],\n      [\n        \"merchant\",\n        \"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\"\n      ],\n      [\n        \"device\",\n        \"6a22e43cc9bdbefad7f47cfa31d2b4daa4a1762445b644305b8d9a90fb7edfe2\",\n        \"android\",\n        \"Caixa 1\",\n        \"1793275930\"\n      ],\n      [\n        \"device\",\n        \"68c56c9650ef52109ce0b18e95f24b0082da5fcb8bb7aed70728b086960a0510\",\n        \"ios\",\n        \"iPad balcão\",\n        \"1793275930\"\n      ]\n    ],\n    \"content\": \"\",\n    \"sig\": \"b19a1314953b8b64b8bc51bdac2ef1d9350d64e6b8818d28bd23d394a51c35239dadfdcc491ac62379d86587af0123317ce08f81ad6fb8dd244911abbef222ad\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register a terminal (DE 41) and bind its attested mTLS certificate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/terminals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "terminals"
+              ]
+            },
+            "description": "Register a terminal (DE 41) and bind its attested mTLS certificate\n\nBinds a terminal ID to a merchant. certificate_sha256 is the fingerprint of the terminal's\nmutual-TLS certificate, issued by the terminal PKI after device attestation (docs/05 §2.4);\nrequests on the terminal host are authenticated by that certificate. Sending a CSR for the\nplatform to sign returns 501 until the terminal PKI is enabled.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": \"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\n  \"device_id\": \"dev_01JB9A2B3C4D5E6F7G8H9J0K1M\",\n  \"type\": \"mpoc_cots\",\n  \"certificate_sha256\": \"d1584e3831c2e9ee819f8f538d2b49bb70875c842070b678a35724243498ec24\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Revoke a terminal (lost, stolen or decommissioned device)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/terminals/:id/revoke",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "terminals",
+                ":id",
+                "revoke"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Revoke a terminal (lost, stolen or decommissioned device)\n\nThe terminal's certificate stops authenticating and its terminal ID takes no further\nauthorizations. Revocation is permanent and recorded in the audit trail; register a new\nterminal for a replacement device. Sends terminal.revoked.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "payments",
+      "description": "Payment intents, terminal authorizations, refunds",
+      "item": [
+        {
+          "name": "Create a payment intent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents"
+              ]
+            },
+            "description": "Create a payment intent",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 12990,\n  \"currency\": \"BRL\",\n  \"merchant_id\": \"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\n  \"channel\": \"ecommerce\",\n  \"payment_method_types\": [\n    \"card\",\n    \"pix\"\n  ],\n  \"capture_method\": \"automatic\",\n  \"installments\": {\n    \"count\": 3,\n    \"type\": \"merchant\"\n  },\n  \"statement_descriptor\": \"CAFE AURORA\",\n  \"description\": \"Pedido #8812\",\n  \"customer\": {\n    \"email\": \"cliente@example.com\",\n    \"document\": {\n      \"type\": \"cpf\",\n      \"number\": \"12345678909\"\n    }\n  },\n  \"splits\": [\n    {\n      \"account_id\": \"acc_01JB9SE77ER000000000000001\",\n      \"amount\": 10990,\n      \"bears_fees\": true\n    },\n    {\n      \"account_id\": \"acc_01JB9MKTP00000000000000001\",\n      \"amount\": 2000,\n      \"bears_fees\": false\n    }\n  ],\n  \"receipt\": {\n    \"nostr\": true,\n    \"recipient_npub\": null\n  },\n  \"metadata\": {\n    \"order_id\": \"8812\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List payment intents, newest first (payments:read, or the merchant's own app session)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Required with a partner key; an app session always acts for its own merchant."
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "method",
+                  "value": "",
+                  "disabled": true,
+                  "description": "How the customer paid, as the summaries name it."
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Created on or after this Brasília day."
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Created on or before this Brasília day."
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List payment intents, newest first (payments:read, or the merchant's own app session)"
+          }
+        },
+        {
+          "name": "Retrieve a payment intent",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a payment intent"
+          }
+        },
+        {
+          "name": "Confirm with a card (3DS) or Pix",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents/:id/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents",
+                ":id",
+                "confirm"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Confirm with a card (3DS) or Pix",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_method_type\": \"crypto\",\n  \"asset\": \"USDT\",\n  \"network\": \"tron\",\n  \"payer\": {\n    \"type\": \"natural\",\n    \"name\": \"Ana Souza\",\n    \"document\": \"52998224725\",\n    \"country\": \"BR\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Capture an authorized payment intent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents/:id/capture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents",
+                ":id",
+                "capture"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Capture an authorized payment intent",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cancel (reverse) before clearing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents/:id/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents",
+                ":id",
+                "cancel"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Cancel (reverse) before clearing",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The devices' signed journal entries about a payment (dispute evidence)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payment-intents/:id/journal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payment-intents",
+                ":id",
+                "journal"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "The devices' signed journal entries about a payment (dispute evidence)"
+          }
+        },
+        {
+          "name": "Card-present authorization from an MPoC terminal (terminal host, CDE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/terminal/authorizations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "terminal",
+                "authorizations"
+              ]
+            },
+            "description": "Card-present authorization from an MPoC terminal (terminal host, CDE)\n\nAn iPhone attested with App Attest sends App-Attest-Assertion: the assertion its attested key makes over SHA-256 of this exact request body (DCAppAttestService generateAssertion). Without it, with another key, over another body or with a counter already used, the request is refused with 403 assertion-invalid before it reaches the card network.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_intent_id\": \"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\n  \"terminal_id\": \"TP000418\",\n  \"stan\": \"004211\",\n  \"local_time\": \"2026-10-29T14:42:08-03:00\",\n  \"emv_application\": \"credit\",\n  \"sred\": {\n    \"format\": \"mpoc-sdk-v2\",\n    \"ksn\": \"FFFF9876543210E00011\",\n    \"ciphertext\": \"q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJ\"\n  },\n  \"pin\": null,\n  \"device_risk\": {\n    \"score\": 0.1,\n    \"model\": \"gp-device-1\",\n    \"signals\": [\n      \"developer_options\"\n    ]\n  },\n  \"attestation\": {\n    \"verdict_token\": \"eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig\",\n    \"obtained_at\": \"2026-10-29T17:40:01Z\"\n  },\n  \"journal_event_id\": \"a14d60ce8cf49c2c466a55a184869f29ef6954e6383144abe702bbec4c74e02b\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Refund a captured payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/refunds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "refunds"
+              ]
+            },
+            "description": "Refund a captured payment",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_intent_id\": \"pi_01JBK3T2W8C9M4N5P6Q7R8S9TA\",\n  \"amount\": 4990,\n  \"reason\": \"requested_by_customer\",\n  \"metadata\": {\n    \"rma\": \"RMA-2231\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Retrieve a refund",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/refunds/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "refunds",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a refund"
+          }
+        },
+        {
+          "name": "Sandbox only. The customer pays a Pix charge",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/sandbox/pix/payments/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "sandbox",
+                "pix",
+                "payments",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Sandbox only. The customer pays a Pix charge\n\nThe PSP simulator pays the charge as a bank app would; its webhook then captures the\npayment, and the partner's webhooks follow. The answer waits up to five seconds for the\ncapture. The charge must be a Pix payment intent confirmed and waiting (requires_action).\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "terminals",
+      "description": "",
+      "item": [
+        {
+          "name": "Upload the device's signed, hash-chained journal entries (kind 7714)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/terminal/journal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "terminal",
+                "journal"
+              ]
+            },
+            "description": "Upload the device's signed, hash-chained journal entries (kind 7714)\n\nApp sessions only; every entry must be signed by the session's device key and name the\nmerchant's root key. Entries are stored in seq order; re-sent entries count as duplicates.\nThe answer is the HTTPS form of the 27711 / 27712 reconciliation (docs/03 §9): `missing`\nlists the seq ranges the platform lacks, and a second entry at a stored seq, or a prev that\nis not the entry before it, is kept as proof of a fork and freezes the device's terminal.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entries\": [\n    {\n      \"id\": \"\",\n      \"pubkey\": \"\",\n      \"created_at\": 0,\n      \"kind\": 0,\n      \"tags\": [\n        [\n          \"\"\n        ]\n      ],\n      \"content\": \"\",\n      \"sig\": \"\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The platform's view of this device's journal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/terminal/journal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "terminal",
+                "journal"
+              ]
+            },
+            "description": "The platform's view of this device's journal"
+          }
+        }
+      ]
+    },
+    {
+      "name": "disputes",
+      "description": "Chargebacks and evidence",
+      "item": [
+        {
+          "name": "List disputes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/disputes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "disputes"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List disputes"
+          }
+        },
+        {
+          "name": "Retrieve a dispute",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/disputes/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "disputes",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a dispute"
+          }
+        },
+        {
+          "name": "Attach and optionally submit evidence",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/disputes/:id/evidence",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "disputes",
+                ":id",
+                "evidence"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Attach and optionally submit evidence",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"files\": [\n    \"file_01JBP8A1B2C300000000000000\",\n    \"file_01JBP8A1B2C400000000000000\"\n  ],\n  \"explanation\": \"Compra autenticada com 3DS (ECI 05). Cliente reclamou o recibo assinado.\",\n  \"use_auto_evidence\": true,\n  \"submit\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Accept liability",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/disputes/:id/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "disputes",
+                ":id",
+                "accept"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Accept liability"
+          }
+        }
+      ]
+    },
+    {
+      "name": "risk",
+      "description": "Fraud shield reviews (held sales, frozen terminals)",
+      "item": [
+        {
+          "name": "List fraud shield reviews",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/risk/reviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "risk",
+                "reviews"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List fraud shield reviews\n\nSales the fraud shield approved but held, and terminals it froze (docs/07 §3.6), oldest first. Needs the risk:read scope.\n"
+          }
+        },
+        {
+          "name": "Retrieve a review",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/risk/reviews/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "risk",
+                "reviews",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a review"
+          }
+        },
+        {
+          "name": "Resolve a review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/risk/reviews/:id/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "risk",
+                "reviews",
+                ":id",
+                "resolve"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Resolve a review\n\nrelease: the sale was genuine; its money settles on schedule and a terminal frozen by this review sells again. fraud: the money stays held for the chargeback and a terminal frozen by this review is revoked; a refund or chargeback of the sale later releases the hold. Recorded in the audit trail; sends risk.review_resolved. Needs the risk:write scope.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolution\": \"release\",\n  \"note\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "accounts",
+      "description": "Sub-ledger accounts and transfers",
+      "item": [
+        {
+          "name": "Balance by availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/:id/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                ":id",
+                "balance"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Balance by availability"
+          }
+        },
+        {
+          "name": "Immutable ledger postings for the account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/accounts/:id/entries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "accounts",
+                ":id",
+                "entries"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Immutable ledger postings for the account"
+          }
+        }
+      ]
+    },
+    {
+      "name": "payouts",
+      "description": "Quotes and payouts (instant settlement)",
+      "item": [
+        {
+          "name": "Price a payout, including any advance of pending receivables",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payouts/quotes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payouts",
+                "quotes"
+              ]
+            },
+            "description": "Price a payout, including any advance of pending receivables",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"acc_01JB9SE77ER000000000000001\",\n  \"amount\": 400000,\n  \"speed\": \"instant\",\n  \"destination\": {\n    \"type\": \"pix\",\n    \"key_type\": \"cnpj\",\n    \"key\": \"12345678000195\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Execute a quoted payout (requires an HTTP Message Signature)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/payouts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "payouts"
+              ]
+            },
+            "description": "Execute a quoted payout (requires an HTTP Message Signature)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quote_id\": \"pq_01JBK7F6G7H8J9K0M1M2N3P4Q5\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "settlements",
+      "description": "Daily statements and inclusion proofs",
+      "item": [
+        {
+          "name": "List daily settlement statements, newest day first",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/settlements",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "settlements"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List daily settlement statements, newest day first\n\nAn app session sees only its own merchant's statements."
+          }
+        },
+        {
+          "name": "The signed kind 7713 statement, as gift-wrapped to the merchant's keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/settlements/:id/statement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "settlements",
+                ":id",
+                "statement"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "The signed kind 7713 statement, as gift-wrapped to the merchant's keys"
+          }
+        },
+        {
+          "name": "A day's public settlement transparency root (kind 7715)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transparency/:date",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transparency",
+                ":date"
+              ],
+              "variable": [
+                {
+                  "key": "date",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "A day's public settlement transparency root (kind 7715)\n\nPublic data, served without credentials so anyone can check a merchant's proof (docs/03 §6.5).",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Retrieve a daily settlement statement",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/settlements/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "settlements",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a daily settlement statement"
+          }
+        },
+        {
+          "name": "Inclusion proof of a receipt in a statement and of the statement in the transparency log",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/settlements/:id/proofs/:receipt_event_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "settlements",
+                ":id",
+                "proofs",
+                ":receipt_event_id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                },
+                {
+                  "key": "receipt_event_id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Inclusion proof of a receipt in a statement and of the statement in the transparency log"
+          }
+        }
+      ]
+    },
+    {
+      "name": "webhooks",
+      "description": "Webhook endpoints",
+      "item": [
+        {
+          "name": "Register a webhook endpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhook-endpoints",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhook-endpoints"
+              ]
+            },
+            "description": "Register a webhook endpoint",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/hook\",\n  \"events\": [\n    \"\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List the tenant's webhook endpoints, enabled or not (never their secrets)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhook-endpoints",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhook-endpoints"
+              ]
+            },
+            "description": "List the tenant's webhook endpoints, enabled or not (never their secrets)"
+          }
+        },
+        {
+          "name": "Retrieve a webhook endpoint",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhook-endpoints/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhook-endpoints",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a webhook endpoint"
+          }
+        },
+        {
+          "name": "Stop sending to an endpoint, for good",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhook-endpoints/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhook-endpoints",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Stop sending to an endpoint, for good\n\nNo new events are queued for it and its pending deliveries are abandoned. It stays\nlisted, disabled, with its history; replaying to it answers 409, so create a new\nendpoint and replay there. Calling it again answers the same. Recorded in the audit trail.\n"
+          }
+        },
+        {
+          "name": "Replay deliveries for a time range",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhook-endpoints/:id/replay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhook-endpoints",
+                ":id",
+                "replay"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Replay deliveries for a time range\n\nSchedules every delivery of the endpoint created in [since, until) again, delivered or\nnot, with its original webhook-id so the receiver can deduplicate. At most the last 30\ndays and 10 000 deliveries per call.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"since\": \"2026-11-06T12:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Issue a new signing secret (webhooks:write)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhook-endpoints/:id/rotate-secret",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhook-endpoints",
+                ":id",
+                "rotate-secret"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Issue a new signing secret (webhooks:write)\n\nThe new secret is returned once. The old one keeps signing beside it for overlap_hours (default 24, at most 168): deliveries in that window carry both signatures, so the receiver can switch when its deploy lands. A leaked secret is rotated with 0.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "assets",
+      "description": "Crypto, accounts abroad and B3 investments (docs/09)",
+      "item": [
+        {
+          "name": "Best bid and ask in reais across the connected exchanges",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/crypto/markets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "crypto",
+                "markets"
+              ]
+            },
+            "description": "Best bid and ask in reais across the connected exchanges"
+          }
+        },
+        {
+          "name": "Send crypto the merchant holds to an outside address (payouts:write)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/crypto/withdrawals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "crypto",
+                "withdrawals"
+              ]
+            },
+            "description": "Send crypto the merchant holds to an outside address (payouts:write)\n\nFinal once sent. The address is checked against the network's format and screened against sanctions lists before anything moves: a listed address is refused with 403 address_refused, and a screening that cannot be completed with 503 (nothing is sent either way; every screening is recorded). The network fee is taken from the holding. The travel rule goes first (docs/09 §6.6): to another provider (destination_type exchange, beneficiary_vasp required) the receiving provider must accept the IVMS101 data before anything moves (422 travel_rule_rejected, or 503 without an answer); to a self-hosted wallet the request records the owner's declaration.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": \"mer_01M684RWYMZP1JMTS610WQYS3V\",\n  \"asset\": \"BTC\",\n  \"network\": \"bitcoin\",\n  \"address\": \"bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq\",\n  \"amount\": \"0.0001\",\n  \"destination_type\": \"exchange\",\n  \"beneficiary\": {\n    \"type\": \"natural\",\n    \"name\": \"João Pereira\",\n    \"document\": \"12345678909\",\n    \"country\": \"BR\"\n  },\n  \"beneficiary_vasp\": {\n    \"name\": \"Exchange Exemplo S.A.\",\n    \"lei\": \"506700GE1G29325QX363\",\n    \"country\": \"BR\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "What a merchant holds besides reais, valued at the best price to sell now",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/holdings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "holdings"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Required with a partner key; an app session always acts for its own merchant."
+                }
+              ]
+            },
+            "description": "What a merchant holds besides reais, valued at the best price to sell now"
+          }
+        },
+        {
+          "name": "Quote buying or selling crypto or a foreign currency against reais",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/conversions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "conversions"
+              ]
+            },
+            "description": "Quote buying or selling crypto or a foreign currency against reais\n\nA firm price for 30 seconds, with the fee and, for foreign currency, the IOF shown apart. Nothing moves until the quote is executed.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": \"mer_01M684RWYMZP1JMTS610WQYS3V\",\n  \"side\": \"buy\",\n  \"asset\": \"BTC\",\n  \"brl_amount\": 35000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "A conversion",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/conversions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "conversions",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "A conversion"
+          }
+        },
+        {
+          "name": "Execute a quoted conversion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/conversions/:id/execute",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "conversions",
+                ":id",
+                "execute"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Execute a quoted conversion\n\nIdempotent. Refused (410) after the quote expires, and (422) when the market moved more than the slippage guard or the holding does not cover a sale; nothing is charged then.\n"
+          }
+        },
+        {
+          "name": "The merchant's USD, EUR and GBP balances and the details to receive into them",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/international/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "international",
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Required with a partner key; an app session always acts for its own merchant."
+                }
+              ]
+            },
+            "description": "The merchant's USD, EUR and GBP balances and the details to receive into them"
+          }
+        },
+        {
+          "name": "Pay a beneficiary abroad from a foreign-currency balance (payouts:write)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/international/payouts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "international",
+                "payouts"
+              ]
+            },
+            "description": "Pay a beneficiary abroad from a foreign-currency balance (payouts:write)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": \"mer_01M684RWYMZP1JMTS610WQYS3V\",\n  \"currency\": \"USD\",\n  \"amount\": \"50.00\",\n  \"reference\": \"Invoice 7\",\n  \"beneficiary\": {\n    \"name\": \"Acme Inc\",\n    \"type\": \"business\",\n    \"country\": \"US\",\n    \"routing_number\": \"026009593\",\n    \"account_number\": \"12345678\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Last price of a B3 share, unit or BDR, with its lot and whether the session is open",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/investments/quotes/:ticker",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "investments",
+                "quotes",
+                ":ticker"
+              ],
+              "variable": [
+                {
+                  "key": "ticker",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Last price of a B3 share, unit or BDR, with its lot and whether the session is open"
+          }
+        },
+        {
+          "name": "The merchant's investor profile (CVM Resolution 30)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/investments/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "investments",
+                "profile"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Required with a partner key; an app session always acts for its own merchant."
+                }
+              ]
+            },
+            "description": "The merchant's investor profile (CVM Resolution 30)"
+          }
+        },
+        {
+          "name": "Answer the suitability questions; the profile follows from the answers",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/investments/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "investments",
+                "profile"
+              ]
+            },
+            "description": "Answer the suitability questions; the profile follows from the answers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": \"mer_01M684RWYMZP1JMTS610WQYS3V\",\n  \"answers\": {\n    \"horizon\": 2,\n    \"tolerance\": 2,\n    \"experience\": 1\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Buy or sell at B3 through the broker, in standard lots and the fractional market",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/investments/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "investments",
+                "orders"
+              ]
+            },
+            "description": "Buy or sell at B3 through the broker, in standard lots and the fractional market\n\nA buy is paid from the wallet now; a sale's proceeds arrive at settlement (D+2). A conservative profile cannot buy variable income (409); no profile on file is 404.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": \"mer_01M684RWYMZP1JMTS610WQYS3V\",\n  \"ticker\": \"PETR4\",\n  \"side\": \"buy\",\n  \"quantity\": 150\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Positions at B3 with their value and result, and the recent orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/investments/positions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "investments",
+                "positions"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Required with a partner key; an app session always acts for its own merchant."
+                }
+              ]
+            },
+            "description": "Positions at B3 with their value and result, and the recent orders"
+          }
+        },
+        {
+          "name": "Sandbox only. The customer's transfer for a pending crypto charge arrives",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/sandbox/crypto/payments/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "sandbox",
+                "crypto",
+                "payments",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Sandbox only. The customer's transfer for a pending crypto charge arrives",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Sandbox only. A payer abroad sends money to the merchant's account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/sandbox/international/credits",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "sandbox",
+                "international",
+                "credits"
+              ]
+            },
+            "description": "Sandbox only. A payer abroad sends money to the merchant's account",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"USD\",\n  \"amount\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "compliance",
+      "description": "Held crypto deposits, travel-rule reviews and messages, address screenings (docs/09 §6.5 to §6.7)",
+      "item": [
+        {
+          "name": "List compliance cases (compliance:read)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/compliance/cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "compliance",
+                "cases"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List compliance cases (compliance:read)\n\nDeposits held because a sender is on a sanctions list or could not be screened, and travel-rule reviews, newest first.\n"
+          }
+        },
+        {
+          "name": "Retrieve a case (compliance:read)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/compliance/cases/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "compliance",
+                "cases",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a case (compliance:read)"
+          }
+        },
+        {
+          "name": "Release, block or close a case (compliance:write)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/compliance/cases/:id/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "compliance",
+                "cases",
+                ":id",
+                "decision"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Release, block or close a case (compliance:write)\n\nrelease: the hold is undone and a payment that waited settles. block: the coins stay frozen in liability.compliance_hold and the payment is canceled; operations reports it (runbook §4.12). close: a review, nothing was held. The note is required and kept with who decided; a case already decided answers 409.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"release\",\n  \"note\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List address screenings (compliance:read)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/compliance/screenings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "compliance",
+                "screenings"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": "The id of the last screening of the previous page."
+                },
+                {
+                  "key": "purpose",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "result",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List address screenings (compliance:read)\n\nEvery withdrawal address and deposit sender screened, clear or not, newest first."
+          }
+        },
+        {
+          "name": "List travel-rule messages (compliance:read)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/travel-rule/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "travel-rule",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "starting_after",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                },
+                {
+                  "key": "direction",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "List travel-rule messages (compliance:read)"
+          }
+        },
+        {
+          "name": "Retrieve a travel-rule message with its payload (travel_rule:read)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/travel-rule/messages/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "travel-rule",
+                "messages",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Retrieve a travel-rule message with its payload (travel_rule:read)\n\nThe IVMS101 payload names people and their documents: it is stored sealed and read only with travel_rule:read, which a \"*\" key does not include. A redacted message (past the record-keeping period) has redacted_at and no payload.\n"
+          }
+        },
+        {
+          "name": "A message another provider sent (the travel-rule adapter only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/travel-rule/inbound",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "travel-rule",
+                "inbound"
+              ]
+            },
+            "description": "A message another provider sent (the travel-rule adapter only)\n\nSigned with the adapter's shared secret in the webhook-id, webhook-timestamp and webhook-signature headers (HMAC-SHA256, as the platform's own webhooks). The answer is the platform's to the sender; the same reference twice answers the first result.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"trp-91c2\",\n  \"asset\": \"USDT\",\n  \"network\": \"tron\",\n  \"address\": \"T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM\",\n  \"amount\": \"27.966350\",\n  \"txid\": \"91078c1e…767c\",\n  \"originator_vasp\": {\n    \"name\": \"Outra Exchange S.A.\",\n    \"lei\": \"506700GE1G29325QX363\"\n  },\n  \"ivms101\": {\n    \"originator\": {\n      \"originatorPerson\": [\n        {\n          \"naturalPerson\": {\n            \"name\": {\n              \"nameIdentifier\": [\n                {\n                  \"primaryIdentifier\": \"Souza\",\n                  \"secondaryIdentifier\": \"Ana\",\n                  \"naturalPersonNameIdentifierType\": \"LEGL\"\n                }\n              ]\n            },\n            \"customerIdentification\": \"cust-778\"\n          },\n          \"accountNumber\": [\n            \"TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy\"\n          ]\n        }\n      ]\n    },\n    \"beneficiary\": {\n      \"beneficiaryPerson\": [\n        {\n          \"legalPerson\": {\n            \"name\": {\n              \"nameIdentifier\": [\n                {\n                  \"legalPersonName\": \"Mercado Bom Preço Ltda\",\n                  \"legalPersonNameIdentifierType\": \"LEGL\"\n                }\n              ]\n            }\n          }\n        }\n      ]\n    },\n    \"payloadMetadata\": {\n      \"payloadVersion\": \"101.2023\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

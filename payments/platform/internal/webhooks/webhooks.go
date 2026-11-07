@@ -84,7 +84,7 @@ func Enqueue(ctx context.Context, tx pgx.Tx, tenantID, eventType string, data an
 	}
 	msgID := ids.New("msg")
 	_, err = tx.Exec(ctx, `INSERT INTO webhook_deliveries (endpoint_id, message_id, type, body)
-		SELECT id, $3, $2, $4 FROM webhook_endpoints WHERE tenant_id = $1 AND ($2 = ANY(events) OR '*' = ANY(events))`,
+		SELECT id, $3, $2, $4 FROM webhook_endpoints WHERE tenant_id = $1 AND disabled_at IS NULL AND ($2 = ANY(events) OR '*' = ANY(events))`,
 		tenantID, eventType, msgID, string(body))
 	return err
 }

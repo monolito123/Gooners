@@ -445,6 +445,8 @@ public struct LastWeek: Codable, Sendable, Equatable {
     public var gross: Int64
     /// Nil when last week sold nothing: there is nothing to compare with.
     public var changePct: Double?
+    /// That whole day by hour, for the comparison line.
+    public var hourly: [Int64]?
 }
 
 public struct WaitingTotal: Codable, Sendable, Equatable {
@@ -460,4 +462,36 @@ public struct RecentPayment: Codable, Sendable, Equatable, Hashable, Identifiabl
     /// Brand and last four digits, for a card.
     public var card: String?
     public var createdAt: String
+}
+
+/// A merchant's sales by day over a period (GET /v1/merchants/{id}/summary/period, docs/02 §8.6).
+public struct PeriodSummary: Codable, Sendable, Equatable {
+    public var from: String
+    public var to: String
+    public var days: Int
+    public var sales: Int64
+    public var gross: Int64
+    public var refunded: Int64
+    public var fees: Int64
+    public var net: Int64
+    public var averageTicket: Int64
+    public var byMethod: [MethodTotal]
+    public var daily: [DayTotal]
+    public var previous: PreviousPeriod
+}
+
+public struct DayTotal: Codable, Sendable, Equatable, Hashable {
+    public var date: String
+    public var sales: Int64
+    public var gross: Int64
+}
+
+public struct PreviousPeriod: Codable, Sendable, Equatable {
+    public var from: String
+    public var to: String
+    public var sales: Int64
+    public var gross: Int64
+    public var changePct: Double?
+    /// Gross by day, aligned with the period's days.
+    public var daily: [Int64]
 }

@@ -137,6 +137,16 @@ final class SandboxIntegrationTests: XCTestCase {
         // The day at a glance counts the sale.
         let day = try await authed.daySummary()
         XCTAssertTrue(day.sales >= 1 && day.gross == day.hourly.reduce(0, +) && !day.recent.isEmpty)
+        // The last 7 days by day, through a query string the DPoP proof leaves out (RFC 9449 §4.2).
+        let ymd = DateFormatter()
+        ymd.calendar = Calendar(identifier: .gregorian)
+        ymd.locale = Locale(identifier: "en_US_POSIX")
+        ymd.timeZone = TimeZone(identifier: "UTC")
+        ymd.dateFormat = "yyyy-MM-dd"
+        let weekStart = ymd.string(from: try XCTUnwrap(ymd.date(from: day.date)).addingTimeInterval(-6 * 86_400))
+        let week = try await authed.periodSummary(from: weekStart, to: day.date)
+        XCTAssertTrue(week.days == 7 && week.daily.count == 7 && week.daily.last?.date == day.date)
+        XCTAssertTrue(week.gross >= day.gross && week.daily.reduce(0) { $0 + $1.gross } == week.gross && week.previous.to < week.from)
 
         // Balance and a payout to a Pix key.
         let balance = try await authed.balance()

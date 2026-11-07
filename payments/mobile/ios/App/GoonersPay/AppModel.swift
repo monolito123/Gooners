@@ -79,6 +79,10 @@ final class AppModel {
     var settlements: [Settlement] = []
     /// The day at a glance; nil until loaded, or from a platform without the summary.
     var today: DaySummary?
+    /// The sales card's period in days: 1 is today by hour, 7 and 30 are by day.
+    var period = 1
+    /// The last 7 or 30 days, once loaded for the period chosen.
+    var range: PeriodSummary?
     /// The statement open on screen, checked on the phone.
     var statement: Statement?
     var devices: [DeviceList.Entry]
@@ -327,7 +331,32 @@ final class AppModel {
             do { today = try await a.daySummary() } catch let e as APIError where e.status == 404 { today = nil }
             entries = try await a.entries(limit: 20).data
             settlements = try await a.settlements().data
+            if period > 1 { try await loadRange(a, days: period) }
         }
+    }
+
+    /// Shows today by hour, or the last 7 or 30 days by day.
+    func selectPeriod(_ days: Int) {
+        period = days
+        guard days > 1 else { return }
+        run { [self] in
+            guard let a = box.authed else { return }
+            try await loadRange(a, days: days)
+        }
+    }
+
+    private func loadRange(_ a: GoonersPayAPI.Authed, days: Int) async throws {
+        let r = try await a.periodSummary(from: Self.brasiliaDay(daysAgo: days - 1), to: Self.brasiliaDay(daysAgo: 0))
+        if period == days { range = r }
+    }
+
+    /// A Brasília day as YYYY-MM-DD, some days before today.
+    static func brasiliaDay(daysAgo: Int) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/Sao_Paulo")!
+        let d = cal.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+        let c = cal.dateComponents([.year, .month, .day], from: d)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     /// Opens a day's statement: fetched, then checked against the public root on the phone.
@@ -486,6 +515,8 @@ final class AppModel {
         devices = []
         balance = nil
         today = nil
+        range = nil
+        period = 1
         entries = []
         settlements = []
         quote = nil

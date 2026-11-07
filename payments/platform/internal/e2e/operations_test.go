@@ -78,7 +78,7 @@ func TestOperations(t *testing.T) {
 	if _, err := svc.SetMerchantStatus(ctx, tenant, merchant, payments.MerchantRestricted, "VAMP ratio above 60% of threshold", "risk:bot"); err != nil {
 		t.Fatal(err)
 	}
-	if code, _ := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}}, 0); code != http.StatusConflict {
+	if code, _ := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "12345678000195"}}, 0); code != http.StatusConflict {
 		t.Fatalf("payout quote for a restricted merchant: %d", code)
 	}
 	if _, err := svc.SetMerchantStatus(ctx, tenant, merchant, payments.MerchantClosed, "merchant asked", "ops:ana"); !errors.Is(err, payments.ErrConflict) {
@@ -129,7 +129,7 @@ func TestOperations(t *testing.T) {
 	wallet := st.ledgerBalance(ledger.MerchantWallet(merchant))
 	rrn1, code1 := st.authOf(pi1)
 	// Leave less than the chargeback in the wallet, so part of it is booked as owed.
-	_, q := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": wallet - 3000, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}}, 201)
+	_, q := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": wallet - 3000, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "12345678000195"}}, 201)
 	st.call("POST", "/v1/payouts", map[string]any{"quote_id": q["id"]}, 201)
 	notice := payments.DisputeNotice{Event: payments.NoticeOpened, Scheme: "visa", NetworkCaseID: "VCR-2026-11-0458812", ReasonCode: "10.4", Category: "fraud",
 		Amount: 12990, RRN: rrn1, AuthCode: code1, EvidenceDueAt: time.Now().Add(20 * 24 * time.Hour), Source: "test:1"}
@@ -427,7 +427,7 @@ func TestPaginationReplayAndQuotes(t *testing.T) {
 	}
 
 	// A refused payout leaves its quote usable.
-	_, q := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": 500, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}}, 201)
+	_, q := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": account, "amount": 500, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "12345678000195"}}, 201)
 	if _, err := st.svc.SetMerchantStatus(ctx, tenant, merchant, payments.MerchantRestricted, "review", "ops:test"); err != nil {
 		t.Fatal(err)
 	}

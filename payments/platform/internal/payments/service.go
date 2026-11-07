@@ -245,6 +245,7 @@ type Merchant struct {
 	Plan       pricing.Plan `json:"plan"`
 	Status     string       `json:"status"`
 	StatusNote string       `json:"status_reason,omitempty"`
+	CreatedAt  string       `json:"created_at,omitempty"`
 	rootPubHex string
 	document   string
 	pixKey     string
@@ -311,7 +312,8 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 	m := &Merchant{Object: "merchant"}
 	var plan []byte
-	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote)
+	var created time.Time
+	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote, &created)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -319,13 +321,14 @@ func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 		return nil, err
 	}
 	_ = json.Unmarshal(plan, &m.Plan)
+	m.CreatedAt = created.UTC().Format(time.RFC3339)
 	if m.rootPubHex != "" {
 		m.RootNpub, _ = nostr.EncodeNpub(m.rootPubHex)
 	}
 	return m, nil
 }
 
-const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, '')`
+const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, ''), created_at`
 
 // GetMerchant loads a merchant.
 func (s *Service) GetMerchant(ctx context.Context, tenantID, id string) (*Merchant, error) {

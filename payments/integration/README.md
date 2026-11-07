@@ -16,6 +16,18 @@ This folder explains how to connect the platform ([`../platform`](../platform)) 
 | **Device attestation** (Apple, Google) | Offline verification of App Attest and Android hardware key attestation; sessions pinned to the attested key; phones added by the owner attest at their first login | Apple's App Attestation Root CA, Google's hardware attestation roots, the release signing certificate digest, the Team ID | Play Integrity through Google's decode API; the attestation revocation list | [05 §2.4](../docs/05-mobile.md#24-attestation-and-device-integrity) |
 | **Transparency anchoring** | Daily statements and the chain of signed public roots, published to relays, with inclusion proofs through the API | An ICP-Brasil timestamp authority; at least two independent relays | RFC 3161 and OpenTimestamps clients | [03 §6.6](../docs/03-nostr-layer.md#66-anchoring) |
 
+## Which connections are live
+
+The platform reports its own readiness from its configuration, without connecting to anything:
+
+```bash
+platform integrations           # every external API: live, simulated, partly configured or off
+platform integrations -strict   # exits 1 while a connection production requires is not live
+platform integrations -json     # the same, for tooling
+```
+
+Production's startup check refuses to serve without the connections marked required, so `-strict` is the pre-flight to run before a release. Partners integrating with the API, rather than counterparties the platform connects to, start from [the integration guide](../docs/10-integration-guide.md).
+
 [security-assessment.md](security-assessment.md) is the internal security assessment: method, findings and their fixes, controls verified, and what an independent test must still cover.
 
 [certification-test-plan.md](certification-test-plan.md) maps every scenario a counterparty will ask you to prove onto the simulator command or the automated test that exercises it today.

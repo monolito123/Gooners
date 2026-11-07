@@ -387,14 +387,19 @@ type Entry struct {
 	PostedAt  time.Time
 }
 
-// Entries lists postings on an account, newest first.
-func (l *Ledger) Entries(ctx context.Context, tenantID, accountID string, limit int) ([]Entry, error) {
+// Entries lists postings on an account, newest first. With afterJournal set it continues
+// after that posting (afterJournal, afterSeq), the last one of the previous page.
+func (l *Ledger) Entries(ctx context.Context, tenantID, accountID string, limit int, afterJournal string, afterSeq int) ([]Entry, error) {
 	if limit <= 0 || limit > 501 {
 		limit = 100
 	}
+	// Newest first: (posted_at, journal_id) descending, then seq ascending within a journal.
 	rows, err := l.pool.Query(ctx, `SELECT p.journal_id, p.seq, p.direction, p.amount, j.type, COALESCE(j.reference, ''), j.posted_at
 		FROM postings p JOIN journals j USING (tenant_id, journal_id)
-		WHERE p.tenant_id = $1 AND p.account_id = $2 ORDER BY j.posted_at DESC, p.journal_id DESC, p.seq LIMIT $3`, tenantID, accountID, limit)
+		WHERE p.tenant_id = $1 AND p.account_id = $2
+		  AND ($4 = '' OR (j.posted_at, j.journal_id) < (SELECT c.posted_at, c.journal_id FROM journals c WHERE c.tenant_id = $1 AND c.journal_id = $4)
+		       OR (j.journal_id = $4 AND p.seq > $5))
+		ORDER BY j.posted_at DESC, p.journal_id DESC, p.seq LIMIT $3`, tenantID, accountID, limit, afterJournal, afterSeq)
 	if err != nil {
 		return nil, err
 	}

@@ -13,7 +13,7 @@ import {
   testKey, verifyEventStrict, unwrap, canonicalJson, verifyInclusion, statementLeafData,
   hexToBytes, bytesToHex, sha256, utf8ToBytes, nip19, fee,
 } from './lib.mjs';
-import { contrast, fmt, resolveTokens, simulate, deltaE } from './color.mjs';
+import { checkCategorical, contrast, fmt, resolveTokens, simulate, deltaE } from './color.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -199,6 +199,28 @@ const brCodes = new Set([...allText.matchAll(/000201[0-9A-Za-z.\/ *_-]*?6304([0-
 for (const code of brCodes) check(crc16(code.slice(0, -4)) === code.slice(-4), `Pix BR Code CRC16 ${code.slice(-4)} valid (${code.length} chars)`);
 check(brCodes.size > 0, 'found Pix BR Codes to check');
 
+// The integration guide's verifiers (10 §4), run against the same vector: valid, tampered,
+// stale and mid-rotation deliveries.
+{
+  const vector = docJson.map((j) => j.value.webhook_test_vector).find(Boolean);
+  const guide = docs.find((d) => d.rel.endsWith('10-integration-guide.md'))?.text || '';
+  const js = /```js\n([\s\S]*?export function verifyWebhook[\s\S]*?)```/.exec(guide)?.[1];
+  const py = /```python\n([\s\S]*?def verify_webhook[\s\S]*?)```/.exec(guide)?.[1];
+  if (js) {
+    const { verifyWebhook } = await import('data:text/javascript,' + encodeURIComponent(js));
+    const h = { 'webhook-id': vector.webhook_id, 'webhook-timestamp': vector.timestamp, 'webhook-signature': vector.signature };
+    const now = Number(vector.timestamp);
+    check(verifyWebhook(vector.secret, h, vector.body, now) && !verifyWebhook(vector.secret, h, vector.body + ' ', now)
+      && !verifyWebhook(vector.secret, h, vector.body, now + 301) && verifyWebhook(vector.secret, { ...h, 'webhook-signature': 'v1,AAAA ' + vector.signature }, vector.body, now),
+    '10 §4: the JavaScript verifier accepts the vector and refuses a tampered body and a stale timestamp; any signature passes during a rotation');
+  } else bad('10 §4: no JavaScript verifier found');
+  if (py) {
+    const run = spawnSync('python3', ['-I', '-c', `${py}\nimport json, sys\nv = json.loads(sys.argv[1])\nh = {'webhook-id': v['webhook_id'], 'webhook-timestamp': v['timestamp'], 'webhook-signature': v['signature']}\nb = v['body'].encode()\nn = int(v['timestamp'])\nok = verify_webhook(v['secret'], h, b, n) and not verify_webhook(v['secret'], h, b + b' ', n) and not verify_webhook(v['secret'], h, b, n + 301) and verify_webhook(v['secret'], dict(h, **{'webhook-signature': 'v1,AAAA ' + v['signature']}), b, n)\nprint('ok' if ok else 'fail')`, JSON.stringify(vector)], { encoding: 'utf8' });
+    if (run.error) console.log('  skip 10 §4 Python verifier: python3 not installed');
+    else check(run.stdout.trim() === 'ok', '10 §4: the Python verifier behaves the same' + (run.stdout.trim() === 'ok' ? '' : ': ' + (run.stderr || run.stdout)));
+  } else bad('10 §4: no Python verifier found');
+}
+
 for (const { doc, value } of docJson) {
   const v = value.webhook_test_vector;
   if (!v) continue;
@@ -256,7 +278,7 @@ const schemaFor = (v) => {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
     transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
     conversion: 'Conversion', crypto_withdrawal: 'CryptoWithdrawal', international_payout: 'InternationalPayout', investment_order: 'InvestmentOrder', portfolio: 'Portfolio',
-    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret', day_summary: 'DaySummary',
+    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret', day_summary: 'DaySummary', period_summary: 'PeriodSummary', webhook_endpoint: 'WebhookEndpoint',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';
@@ -289,6 +311,45 @@ for (const { doc, i, value } of docJson.filter((j) => j.doc.endsWith('02-api-ref
   if (!validate(value)) bad(`${doc} block #${i + 1} (${name}): ${oas.errorsText(validate.errors)}`);
 }
 check(apiChecked >= 20, `${apiChecked} request and response examples matched to an OpenAPI schema and validated`);
+// The summaries' examples add up the way the platform computes them.
+for (const { value } of docJson.filter((j) => j.doc.endsWith('02-api-reference.md'))) {
+  if (value.object !== 'day_summary' && value.object !== 'period_summary') continue;
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+  const buckets = value.object === 'day_summary' ? value.hourly : value.daily.map((d) => d.gross);
+  const pct = (now, before) => Math.round(((now - before) * 1000) / before) / 10;
+  const cmp = value.last_week ?? value.previous;
+  check(sum(buckets) === value.gross && sum(value.by_method.map((m) => m.gross)) === value.gross && sum(value.by_method.map((m) => m.sales)) === value.sales
+    && value.net === value.gross - value.refunded - value.fees && value.average_ticket === Math.floor(value.gross / value.sales)
+    && cmp.change_pct === pct(value.gross, cmp.gross) && (value.object === 'day_summary' || sum(cmp.daily) === cmp.gross),
+  `02 ${value.object} example: buckets, methods, net, average ticket and change add up`);
+}
+
+// Every route the platform serves is in the contract, and every operation the contract offers
+// is served, unless the contract marks it planned (x-goonerspay-availability). Path parameter
+// names may differ ({id} and {terminal_id} are the same route).
+{
+  const server = readFileSync(join(root, 'platform', 'internal', 'api', 'server.go'), 'utf8');
+  const norm = (m, p) => `${m} ${p.replace(/\{[^}]+\}/g, '{}')}`;
+  const served = new Set([...server.matchAll(/(?:route|open)\("([A-Z]+) (\/[^"]*)"/g)].map((m) => norm(m[1], m[2])));
+  const offered = new Set();
+  const planned = new Set();
+  for (const [p, ops] of Object.entries(openapi.paths)) {
+    for (const [m, op] of Object.entries(ops)) {
+      if (!['get', 'post', 'put', 'patch', 'delete'].includes(m)) continue;
+      (op['x-goonerspay-availability'] === 'planned' ? planned : offered).add(norm(m.toUpperCase(), p));
+    }
+  }
+  const undocumented = [...served].filter((r) => !offered.has(r));
+  const unserved = [...offered].filter((r) => !served.has(r));
+  const plannedServed = [...planned].filter((r) => served.has(r));
+  check(!undocumented.length, `${served.size} routes served by the platform are in openapi.yaml${undocumented.length ? '; not documented: ' + undocumented.join(', ') : ''}`);
+  check(!unserved.length, `${offered.size} operations openapi.yaml offers are served${unserved.length ? '; not served: ' + unserved.join(', ') : ''} (${planned.size} marked planned)`);
+  check(!plannedServed.length, `no operation marked planned is already served${plannedServed.length ? ': ' + plannedServed.join(', ') : ''}`);
+}
+{
+  const r = spawnSync(process.execPath, [join(here, 'gen-postman.mjs'), '--check'], { encoding: 'utf8' });
+  check(r.status === 0, 'the Postman collection is generated from the current openapi.yaml' + (r.status ? ': ' + r.stderr.trim() : ''));
+}
 
 // ---------------------------------------------------------------- 5. Design tokens
 section('5. Design tokens: contrast and colour-vision tables');
@@ -299,6 +360,13 @@ for (const p of tokens.$extensions['goonerspay.contrastPairs']) {
   if (c < p.min) bad(`${p.theme} ${p.fg} on ${p.bg}: ${fmt(c)} < ${p.min}`);
 }
 ok(`${tokens.$extensions['goonerspay.contrastPairs'].length} token pairs meet their WCAG minimum`);
+// Chart identity hues: a categorical palette per theme, held to the data-visualization method
+// (docs/06 §8): lightness band, chroma, colour-vision and normal-vision distance, contrast.
+for (const p of tokens.$extensions['goonerspay.chartPalettes']) {
+  const hexes = p.roles.map((r) => tok(p.theme, r));
+  const r = checkCategorical(hexes, { mode: p.mode, surface: tok(p.theme, p.surface), pairs: p.pairs, relief: p.relief });
+  check(r.fails.length === 0, `${p.theme} chart palette (${p.roles.length} hues, ${p.pairs} pairs): colour-vision ΔE ${r.cvd.toFixed(1)}, normal ΔE ${r.normal.toFixed(1)}${r.fails.length ? ': ' + r.fails.join('; ') : ''}`);
+}
 {
   // The platforms' generated tokens (Kotlin, Swift, CSS) match tokens.json (docs/06 §8).
   const gen = spawnSync(process.execPath, [join(root, 'tools', 'gen-tokens.mjs'), '--check'], { encoding: 'utf8' });
@@ -447,6 +515,39 @@ if (existsSync(vecFile)) {
     `${dr.cases.length} device risk vectors (model ${dr.model}) match JavaScript's scoring`);
   const signalDocs = d07;
   check(Object.keys(dr.weights).every((s) => signalDocs.includes('`' + s + '`')), 'every device signal code is documented in 07 §3.3');
+}
+
+// ---------------------------------------------------------------- 6d. Web console formats and charts
+// format.js holds the console's amount parsers and its sales chart model: the same rules and
+// cases as Money.parseReais and Today in the Kotlin and Swift cores (TodayTest, TodayTests).
+const consoleFormat = join(root, 'platform', 'internal', 'console', 'static', 'format.js');
+if (existsSync(consoleFormat)) {
+  section('6d. Web console formats and charts (same cases as the app cores)');
+  const f = await import(consoleFormat);
+  const reais = { '150': 15000, '150,5': 15050, '150,05': 15005, ' 0,99 ': 99, '1.234,56': 123456, '1.234.567': 123456700 };
+  check(Object.entries(reais).every(([k, v]) => f.parseReais(k) === v) && ['', ',50', '1,234', '12.34', '1.23,00', 'abc', '-5', '1,2,3', '12345678901'].every((k) => f.parseReais(k) === null),
+    'parseReais takes what people type and refuses "12.34" (never read as R$ 1.234 or R$ 12,34), as both apps do');
+  const qty = { '0,5': '0.5', '1.234,56': '1234.56', '0.001': '0.001', '1.5': '1.5', '100.00': '100.00', '1.000.000': '1000000' };
+  check(Object.entries(qty).every(([k, v]) => f.parseQuantity(k) === v) && ['1.000', '12.345', '', '-1', '1,2,3'].every((k) => f.parseQuantity(k) === null),
+    'parseQuantity refuses an amount that could be a thousand or one ("1.000")');
+  const compact = { 0: 'R$ 0', 90000: 'R$ 900', 99950: 'R$ 1 mil', 149999: 'R$ 1,5 mil', 250000: 'R$ 2,5 mil', 1000000: 'R$ 10 mil', 1234000: 'R$ 12 mil',
+    99999999: 'R$ 1 mi', 125000000: 'R$ 1,3 mi', 1500000000: 'R$ 15 mi' };
+  check(Object.entries(compact).every(([k, v]) => f.compact(Number(k)) === v), 'compact axis labels match the app cores');
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  check(same(f.ticks(0), [0, 10000]) && same(f.ticks(50), [0, 100]) && same(f.ticks(12000), [0, 5000, 10000, 15000]) && same(f.ticks(1000000), [0, 500000, 1000000])
+    && same(f.ticks(1200000), [0, 500000, 1000000, 1500000]) && same(f.axis(24), [0, 6, 12, 18, 23]) && same(f.axis(7), [0, 1, 2, 3, 4, 5, 6]) && same(f.axis(30), [0, 6, 12, 18, 24, 29]),
+  'axis ticks and labels match the app cores');
+  check(same(f.shares([10000, 2000]), [83, 17]) && same(f.shares([1, 1, 1]), [34, 33, 33]) && same(f.shares([0, 0]), [0, 0]) && f.change(50) === '+50%' && f.change(-12.5) === '−12,5%'
+    && f.change(0) === '0%' && f.change(null) === null && f.versus('2026-10-30', true) === 'vs. sexta passada até agora' && f.versus('2026-11-01', false) === 'vs. domingo passado',
+  'shares, changes and weekdays match the app cores');
+  const ex = (section) => docJson.find((j) => j.doc.endsWith('02-api-reference.md') && j.value.object === section)?.value;
+  const day = f.dayView(ex('day_summary'), true);
+  const period = f.periodView(ex('period_summary'), '2026-11-06');
+  check(day.title === 'Hoje' && day.change === '+50%' && day.compareName === 'sexta passada' && day.compare.length === 24 && same(day.ticks, [0, 5000, 10000])
+    && day.labels[11] === '11h' && day.spoken[23] === '23h às 0h' && same(day.axis, [0, 6, 12, 18, 23]), 'the day example draws as both apps draw it');
+  check(period.title === 'Últimos 7 dias' && period.range === '31/10 a 06/11' && period.change === '+12,4%' && period.versus === 'vs. os 7 dias anteriores até agora'
+    && period.spoken[0] === 'sábado, 31/10' && same(period.byMethod.map((m) => m.method), ['credit', 'debit', 'pix']) && period.shares.reduce((a, b) => a + b, 0) === 100
+    && same(period.ticks, [0, 50000, 100000, 150000]) && period.compare.length === 7, 'the period example draws as both apps draw it');
 }
 
 // ---------------------------------------------------------------- 6c. Web console verifier

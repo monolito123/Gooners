@@ -128,3 +128,44 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 		t.Errorf("with authorizations the remaining check is the HSM adapters: %v", err)
 	}
 }
+
+// The integrations report: the sandbox runs on simulators and is not ready for production; a
+// platform with every provider configured is.
+func TestIntegrationsReport(t *testing.T) {
+	c := base()
+	c.Exchanges, c.FXProvider = []string{"sandbox"}, "sandbox"
+	is := c.Integrations()
+	state := map[string]string{}
+	for _, i := range is {
+		state[i.Name] = i.State
+		if len(i.Settings) == 0 || i.For == "" {
+			t.Fatalf("%s: no settings or purpose", i.Name)
+		}
+	}
+	if state["Scheme host (ISO 8583)"] != Simulated || state["Crypto exchanges"] != Simulated || state["FX provider"] != Simulated ||
+		state["Pix PSP (API Pix)"] != Off || state["Key custody (HSM/KMS)"] != Simulated || state["Travel rule network"] != Off {
+		t.Fatalf("the sandbox: %v", state)
+	}
+	if Ready(is) {
+		t.Fatal("the sandbox reported ready for production")
+	}
+
+	tls := &TLSFiles{CA: "ca.pem", Cert: "c.pem", Key: "k.pem"}
+	p := &Config{Env: Production, Routes: []Route{{Name: "sponsor-a", Addrs: []string{"10.0.0.1:8583"}, TLS: tls, DialectFile: "/etc/visa.json"}},
+		PixBaseURL: "https://pix.psp.example/api", PixTLS: tls, PixClientID: "id", PixKey: "12345678000195", PixWebhookAddr: ":8443", PixWebhookTLS: tls,
+		PayoutBaseURL: "https://pix.psp.example/pagamentos", RegistrarURL: "https://registradora.example", PlatformDocument: "12345678000195",
+		AppAttestRoots: "apple.pem", AppAttestAppID: "TEAM.br.com.gooners.pay", AndroidAttestationRoots: "google.pem",
+		Exchanges: []string{"binance"}, BinanceKey: "k", BinanceSecret: "s", CryptoAuthorization: "BCB 519",
+		SanctionsLists: []string{"https://lists.example/sdn.csv"}, SenderLookupURL: "https://chain.example", TravelRuleURL: "https://tr.example", TravelRuleSecret: "whsec_x",
+		ReportingURL: "https://coleta.example"}
+	is = p.Integrations()
+	for _, i := range is {
+		if i.Production && i.State != Live && i.Name != "Key custody (HSM/KMS)" {
+			t.Fatalf("%s is %s: %s", i.Name, i.State, i.Detail)
+		}
+	}
+	// Key custody stays the one gap the reference implementation leaves to the HSM adapters.
+	if Ready(is) {
+		t.Fatal("ready without the HSM adapters")
+	}
+}

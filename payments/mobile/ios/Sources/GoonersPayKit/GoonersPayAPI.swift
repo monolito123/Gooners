@@ -256,6 +256,12 @@ public final class GoonersPayAPI: Sendable {
             try await call("GET", "/v1/merchants/\(session.merchantId)/summary" + (date.map { "?date=\($0)" } ?? ""))
         }
 
+        /// Sales by day from one Brasília day to another (docs/02 §8.6); the last 30 days by default.
+        public func periodSummary(from: String? = nil, to: String? = nil) async throws -> PeriodSummary {
+            let q = [from.map { "from=\($0)" }, to.map { "to=\($0)" }].compactMap { $0 }.joined(separator: "&")
+            return try await call("GET", "/v1/merchants/\(session.merchantId)/summary/period" + (q.isEmpty ? "" : "?\(q)"))
+        }
+
         public func entries(limit: Int = 20) async throws -> Entries {
             try await call("GET", "/v1/accounts/\(session.accountId)/entries?limit=\(limit)")
         }

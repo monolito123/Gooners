@@ -21,14 +21,14 @@ The PAN never transits `api.` hosts. Hosted fields and SDKs post card data strai
 
 | Client | Mechanism | Standard |
 |--------|-----------|----------|
-| BaaS partner servers | `client_credentials` grant with mTLS client authentication. The access token (5 min) is bound to the certificate thumbprint (`cnf.x5t#S256`). | RFC 8705, aligned with the FAPI 2.0 security profile |
+| BaaS partner servers | Today: an API key with scopes (`Authorization: Bearer sk_test_…` in the sandbox, `sk_live_…` in production), issued by the operator and expiring ([§3.1](#31-post-oauth2token-partners)). Planned production edge: `client_credentials` grant with mTLS client authentication, the access token (5 min) bound to the certificate thumbprint (`cnf.x5t#S256`) | RFC 6750; planned RFC 8705, aligned with the FAPI 2.0 security profile |
 | Merchant apps and the web dashboard | A Nostr HTTP Auth event (NIP-98, kind 27235) signed by an authorized device key is exchanged for a 15-minute session token bound to a DPoP key | NIP-98, RFC 9449 ([03 §4](03-nostr-layer.md#4-merchant-identity-and-authentication)) |
 | Terminals | Device certificate issued after attestation + per-request attestation token | [05 §2.4](05-mobile.md#24-attestation-and-device-integrity) |
 | High-value calls (payouts, bank account changes, API key changes) | Additionally signed with HTTP Message Signatures over method, path, `content-digest` and `idempotency-key` | RFC 9421, RFC 9530 |
 
 ### 1.3 Versioning
 
-Every request sends `Api-Version: 2026-10-01`. Breaking changes ship as a new date. Each version is supported for at least 24 months after its successor ships.
+A request names the contract it was written against in `Api-Version: 2026-10-01`; without it the current version applies, and every response says which version answered it in its own `Api-Version` header. A version the platform does not answer is `400 unsupported_api_version`. Breaking changes ship as a new date. Each version is supported for at least 24 months after its successor ships.
 
 ### 1.4 Idempotency
 
@@ -66,7 +66,8 @@ Errors use Problem Details (RFC 9457) with a stable `code`:
 - **IDs** are prefixed ULIDs (`pi_`, `pm_`, `acc_`, `po_`, `dp_`, `mer_`, `dev_`, `st_`), sortable by creation time.
 - **Times** are RFC 3339 UTC.
 - **Lists** use cursor pagination: `?limit=50&starting_after=pi_…`, returning `{ "data": [...], "has_more": true, "next_cursor": "…" }`.
-- **Rate limits** are sent as `RateLimit-Policy` and `RateLimit` headers. `429` comes with `Retry-After`.
+- **Rate limits** are sent on every authenticated response as `RateLimit-Policy: "per-key";q=<quota>;w=<seconds>` and `RateLimit: "per-key";r=<remaining>;t=<seconds until full>` (draft-ietf-httpapi-ratelimit-headers). `429` comes with `Retry-After`.
+- **Request IDs**: every response carries `Request-Id`, and every error repeats it as `request_id`. Quote it to support.
 
 ---
 
@@ -121,6 +122,8 @@ The edge (Cloudflare API Shield with the platform's own CA) validates the client
 ## 3. Authentication endpoints
 
 ### 3.1 `POST /oauth2/token` (partners)
+
+Planned: the platform authenticates partners with API keys today (§1.2); this exchange is the production edge's, and the contract marks it `x-goonerspay-availability: planned` like every operation not served yet (card tokenization, sub-ledger accounts and transfers).
 
 ```http
 POST /oauth2/token HTTP/2
@@ -732,20 +735,19 @@ Requires an HTTP Message Signature (§1.2).
 {
   "id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
   "object": "merchant",
-  "status": "kyb_in_review",
-  "kyb": {
-    "checks": [
-      { "type": "cnpj_registry", "status": "passed" },
-      { "type": "representative_identity", "status": "pending_liveness" },
-      { "type": "sanctions_pep", "status": "passed" },
-      { "type": "mcc_risk", "status": "passed" }
-    ],
-    "next_action": { "type": "liveness", "url": "https://kyb.goonerspay.example/l/4cQ2" }
-  },
+  "account_id": "acc_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "legal_name": "Cafe Aurora Ltda",
+  "trade_name": "Café Aurora",
+  "mcc": "5812",
+  "scheme_mid": "01JB8Z2K5D6F7G8",
+  "city": "São Paulo",
   "root_npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",
-  "created_at": "2026-10-29T12:00:00Z"
+  "plan": { "credit_bps": 319, "debit_bps": 137, "installment_bps": 499, "pix_bps": 0, "tier": "B", "instant": true },
+  "status": "active"
 }
 ```
+
+`account_id` is the merchant's ledger account: balances, entries and payouts take it. `plan` sets the merchant's prices; without one the platform's default applies. `root_npub` is optional here: the owner's phone sets it when it enrolls ([§8.2](#82-enrolling-a-phone)). In production a new merchant starts `kyb_in_review` and takes no payments until the operator activates it once KYB clears; the sandbox activates it at once. `GET /v1/merchants/{id}` reads it back, and `GET /v1/merchants` lists the tenant's merchants, newest first.
 
 ### 8.2 Enrolling a phone
 
@@ -816,7 +818,7 @@ Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal'
 
 Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the terminal PKI runs inside the platform. Until then that variant returns `501`.
 
-`POST /v1/terminals/{terminal_id}/revoke` with `{ "reason": "device lost" }` revokes a terminal for good: its certificate stops authenticating and its terminal ID takes no further authorizations. The call is recorded in the audit trail and sends `terminal.revoked`.
+`POST /v1/terminals/{id}/revoke` with `{ "reason": "device lost" }` revokes a terminal for good: its certificate stops authenticating and its terminal ID takes no further authorizations. The call is recorded in the audit trail and sends `terminal.revoked`.
 
 A merchant takes payments and receives payouts only while `active`. Risk can make it `restricted` (new payments and payouts refused with `409 merchant_not_active`, balance held) and lift it again; `closed` is final. The status and its reason are on `GET /v1/merchants/{id}` ([operations runbook §4.2](../integration/operations-runbook.md#42-restricting-and-reactivating-a-merchant)).
 
@@ -829,7 +831,7 @@ The merchant's day at a glance, in Brasília time (`?date=YYYY-MM-DD`; today by 
 - `sales`, `gross`, `refunded`, `fees`, `net`, `average_ticket`: the payments captured that day.
 - `by_method`: how customers paid (`credit`, `debit`, `card` when the funding is unknown, `pix`, `crypto`), largest first.
 - `hourly`: the gross captured in each of the 24 hours.
-- `last_week`: the same weekday a week before, up to the same time of day when the date is today, and `change_pct` against it (null when it sold nothing).
+- `last_week`: the same weekday a week before, up to the same time of day when the date is today, and `change_pct` against it (null when it sold nothing). Its `hourly` is that whole day by hour, for the comparison line in the charts: what the rest of today looked like a week ago.
 - `waiting`: charges shown and not yet paid (a Pix QR, a crypto transfer, a payment held for compliance).
 - `recent`: the day's eight latest payments, newest first, whatever their outcome.
 
@@ -846,7 +848,10 @@ The merchant's day at a glance, in Brasília time (`?date=YYYY-MM-DD`; today by 
   "average_ticket": 6000,
   "by_method": [{ "method": "credit", "sales": 2, "gross": 12000 }],
   "hourly": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000, 10000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  "last_week": { "date": "2026-10-30", "sales": 1, "gross": 8000, "change_pct": 50 },
+  "last_week": {
+    "date": "2026-10-30", "sales": 1, "gross": 8000, "change_pct": 50,
+    "hourly": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8000, 0, 0, 0, 0, 0, 3500, 0, 0, 0, 0, 0, 0]
+  },
   "waiting": { "count": 1, "amount": 5000 },
   "recent": [
     { "id": "pi_01M69K1F0J7Q3ZB7Y2N8K4R5TW", "amount": 5000, "method": "crypto", "status": "requires_action", "created_at": "2026-11-06T14:21:09Z" },
@@ -854,6 +859,60 @@ The merchant's day at a glance, in Brasília time (`?date=YYYY-MM-DD`; today by 
   ]
 }
 ```
+
+### 8.6 `GET /v1/merchants/{id}/summary/period`
+
+Sales by day from one Brasília day to another (`?from=&to=`, both included, at most 92 days; the last 30 days ending today by default), against the period just before, as long. When the period ends today the previous one ends at the same time of day. What the apps' and the console's 7- and 30-day charts show; the same access as §8.5.
+
+```json
+{
+  "object": "period_summary",
+  "merchant_id": "mer_01M69K0V3GC8TSECSX0HV48PR3",
+  "from": "2026-10-31",
+  "to": "2026-11-06",
+  "days": 7,
+  "sales": 41,
+  "gross": 512340,
+  "refunded": 2000,
+  "fees": 14120,
+  "net": 496220,
+  "average_ticket": 12496,
+  "by_method": [
+    { "method": "credit", "sales": 22, "gross": 301200 },
+    { "method": "pix", "sales": 15, "gross": 161140 },
+    { "method": "debit", "sales": 4, "gross": 50000 }
+  ],
+  "daily": [
+    { "date": "2026-10-31", "sales": 8, "gross": 102000 },
+    { "date": "2026-11-01", "sales": 3, "gross": 40100 },
+    { "date": "2026-11-02", "sales": 5, "gross": 61500 },
+    { "date": "2026-11-03", "sales": 6, "gross": 70240 },
+    { "date": "2026-11-04", "sales": 7, "gross": 88500 },
+    { "date": "2026-11-05", "sales": 7, "gross": 92000 },
+    { "date": "2026-11-06", "sales": 5, "gross": 58000 }
+  ],
+  "previous": {
+    "from": "2026-10-24",
+    "to": "2026-10-30",
+    "sales": 36,
+    "gross": 455800,
+    "change_pct": 12.4,
+    "daily": [96000, 51000, 58300, 61000, 70500, 69000, 50000]
+  }
+}
+```
+
+### 8.7 Lists
+
+Every list answers `{ "object": "list", "data": [...], "has_more": true, "next_cursor": "…" }`, newest first; pass `next_cursor` back as `starting_after` for the next page (`limit` up to 100, 20 by default).
+
+| List | Filters |
+|------|---------|
+| `GET /v1/payment-intents` | `merchant_id` (an app session sees its own merchant's only), `status`, `method` (`credit`, `debit`, `prepaid`, `card`, `pix`, `crypto`), `from` and `to` (Brasília days the payment was created) |
+| `GET /v1/merchants` | `status` |
+| `GET /v1/accounts/{id}/entries` | the cursor is the last entry's `id` (`jr_….2`: its journal and place in it) |
+| `GET /v1/webhook-endpoints` | none; never shows secrets. `DELETE /v1/webhook-endpoints/{id}` stops an endpoint for good: it stays listed, `disabled`, with its history |
+| `GET /v1/disputes`, `/v1/risk/reviews`, `/v1/settlements`, `/v1/compliance/cases`, `/v1/compliance/screenings`, `/v1/travel-rule/messages` | as their sections say |
 
 ## 9. Settlements and proofs
 
@@ -1356,9 +1415,10 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 
 | Method | Path | Host | Scope | Idempotent | Notes |
 |--------|------|------|-------|-----------|-------|
-| POST | `/oauth2/token` | api | — | — | mTLS client auth |
+| POST | `/oauth2/token` | api | — | — | Planned: mTLS client auth; API keys today |
 | POST | `/v1/auth/nostr` | api | — | — | NIP-98 + DPoP |
 | POST | `/v1/payment-intents` | api | `payments:write` | Key | |
+| GET | `/v1/payment-intents` | api | `payments:read` or the merchant's session | Yes | Filters: merchant, status, method, dates ([§8.7](#87-lists)) |
 | GET | `/v1/payment-intents/{id}` | api | `payments:read` | Yes | |
 | POST | `/v1/payment-intents/{id}/confirm` | api | `payments:write` | Key | 3DS, Pix, crypto |
 | POST | `/v1/payment-intents/{id}/capture` | api | `payments:write` | Key | |
@@ -1366,29 +1426,32 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 | POST | `/v1/terminal/authorizations` | terminal | terminal cert | STAN | CDE |
 | POST | `/v1/refunds` | api | `refunds:write` or an app session | Key | App sessions refund their own merchant's sales |
 | GET | `/v1/refunds/{id}` | api | `payments:read` | Yes | |
-| POST | `/v1/payment-methods` | vault | publishable key / mTLS | Key | CDE |
-| DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Deletes network tokens too |
+| POST | `/v1/payment-methods` | vault | publishable key / mTLS | Key | Planned (CDE) |
+| DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Planned; deletes network tokens too |
 | GET | `/v1/disputes` · `/v1/disputes/{id}` | api | `disputes:write` | Yes | |
 | POST | `/v1/disputes/{id}/evidence` · `/accept` | api | `disputes:write` | Key | |
 | GET | `/v1/risk/reviews` · `/{id}` | api | `risk:read` | Yes | Held sales and frozen terminals |
 | POST | `/v1/risk/reviews/{id}/resolve` | api | `risk:write` | Key | Audited |
-| POST | `/v1/accounts` | api | `accounts:write` | Key | |
+| POST | `/v1/accounts` | api | `accounts:write` | Key | Planned |
 | GET | `/v1/accounts/{id}/balance` · `/entries` | api | `accounts:read` | Yes | |
-| POST | `/v1/transfers` | api | `accounts:write` | Key | |
+| POST | `/v1/transfers` | api | `accounts:write` | Key | Planned |
 | POST | `/v1/payouts/quotes` | api | `payouts:write` | Key | |
 | POST | `/v1/payouts` | api | `payouts:write` | Key | RFC 9421 signature |
-| POST | `/v1/merchants` | api | `merchants:write` | Key | |
+| POST · GET | `/v1/merchants` | api | `merchants:write` | Key · Yes | Create; list, newest first |
+| GET | `/v1/merchants/{id}` | api | `merchants:write` or the merchant's session | Yes | |
 | POST | `/v1/merchants/{id}/devices` | api | `merchants:write` or the owner's session | Key | Root-signed kind 17710 |
 | POST | `/v1/merchants/{id}/enrollment-codes` | api | `merchants:write` or the owner's session | Key | Single use, 15 minutes |
 | GET · POST | `/v1/enrollment` | api | enrollment code | — | The phone enrolls itself |
 | GET | `/v1/merchants/{id}/summary` | api | `payments:read` or the merchant's session | Yes | The day at a glance |
+| GET | `/v1/merchants/{id}/summary/period` | api | `payments:read` or the merchant's session | Yes | By day, against the period before |
 | POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
-| POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
+| POST | `/v1/terminals/{id}/revoke` | api | `merchants:write` | Key | Audited |
 | GET | `/v1/settlements` · `/{id}` · `/{id}/statement` · `/{id}/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | App sessions see their own merchant |
 | GET | `/v1/transparency/{date}` | api | none (public) | Yes | The day's kind 7715 root |
 | POST · GET | `/v1/terminal/journal` | api | app session | Yes | The device's kind 7714 journal; answers `missing` ranges and forks |
 | GET | `/v1/payment-intents/{id}/journal` | api | `payments:read` | Yes | The devices' signed entries about a payment |
 | POST | `/v1/webhook-endpoints` · `/{id}/replay` · `/{id}/rotate-secret` | api | `webhooks:write` | Key | Rotation keeps the old secret signing for an overlap |
+| GET · DELETE | `/v1/webhook-endpoints` · `/{id}` | api | `webhooks:write` | Yes | List and read (never secrets); DELETE stops an endpoint for good, audited |
 | GET | `/v1/crypto/markets` | api | `assets:read` | Yes | Best bid and ask across the exchanges |
 | GET | `/v1/holdings` | api | `assets:read` | Yes | Crypto and foreign balances, valued in reais |
 | POST | `/v1/conversions` | api | `assets:write` | Key | A 30-second quote |
@@ -1406,4 +1469,4 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 | GET · PUT | `/v1/investments/profile` | api | `assets:read` · `assets:write` | Yes | Suitability (CVM Resolution 30) |
 | POST | `/v1/investments/orders` | api | `assets:write` | Key | Through the broker; D+2 |
 | GET | `/v1/investments/positions` | api | `assets:read` | Yes | |
-| POST | `/v1/sandbox/crypto/payments/{id}` · `/v1/sandbox/international/credits` | sandbox | `payments:write` | — | Sandbox only |
+| POST | `/v1/sandbox/pix/payments/{id}` · `/v1/sandbox/crypto/payments/{id}` · `/v1/sandbox/international/credits` | sandbox | `payments:write` | — | Sandbox only: the customer pays the Pix charge, the crypto transfer arrives, a credit comes from abroad |

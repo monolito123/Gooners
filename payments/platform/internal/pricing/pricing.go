@@ -3,18 +3,68 @@
 package pricing
 
 import (
+	"encoding/json"
 	"math"
 	"time"
 )
 
 // Plan is a merchant's pricing.
 type Plan struct {
-	CreditBps      int64 // single-payment credit MDR, basis points
-	DebitBps       int64
-	InstallmentBps int64 // merchant installments (parcelado lojista)
-	PixBps         int64
-	Tier           string // A, B, C; D = not eligible for instant settlement
-	Instant        bool   // instant settlement requested by the merchant
+	CreditBps      int64  `json:"credit_bps"`      // single-payment credit MDR, basis points
+	DebitBps       int64  `json:"debit_bps"`       //
+	InstallmentBps int64  `json:"installment_bps"` // merchant installments (parcelado lojista)
+	PixBps         int64  `json:"pix_bps"`         //
+	Tier           string `json:"tier"`            // A, B, C; D = not eligible for instant settlement
+	Instant        bool   `json:"instant"`         // instant settlement requested by the merchant
+}
+
+// UnmarshalJSON reads the API's snake_case keys and, for clients and stored plans from before
+// the API named them so, the Go field names (CreditBps, Tier...). snake_case wins when both
+// are present.
+func (p *Plan) UnmarshalJSON(b []byte) error {
+	type snake Plan
+	var legacy struct {
+		CreditBps, DebitBps, InstallmentBps, PixBps *int64
+		Tier                                        *string
+		Instant                                     *bool
+	}
+	if err := json.Unmarshal(b, &legacy); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	_ = json.Unmarshal(b, &keys)
+	out := snake(*p)
+	set := func(legacyKey, key string, apply func()) {
+		if _, ok := keys[key]; !ok {
+			if _, ok := keys[legacyKey]; ok {
+				apply()
+			}
+		}
+	}
+	num := func(dst *int64, v *int64) {
+		if v != nil {
+			*dst = *v
+		}
+	}
+	set("CreditBps", "credit_bps", func() { num(&out.CreditBps, legacy.CreditBps) })
+	set("DebitBps", "debit_bps", func() { num(&out.DebitBps, legacy.DebitBps) })
+	set("InstallmentBps", "installment_bps", func() { num(&out.InstallmentBps, legacy.InstallmentBps) })
+	set("PixBps", "pix_bps", func() { num(&out.PixBps, legacy.PixBps) })
+	set("Tier", "tier", func() {
+		if legacy.Tier != nil {
+			out.Tier = *legacy.Tier
+		}
+	})
+	set("Instant", "instant", func() {
+		if legacy.Instant != nil {
+			out.Instant = *legacy.Instant
+		}
+	})
+	if err := json.Unmarshal(b, &out); err != nil {
+		return err
+	}
+	*p = Plan(out)
+	return nil
 }
 
 // DefaultPlan is used when a merchant has none.

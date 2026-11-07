@@ -20,11 +20,14 @@
   --on-alert: #0B0F19;
   --info-text: #818CF8;
   --focus-ring: #818CF8;
-  --chart-credit: #818CF8;
-  --chart-debit: #34D399;
-  --chart-pix: #2DD4BF;
-  --chart-crypto: #F59E0B;
+  --chart-credit: #3987E5;
+  --chart-debit: #D55181;
+  --chart-pix: #008300;
+  --chart-crypto: #C98500;
   --chart-other: #94A3B8;
+  --chart-focus: #10B981;
+  --chart-compare: #64748B;
+  --chart-grid: #1E293B;
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
@@ -65,11 +68,14 @@
   --on-alert: #0B0F19;
   --info-text: #4338CA;
   --focus-ring: #4338CA;
-  --chart-credit: #4338CA;
-  --chart-debit: #047857;
-  --chart-pix: #0F766E;
-  --chart-crypto: #B45309;
+  --chart-credit: #2A78D6;
+  --chart-debit: #E87BA4;
+  --chart-pix: #008300;
+  --chart-crypto: #EDA100;
   --chart-other: #475569;
+  --chart-focus: #047857;
+  --chart-compare: #64748B;
+  --chart-grid: #E2E8F0;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -93,11 +99,14 @@
     --on-alert: #0B0F19;
     --info-text: #4338CA;
     --focus-ring: #4338CA;
-    --chart-credit: #4338CA;
-    --chart-debit: #047857;
-    --chart-pix: #0F766E;
-    --chart-crypto: #B45309;
+    --chart-credit: #2A78D6;
+    --chart-debit: #E87BA4;
+    --chart-pix: #008300;
+    --chart-crypto: #EDA100;
     --chart-other: #475569;
+    --chart-focus: #047857;
+    --chart-compare: #64748B;
+    --chart-grid: #E2E8F0;
     color-scheme: light;
   }
 }
@@ -121,11 +130,14 @@
   --on-alert: #000000;
   --info-text: #4338CA;
   --focus-ring: #000000;
-  --chart-credit: #4338CA;
-  --chart-debit: #047857;
-  --chart-pix: #0F766E;
-  --chart-crypto: #B45309;
+  --chart-credit: #2A78D6;
+  --chart-debit: #E87BA4;
+  --chart-pix: #008300;
+  --chart-crypto: #EDA100;
   --chart-other: #0B0F19;
+  --chart-focus: #047857;
+  --chart-compare: #475569;
+  --chart-grid: #CBD5E1;
   color-scheme: light;
 }
 .t-amount-display { font-size: 56px; line-height: 64px; font-weight: 700; font-variant-numeric: tabular-nums; }

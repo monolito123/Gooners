@@ -139,11 +139,14 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/merchants/{id}/devices", "merchants:write", true, s.registerDevice)
 	route("POST /v1/merchants/{id}/enrollment-codes", "merchants:write", true, s.createEnrollmentCode)
 	route("POST /v1/merchants", "merchants:write", true, s.createMerchant)
+	route("GET /v1/merchants", "merchants:write", false, s.listMerchants)
 	route("GET /v1/merchants/{id}", "merchants:write", false, s.getMerchant)
 	route("GET /v1/merchants/{id}/summary", "payments:read", false, s.merchantSummary)
+	route("GET /v1/merchants/{id}/summary/period", "payments:read", false, s.periodSummary)
 	route("POST /v1/terminals", "merchants:write", true, s.registerTerminal)
 	route("POST /v1/terminals/{id}/revoke", "merchants:write", true, s.revokeTerminal)
 	route("POST /v1/payment-intents", "payments:write", true, s.createIntent)
+	route("GET /v1/payment-intents", "payments:read", false, s.listIntents)
 	route("GET /v1/payment-intents/{id}", "payments:read", false, s.getIntent)
 	route("POST /v1/payment-intents/{id}/confirm", "payments:write", true, s.confirmIntent)
 	route("POST /v1/payment-intents/{id}/capture", "payments:write", true, s.captureIntent)
@@ -177,6 +180,7 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/investments/positions", "assets:read", false, s.investmentPositions)
 	if s.cfg.Env != "production" {
 		route("POST /v1/sandbox/crypto/payments/{id}", "payments:write", false, s.sandboxCryptoPayment)
+		route("POST /v1/sandbox/pix/payments/{id}", "payments:write", false, s.sandboxPixPayment)
 		route("POST /v1/sandbox/international/credits", "payments:write", false, s.sandboxInternationalCredit)
 	}
 	route("GET /v1/compliance/cases", "compliance:read", false, s.listCases)
@@ -195,9 +199,37 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/settlements/{id}/proofs/{receipt_event_id}", "settlements:read", false, s.settlementProof)
 	open("GET /v1/transparency/{date}", s.transparencyRoot)
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
+	route("GET /v1/webhook-endpoints", "webhooks:write", false, s.listWebhooks)
+	route("GET /v1/webhook-endpoints/{id}", "webhooks:write", false, s.getWebhook)
+	route("DELETE /v1/webhook-endpoints/{id}", "webhooks:write", false, s.deleteWebhook)
 	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
 	route("POST /v1/webhook-endpoints/{id}/rotate-secret", "webhooks:write", true, s.rotateWebhookSecret)
-	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
+	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(versioned(mux))))))
+}
+
+// APIVersion is the contract version this platform answers (02 §1.3).
+const APIVersion = "2026-10-01"
+
+// versioned holds API calls to a version the platform answers: a client names the version it
+// was written against in Api-Version (the current one when absent) and every response says
+// which version answered it.
+func versioned(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Api-Version", APIVersion) // on the refusal too: it names the version to use
+		if v := r.Header.Get("Api-Version"); v != "" && v != APIVersion {
+			detail := "this platform answers Api-Version " + APIVersion
+			if len(v) <= 32 {
+				detail = fmt.Sprintf("Api-Version %q is not supported; ", v) + detail
+			}
+			problem(w, r, http.StatusBadRequest, "unsupported-api-version", "Unsupported API version", detail)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // explicitOnly are the scopes "*" does not include: deciding on held funds, and reading the
@@ -209,6 +241,8 @@ var explicitOnly = map[string]bool{"compliance:write": true, "travel_rule:read":
 var sessionRoutes = map[string]bool{
 	"GET /v1/merchants/{id}":                             true,
 	"GET /v1/merchants/{id}/summary":                     true, // the apps' home screen
+	"GET /v1/merchants/{id}/summary/period":              true, // its 7- and 30-day charts
+	"GET /v1/payment-intents":                            true, // the merchant's own payments
 	"POST /v1/merchants/{id}/devices":                    true,
 	"POST /v1/merchants/{id}/enrollment-codes":           true,
 	"POST /v1/payment-intents":                           true,
@@ -242,6 +276,7 @@ var sessionRoutes = map[string]bool{
 	"POST /v1/investments/orders":                        true,
 	"GET /v1/investments/positions":                      true,
 	"POST /v1/sandbox/crypto/payments/{id}":              true,
+	"POST /v1/sandbox/pix/payments/{id}":                 true,
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a
@@ -397,7 +432,9 @@ func CertFingerprint(der []byte) string { h := sha256.Sum256(der); return hex.En
 
 func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFunc) http.Handler {
 	authenticated := func(w http.ResponseWriter, r *http.Request, p principal) {
-		if ok, wait := s.perKey.take(p.limitKey()); !ok {
+		ok, wait := s.perKey.take(p.limitKey())
+		s.perKey.headers(w.Header(), p.limitKey())
+		if !ok {
 			w.Header().Set("Retry-After", retryAfter(wait))
 			problem(w, r, http.StatusTooManyRequests, "rate-limited", "Too many requests", "slow down and retry after the Retry-After delay")
 			return

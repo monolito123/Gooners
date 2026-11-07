@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,7 +94,7 @@ func (s *Service) QuoteMerchant(ctx context.Context, tenantID, quoteID string) (
 }
 
 // Entries lists the wallet's latest ledger postings and whether there are older ones.
-func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit int) ([]map[string]any, bool, error) {
+func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit int, after string) ([]map[string]any, bool, error) {
 	m, err := s.merchantByAccount(ctx, tenantID, accountID)
 	if err != nil {
 		return nil, false, err
@@ -101,7 +102,17 @@ func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	es, err := s.ledger.Entries(ctx, tenantID, ledger.MerchantWallet(m.ID), limit+1)
+	// The cursor is the last entry's id: its journal and its place in it ("jr_….2").
+	afterJournal, afterSeq := "", 0
+	if after != "" {
+		j, seq, ok := strings.Cut(after, ".")
+		n, err := strconv.Atoi(seq)
+		if !ok || err != nil || n < 0 {
+			return nil, false, invalid("starting_after is an entry id, for example jr_01JBK6E5F6G7H8J9K0M1M2N3P5.1")
+		}
+		afterJournal, afterSeq = j, n
+	}
+	es, err := s.ledger.Entries(ctx, tenantID, ledger.MerchantWallet(m.ID), limit+1, afterJournal, afterSeq)
 	if err != nil {
 		return nil, false, err
 	}
@@ -111,7 +122,8 @@ func (s *Service) Entries(ctx context.Context, tenantID, accountID string, limit
 	}
 	out := make([]map[string]any, 0, len(es))
 	for _, e := range es {
-		out = append(out, map[string]any{"journal_id": e.JournalID, "direction": e.Direction, "amount": e.Amount, "type": e.Type, "reference": e.Reference, "posted_at": e.PostedAt.UTC().Format(time.RFC3339)})
+		out = append(out, map[string]any{"id": fmt.Sprintf("%s.%d", e.JournalID, e.Seq), "journal_id": e.JournalID, "seq": e.Seq, "direction": e.Direction,
+			"amount": e.Amount, "type": e.Type, "reference": e.Reference, "posted_at": e.PostedAt.UTC().Format(time.RFC3339)})
 	}
 	return out, more, nil
 }
@@ -170,7 +182,7 @@ func (s *Service) QuotePayout(ctx context.Context, tenantID, accountID string, a
 	}
 	fromAvail := min(avail, amount)
 	need := amount - fromAvail
-	var lines []advanceLine
+	lines := []advanceLine{} // an empty list, never null, when nothing is advanced
 	var advanced, fees int64
 	annual, eligible := s.cfg.Costs.AnnualRate(m.Plan.Tier)
 	if need > 0 {
@@ -311,7 +323,7 @@ func (s *Service) ExecutePayout(ctx context.Context, tenantID, quoteID string) (
 	if tag.RowsAffected() == 0 {
 		return nil, fmt.Errorf("%w: quote not found or already used", ErrConflict) // a concurrent request spent it
 	}
-	var lines []advanceLine
+	lines := []advanceLine{} // an empty list, never null, when nothing is advanced
 	_ = json.Unmarshal(detail, &lines)
 	var dest Destination
 	_ = json.Unmarshal(destJSON, &dest)
@@ -487,7 +499,11 @@ type WebhookEndpoint struct {
 	Object string   `json:"object"`
 	URL    string   `json:"url"`
 	Events []string `json:"events"`
-	Secret string   `json:"secret,omitempty"`
+	Secret string   `json:"secret,omitempty"` // only when created: rotations return the new one
+	// Status is enabled, or disabled once DELETE /v1/webhook-endpoints/{id} stopped it.
+	Status     string `json:"status,omitempty"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	DisabledAt string `json:"disabled_at,omitempty"`
 }
 
 // ReplayWebhooks schedules an endpoint's deliveries in [since, until) again (docs/02 §10).
@@ -498,12 +514,12 @@ func (s *Service) ReplayWebhooks(ctx context.Context, tenantID, endpointID strin
 	if !since.Before(until) || since.Before(s.cfg.Now().Add(-30*24*time.Hour)) {
 		return 0, invalid("since must be before until and within the last 30 days")
 	}
-	var exists bool
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM webhook_endpoints WHERE tenant_id = $1 AND id = $2)`, tenantID, endpointID).Scan(&exists); err != nil {
+	e, err := s.GetWebhookEndpoint(ctx, tenantID, endpointID)
+	if err != nil {
 		return 0, err
 	}
-	if !exists {
-		return 0, ErrNotFound
+	if e.Status == "disabled" {
+		return 0, fmt.Errorf("%w: the endpoint is disabled; create a new one and replay to it", ErrConflict)
 	}
 	return webhooks.Replay(ctx, s.pool, tenantID, endpointID, since, until)
 }
@@ -524,7 +540,8 @@ func (s *Service) CreateWebhookEndpoint(ctx context.Context, tenantID, url strin
 	if len(events) == 0 {
 		events = []string{"*"}
 	}
-	e := &WebhookEndpoint{ID: ids.New("we"), Object: "webhook_endpoint", URL: url, Events: events, Secret: webhooks.NewSecret()}
+	e := &WebhookEndpoint{ID: ids.New("we"), Object: "webhook_endpoint", URL: url, Events: events, Secret: webhooks.NewSecret(),
+		Status: "enabled", CreatedAt: s.cfg.Now().UTC().Format(time.RFC3339)}
 	stored := e.Secret
 	if s.vault != nil {
 		sealed, err := s.vault.SealSecret(ctx, e.Secret, e.ID)

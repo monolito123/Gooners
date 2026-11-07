@@ -13,8 +13,10 @@ object Palette {
     val Midnight950 = Color(0xFF0B0F19)
     val Slate50 = Color(0xFFF8FAFC)
     val Slate100 = Color(0xFFF1F5F9)
+    val Slate200 = Color(0xFFE2E8F0)
     val Slate300 = Color(0xFFCBD5E1)
     val Slate400 = Color(0xFF94A3B8)
+    val Slate500 = Color(0xFF64748B)
     val Slate600 = Color(0xFF475569)
     val Slate700 = Color(0xFF334155)
     val Slate800 = Color(0xFF1E293B)
@@ -27,8 +29,14 @@ object Palette {
     val Amber700 = Color(0xFFB45309)
     val Coral400 = Color(0xFFFB7185)
     val Coral700 = Color(0xFFBE123C)
-    val Teal400 = Color(0xFF2DD4BF)
-    val Teal700 = Color(0xFF0F766E)
+    val VizBlueLight = Color(0xFF2A78D6)
+    val VizBlueDark = Color(0xFF3987E5)
+    val VizMagentaLight = Color(0xFFE87BA4)
+    val VizMagentaDark = Color(0xFFD55181)
+    val VizGreenLight = Color(0xFF008300)
+    val VizGreenDark = Color(0xFF008300)
+    val VizYellowLight = Color(0xFFEDA100)
+    val VizYellowDark = Color(0xFFC98500)
     val Indigo400 = Color(0xFF818CF8)
     val Indigo700 = Color(0xFF4338CA)
     val White = Color(0xFFFFFFFF)
@@ -61,6 +69,9 @@ data class SemanticColors(
     val chartPix: Color,
     val chartCrypto: Color,
     val chartOther: Color,
+    val chartFocus: Color,
+    val chartCompare: Color,
+    val chartGrid: Color,
 )
 
 object Themes {
@@ -84,11 +95,14 @@ object Themes {
         onAlert = Color(0xFF0B0F19),
         infoText = Color(0xFF818CF8),
         focusRing = Color(0xFF818CF8),
-        chartCredit = Color(0xFF818CF8),
-        chartDebit = Color(0xFF34D399),
-        chartPix = Color(0xFF2DD4BF),
-        chartCrypto = Color(0xFFF59E0B),
+        chartCredit = Color(0xFF3987E5),
+        chartDebit = Color(0xFFD55181),
+        chartPix = Color(0xFF008300),
+        chartCrypto = Color(0xFFC98500),
         chartOther = Color(0xFF94A3B8),
+        chartFocus = Color(0xFF10B981),
+        chartCompare = Color(0xFF64748B),
+        chartGrid = Color(0xFF1E293B),
     )
     val Light = SemanticColors(
         canvas = Color(0xFFF8FAFC),
@@ -110,11 +124,14 @@ object Themes {
         onAlert = Color(0xFF0B0F19),
         infoText = Color(0xFF4338CA),
         focusRing = Color(0xFF4338CA),
-        chartCredit = Color(0xFF4338CA),
-        chartDebit = Color(0xFF047857),
-        chartPix = Color(0xFF0F766E),
-        chartCrypto = Color(0xFFB45309),
+        chartCredit = Color(0xFF2A78D6),
+        chartDebit = Color(0xFFE87BA4),
+        chartPix = Color(0xFF008300),
+        chartCrypto = Color(0xFFEDA100),
         chartOther = Color(0xFF475569),
+        chartFocus = Color(0xFF047857),
+        chartCompare = Color(0xFF64748B),
+        chartGrid = Color(0xFFE2E8F0),
     )
     val Sunlight = SemanticColors(
         canvas = Color(0xFFFFFFFF),
@@ -136,11 +153,14 @@ object Themes {
         onAlert = Color(0xFF000000),
         infoText = Color(0xFF4338CA),
         focusRing = Color(0xFF000000),
-        chartCredit = Color(0xFF4338CA),
-        chartDebit = Color(0xFF047857),
-        chartPix = Color(0xFF0F766E),
-        chartCrypto = Color(0xFFB45309),
+        chartCredit = Color(0xFF2A78D6),
+        chartDebit = Color(0xFFE87BA4),
+        chartPix = Color(0xFF008300),
+        chartCrypto = Color(0xFFEDA100),
         chartOther = Color(0xFF0B0F19),
+        chartFocus = Color(0xFF047857),
+        chartCompare = Color(0xFF475569),
+        chartGrid = Color(0xFFCBD5E1),
     )
 }
 

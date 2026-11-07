@@ -28,7 +28,22 @@ struct MoneyView: View {
             }
             if payingOut || model.quote != nil { payout }
             if let day = model.today {
-                TodaySection(day: day)
+                // One row of choices above everything it scopes.
+                Section {
+                    Picker("Período", selection: Binding(get: { model.period }, set: { model.selectPeriod($0) })) {
+                        Text("Hoje").tag(1)
+                        Text("7 dias").tag(7)
+                        Text("30 dias").tag(30)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                let today = AppModel.brasiliaDay(daysAgo: 0)
+                if model.period > 1, let range = model.range, range.days == model.period {
+                    SalesSection(view: Today.periodView(range, today: today))
+                } else {
+                    // While the next period loads, the day stays on screen, dimmed.
+                    SalesSection(view: Today.dayView(day, today: day.date == today), refreshing: model.period > 1)
+                }
                 if !day.recent.isEmpty { RecentSalesSection(rows: day.recent) }
             }
             if let b = model.balance {

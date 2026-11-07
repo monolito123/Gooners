@@ -511,12 +511,16 @@ func (s *Server) entries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	es, more, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit)
+	es, more, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit, r.URL.Query().Get("starting_after"))
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": es, "has_more": more})
+	var next any
+	if more && len(es) > 0 {
+		next = es[len(es)-1]["id"]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": es, "has_more": more, "next_cursor": next})
 }
 
 func (s *Server) quote(w http.ResponseWriter, r *http.Request) {

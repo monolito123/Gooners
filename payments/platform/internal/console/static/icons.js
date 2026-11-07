@@ -19,26 +19,3 @@ export function icon(name, size = 20) {
   }
   return svg;
 }
-
-/**
- * A sparkline of values as bars, one per slot (the hours of a day), scaled to the largest.
- * Empty slots keep a faint baseline so the shape of the day reads at a glance.
- */
-export function sparkBars(values, { width = 288, height = 64, label = '' } = {}) {
-  const svg = document.createElementNS(NS, 'svg');
-  for (const [k, v] of Object.entries({ viewBox: `0 0 ${width} ${height}`, class: 'spark', role: 'img', 'aria-label': label, preserveAspectRatio: 'none' })) {
-    svg.setAttribute(k, String(v));
-  }
-  const max = Math.max(1, ...values);
-  const slot = width / values.length;
-  values.forEach((v, i) => {
-    const h = v > 0 ? Math.max(3, (v / max) * (height - 4)) : 2;
-    const r = document.createElementNS(NS, 'rect');
-    for (const [k, val] of Object.entries({ x: (i * slot + slot * 0.15).toFixed(2), y: (height - h).toFixed(2), width: (slot * 0.7).toFixed(2), height: h.toFixed(2), rx: 2,
-      class: v > 0 ? 'bar' : 'bar empty' })) {
-      r.setAttribute(k, String(val));
-    }
-    svg.append(r);
-  });
-  return svg;
-}

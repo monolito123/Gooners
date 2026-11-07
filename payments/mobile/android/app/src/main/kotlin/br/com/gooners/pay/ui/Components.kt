@@ -1,6 +1,28 @@
 package br.com.gooners.pay.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,12 +62,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import br.com.gooners.pay.core.Money
-import br.com.gooners.pay.core.api.DaySummary
-import br.com.gooners.pay.core.api.MethodTotal
 import br.com.gooners.pay.core.api.RecentPayment
 import br.com.gooners.pay.core.today.Today
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -128,41 +147,146 @@ fun methodColor(method: String): Color = when (Today.chart(method)) {
     else -> semantic.chartOther
 }
 
-/** The day's sales per hour as bars; empty hours keep a short baseline so the day's shape reads. */
+/**
+ * A sales chart (docs/06 §8): bars for the series it is about, a line for what it is compared
+ * with, one y axis with clean ticks and a hairline grid. Tapping or dragging across it picks a
+ * bucket, with a light tick, and the readout above shows every series there; TalkBack reads each
+ * bucket as its own element, so no value is behind a gesture.
+ */
 @Composable
-fun HourlyBars(hourly: List<Long>, modifier: Modifier = Modifier) {
-    val peak = Today.peakHour(hourly)
-    val bar = semantic.actionBorder
-    val empty = semantic.border
-    val description = if (peak == null) "Sem vendas por hora" else "Vendas por hora; o pico foi às ${peak}h, com ${Money(hourly[peak]).format()}"
-    Column(modifier.clearAndSetSemantics { contentDescription = description }) {
-        Canvas(Modifier.fillMaxWidth().height(64.dp)) {
-            if (hourly.isEmpty()) return@Canvas
-            val max = (hourly.maxOrNull() ?: 0L).coerceAtLeast(1L)
-            val slot = size.width / hourly.size
-            val w = slot * 0.7f
-            hourly.forEachIndexed { i, v ->
-                val h = if (v > 0) maxOf(3.dp.toPx(), v.toFloat() / max * (size.height - 4.dp.toPx())) else 2.dp.toPx()
-                drawRoundRect(if (v > 0) bar else empty, Offset(i * slot + (slot - w) / 2, size.height - h), Size(w, h), CornerRadius(2.dp.toPx()))
+fun SalesChart(v: Today.SalesView, modifier: Modifier = Modifier) {
+    val n = v.buckets.size
+    val hasCompare = v.compare.size == n
+    val unit = if (v.labels.firstOrNull()?.endsWith("h") == true) "hora" else "dia"
+    var selected by remember(v) { mutableIntStateOf(-1) }
+    val haptic = LocalHapticFeedback.current
+    val select = { i: Int ->
+        val k = i.coerceIn(0, n - 1)
+        if (k != selected) {
+            selected = k
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+    val measurer = rememberTextMeasurer()
+    val focus = semantic.chartFocus
+    val compareColor = semantic.chartCompare
+    val grid = semantic.chartGrid
+    val ink = semantic.textSecondary
+    val tickStyle = TypeScale.Caption.copy(color = ink, fontFeatureSettings = "tnum")
+    val density = LocalDensity.current
+    val leftPx = with(density) { 56.dp.toPx() }
+    val rightPx = with(density) { 4.dp.toPx() }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Xs)) {
+        // The legend: two series, a key for each; bars get a block, the line a short stroke.
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Lg), verticalAlignment = Alignment.CenterVertically) {
+            LegendKey(focus, line = false, label = v.focusName)
+            if (hasCompare) LegendKey(compareColor, line = true, label = v.compareName)
+        }
+        // The readout: values lead, names follow.
+        Box(Modifier.fillMaxWidth().heightIn(min = 40.dp).clearAndSetSemantics { }, contentAlignment = Alignment.CenterStart) {
+            if (selected in 0 until n) {
+                Column {
+                    Text(v.spoken[selected], style = TypeScale.Caption, color = ink)
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.Md), verticalAlignment = Alignment.CenterVertically) {
+                        Text(Money(v.buckets[selected]).format(), style = TypeScale.Label.copy(fontFeatureSettings = "tnum"))
+                        if (hasCompare) {
+                            LegendKey(compareColor, line = true, label = "")
+                            Text(Money(v.compare[selected]).format() + " " + v.compareName, style = TypeScale.Caption.copy(fontFeatureSettings = "tnum"), color = ink)
+                        }
+                    }
+                }
+            } else {
+                Text("Toque ou arraste no gráfico para ver cada $unit", style = TypeScale.Caption, color = ink)
             }
         }
-        Row(Modifier.fillMaxWidth().padding(top = Space.Xs), horizontalArrangement = Arrangement.SpaceBetween) {
-            listOf("0h", "6h", "12h", "18h", "23h").forEach { Text(it, style = TypeScale.Caption, color = semantic.textSecondary) }
+        Box(
+            Modifier.fillMaxWidth().height(200.dp)
+                .pointerInput(v) {
+                    val slot = { x: Float -> ((x - leftPx) / ((size.width - leftPx - rightPx) / n)).toInt() }
+                    detectTapGestures { o -> select(slot(o.x)) }
+                }
+                .pointerInput(v) {
+                    val slot = { x: Float -> ((x - leftPx) / ((size.width - leftPx - rightPx) / n)).toInt() }
+                    detectHorizontalDragGestures(onDragStart = { o -> select(slot(o.x)) }) { change, _ -> select(slot(change.position.x)) }
+                },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val top = 8.dp.toPx()
+                val bottom = 22.dp.toPx()
+                val plotH = size.height - top - bottom
+                val slot = (size.width - leftPx - rightPx) / n
+                val bw = minOf(24.dp.toPx(), slot * 0.62f)
+                val yMax = (v.ticks.lastOrNull() ?: 1L).coerceAtLeast(1L).toFloat()
+                fun y(value: Long) = top + plotH - value / yMax * plotH
+                fun cx(i: Int) = leftPx + i * slot + slot / 2
+                for (t in v.ticks) {
+                    drawLine(grid, Offset(leftPx, y(t)), Offset(size.width - rightPx, y(t)), strokeWidth = 1.dp.toPx())
+                    val label = measurer.measure(Today.compact(t), tickStyle)
+                    drawText(label, topLeft = Offset(leftPx - 6.dp.toPx() - label.size.width, y(t) - label.size.height / 2f))
+                }
+                v.buckets.forEachIndexed { i, value ->
+                    if (value <= 0) return@forEachIndexed
+                    val x0 = cx(i) - bw / 2
+                    val y0 = minOf(y(value), y(0) - 1f)
+                    val r = minOf(4.dp.toPx(), bw / 2, y(0) - y0)
+                    val path = Path().apply {
+                        addRoundRect(RoundRect(x0, y0, x0 + bw, y(0), topLeftCornerRadius = CornerRadius(r), topRightCornerRadius = CornerRadius(r),
+                            bottomRightCornerRadius = CornerRadius.Zero, bottomLeftCornerRadius = CornerRadius.Zero))
+                    }
+                    drawPath(path, focus, alpha = if (selected >= 0 && selected != i) 0.55f else 1f)
+                }
+                if (hasCompare) {
+                    val line = Path()
+                    v.compare.forEachIndexed { i, c -> if (i == 0) line.moveTo(cx(i), y(c)) else line.lineTo(cx(i), y(c)) }
+                    drawPath(line, compareColor, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                if (selected in 0 until n) drawLine(ink, Offset(cx(selected), top), Offset(cx(selected), y(0)), strokeWidth = 1.dp.toPx())
+                // As many x labels as fit side by side, the first and the last always.
+                val gap = 48.dp.toPx()
+                val shown = mutableListOf<Int>()
+                for (i in v.axis) if (shown.isEmpty() || cx(i) - cx(shown.last()) >= gap) shown += i
+                val last = v.axis.lastOrNull()
+                if (last != null && shown.lastOrNull() != last) {
+                    while (shown.size > 1 && cx(last) - cx(shown.last()) < gap) shown.removeAt(shown.lastIndex)
+                    shown += last
+                }
+                for (i in shown) {
+                    val label = measurer.measure(v.labels[i], tickStyle)
+                    val x = (cx(i) - label.size.width / 2f).coerceIn(leftPx - 8.dp.toPx(), size.width - label.size.width.toFloat())
+                    drawText(label, topLeft = Offset(x, size.height - bottom + 4.dp.toPx()))
+                }
+            }
+            // One accessibility element per bucket, over its column: TalkBack reads every value.
+            Row(Modifier.matchParentSize().padding(start = 56.dp, end = 4.dp)) {
+                v.buckets.indices.forEach { i ->
+                    val said = "${v.spoken[i]}: ${v.focusName} ${Money(v.buckets[i]).spoken()}" +
+                        if (hasCompare) "; ${v.compareName} ${Money(v.compare[i]).spoken()}" else ""
+                    Box(Modifier.weight(1f).fillMaxHeight().semantics {
+                        contentDescription = said
+                        onClick { select(i); true }
+                    })
+                }
+            }
         }
     }
 }
 
-/** How customers paid: one bar split by method, then a legend with amounts and shares. */
 @Composable
-fun MethodMix(parts: List<MethodTotal>, modifier: Modifier = Modifier) {
-    val shares = Today.shares(parts.map { it.gross })
+private fun LegendKey(color: Color, line: Boolean, label: String) = Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Box(if (line) Modifier.width(16.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(color) else Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(color))
+    if (label.isNotEmpty()) Text(label, style = TypeScale.Caption, color = semantic.textSecondary)
+}
+
+/** How customers paid: a thin bar split by method in a fixed order, then the list that names them. */
+@Composable
+fun MethodMix(v: Today.SalesView, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Sm)) {
-        Row(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(Radius.Pill)).background(semantic.surfaceRaised)
-            .clearAndSetSemantics { contentDescription = parts.zip(shares).joinToString(", ") { (p, s) -> "${Today.method(p.method)} $s%" } },
+        Row(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(Radius.Pill))
+            .clearAndSetSemantics { contentDescription = v.byMethod.zip(v.shares).joinToString(", ") { (p, s) -> "${Today.method(p.method)} $s%" } },
             horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            parts.forEach { p -> Box(Modifier.weight(p.gross.coerceAtLeast(1L).toFloat()).height(12.dp).background(methodColor(p.method))) }
+            v.byMethod.filter { it.gross > 0 }.forEach { p -> Box(Modifier.weight(p.gross.toFloat()).fillMaxHeight().background(methodColor(p.method))) }
         }
-        parts.zip(shares).forEach { (p, s) ->
+        v.byMethod.zip(v.shares).forEach { (p, s) ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Sm)) {
                 Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(methodColor(p.method)))
                 Text(Today.method(p.method), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -174,64 +298,74 @@ fun MethodMix(parts: List<MethodTotal>, modifier: Modifier = Modifier) {
     }
 }
 
+/** The period the sales card shows: one row of choices above everything it scopes. */
+@Composable
+fun PeriodPicker(selected: Int, onSelect: (Int) -> Unit) = Row(horizontalArrangement = Arrangement.spacedBy(Space.Sm)) {
+    listOf(1 to "Hoje", 7 to "7 dias", 30 to "30 dias").forEach { (days, label) ->
+        FilterChip(selected == days, { onSelect(days) }, label = { Text(label) }, modifier = Modifier.heightIn(min = Tokens.TouchMin))
+    }
+}
+
 private val Brt = ZoneId.of("America/Sao_Paulo")
 private val HourMinute = DateTimeFormatter.ofPattern("HH:mm")
-private val LongDay = DateTimeFormatter.ofPattern("EEEE, d 'de' MMMM", Locale.forLanguageTag("pt-BR"))
 
 /**
- * Today in one card (docs/06 §6): what was sold and what the merchant keeps, against the same
- * weekday last week, the shape of the day, how customers paid and what still waits.
+ * The sales card (docs/06 §6): what was sold and what the merchant keeps, against what it is
+ * compared with, the shape of the period, how customers paid and what still waits. While the
+ * next period loads the card stays, dimmed, so nothing jumps.
  */
 @Composable
-fun TodayCard(d: DaySummary) = SectionCard {
-    val isToday = d.date == LocalDate.now(Brt).toString()
-    val day = runCatching { LocalDate.parse(d.date).format(LongDay) }.getOrDefault(d.date)
-    CardHeader(if (isToday) "Hoje" else "Dia", day)
-    Kpi("Vendido", Money(d.gross).format(), lead = true, spoken = Money(d.gross).spoken()) {
-        val lw = d.lastWeek
-        val change = Today.change(lw?.changePct)
-        if (lw == null || change == null) {
-            Text("Sem vendas no mesmo dia da semana passada", style = TypeScale.Caption, color = semantic.textSecondary)
+fun SalesCard(v: Today.SalesView, refreshing: Boolean = false) = SectionCard(Modifier.alpha(if (refreshing) 0.5f else 1f)) {
+    CardHeader(v.title, v.range)
+    Kpi("Vendido", Money(v.gross).format(), lead = true, spoken = Money(v.gross).spoken()) {
+        val change = v.change
+        if (change == null) {
+            val where = when {
+                v.compareName.endsWith("passado") -> "no"
+                v.compareName.endsWith("passada") -> "na"
+                else -> "nos"
+            }
+            Text("Sem vendas $where ${v.compareName} para comparar", style = TypeScale.Caption, color = semantic.textSecondary)
         } else {
-            val pct = lw.changePct ?: 0.0
             val c = when {
-                pct > 0 -> semantic.successText
-                pct < 0 -> semantic.alertText
+                v.changeSign > 0 -> semantic.successText
+                v.changeSign < 0 -> semantic.alertText
                 else -> semantic.textSecondary
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Xs)) {
-                if (pct != 0.0) Icon(if (pct > 0) AppIcons.Up else AppIcons.Down, null, tint = c, modifier = Modifier.size(16.dp))
+                if (v.changeSign != 0) Icon(if (v.changeSign > 0) AppIcons.Up else AppIcons.Down, null, tint = c, modifier = Modifier.size(16.dp))
                 Text(change, style = TypeScale.Label.copy(fontFeatureSettings = "tnum"), color = c)
-                Text(Today.versus(lw.date, isToday), style = TypeScale.Caption, color = semantic.textSecondary)
+                Text(v.versus, style = TypeScale.Caption, color = semantic.textSecondary)
             }
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = Space.Sm), horizontalArrangement = Arrangement.spacedBy(Space.Lg)) {
-        Kpi("Você recebe", Money(d.net).format(), Modifier.weight(1.4f), color = semantic.successText, spoken = Money(d.net).spoken()) {
-            Text(if (d.fees > 0) "${Money(d.fees).format()} de taxas" else "Sem taxas", style = TypeScale.Caption, color = semantic.textSecondary)
+        Kpi("Você recebe", Money(v.net).format(), Modifier.weight(1.4f), color = semantic.successText, spoken = Money(v.net).spoken()) {
+            Text(if (v.fees > 0) "${Money(v.fees).format()} de taxas" else "Sem taxas", style = TypeScale.Caption, color = semantic.textSecondary)
         }
-        Kpi("Vendas", d.sales.toString(), Modifier.weight(0.8f))
-        Kpi("Ticket médio", Money(d.averageTicket).format(), Modifier.weight(1.2f), spoken = Money(d.averageTicket).spoken())
+        Kpi("Vendas", v.sales.toString(), Modifier.weight(0.8f))
+        Kpi("Ticket médio", Money(v.averageTicket).format(), Modifier.weight(1.2f), spoken = Money(v.averageTicket).spoken())
     }
-    if (d.sales > 0) {
+    if (v.sales > 0 || v.compare.any { it > 0 }) {
         Spacer(Modifier.height(Space.Sm))
-        Overline("Por hora")
-        HourlyBars(d.hourly)
+        Overline(if (v.buckets.size == 24) "Por hora" else "Por dia")
+        SalesChart(v)
+    }
+    if (v.sales > 0) {
         Spacer(Modifier.height(Space.Sm))
         Overline("Como pagaram")
-        MethodMix(d.byMethod)
+        MethodMix(v)
     } else {
-        Text(if (isToday) "Nenhuma venda ainda hoje. A primeira aparece aqui na hora." else "Nenhuma venda neste dia.",
-            style = MaterialTheme.typography.bodyMedium, color = semantic.textSecondary)
+        Text(v.empty, style = MaterialTheme.typography.bodyMedium, color = semantic.textSecondary)
     }
-    if (d.waiting.count > 0) {
-        val label = if (d.waiting.count == 1L) "1 cobrança aguardando" else "${d.waiting.count} cobranças aguardando"
+    if (v.waitingCount > 0) {
+        val label = if (v.waitingCount == 1L) "1 cobrança aguardando" else "${v.waitingCount} cobranças aguardando"
         Row(Modifier.fillMaxWidth().padding(top = Space.Sm).clip(RoundedCornerShape(Radius.Md)).background(semantic.surfaceRaised)
             .heightIn(min = Tokens.TouchMin).padding(horizontal = Space.Lg),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Sm)) {
             Icon(AppIcons.Clock, null, tint = semantic.attentionText, modifier = Modifier.size(20.dp))
             Text(label, style = TypeScale.Label, modifier = Modifier.weight(1f))
-            Text(Money(d.waiting.amount).format(), style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"))
+            Text(Money(v.waitingAmount).format(), style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"))
         }
     }
 }

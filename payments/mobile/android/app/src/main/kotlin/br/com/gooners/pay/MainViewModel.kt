@@ -11,6 +11,7 @@ import br.com.gooners.pay.core.api.Settlement
 import br.com.gooners.pay.core.api.ApiException
 import br.com.gooners.pay.core.api.Balance
 import br.com.gooners.pay.core.api.DaySummary
+import br.com.gooners.pay.core.api.PeriodSummary
 import br.com.gooners.pay.core.api.DeviceCreate
 import br.com.gooners.pay.core.api.Entry
 import br.com.gooners.pay.core.api.GoonersPayApi
@@ -66,6 +67,10 @@ data class MoneyState(
     val statement: Statement? = null,
     /** The day at a glance; null until loaded, or from a platform without the summary. */
     val today: DaySummary? = null,
+    /** The sales card's period in days: 1 is today by hour, 7 and 30 are by day. */
+    val period: Int = 1,
+    /** The last 7 or 30 days, once loaded for the period chosen. */
+    val range: PeriodSummary? = null,
 )
 
 /** Crypto, foreign currency and B3 (docs/09). */
@@ -299,6 +304,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val entries = a.entries(20).data
         val settlements = a.settlements().data
         _money.update { it.copy(balance = balance, today = today, entries = entries, settlements = settlements) }
+        if (_money.value.period > 1) loadRange(a, _money.value.period)
+    }
+
+    /** Shows today by hour, or the last 7 or 30 days by day. */
+    fun selectPeriod(days: Int) = run {
+        _money.update { it.copy(period = days) }
+        val a = authed ?: return@run
+        if (days > 1) loadRange(a, days)
+    }
+
+    private suspend fun loadRange(a: GoonersPayApi.Authed, days: Int) {
+        val today = java.time.LocalDate.now(java.time.ZoneId.of("America/Sao_Paulo"))
+        val range = a.periodSummary(from = today.minusDays(days - 1L).toString(), to = today.toString())
+        _money.update { if (it.period == days) it.copy(range = range) else it }
     }
 
     /** Opens a day's statement: fetched, then checked against the public root on the phone. */

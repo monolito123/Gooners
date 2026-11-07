@@ -42,6 +42,7 @@ import br.com.gooners.pay.AssetsState
 import br.com.gooners.pay.MoneyState
 import br.com.gooners.pay.core.checkout.CheckoutController
 import br.com.gooners.pay.core.checkout.PayMethod
+import br.com.gooners.pay.core.today.Today
 import br.com.gooners.pay.core.wording.Wording
 import kotlinx.coroutines.delay
 import java.math.BigDecimal
@@ -579,7 +580,14 @@ private fun MoneyTab(vm: MainViewModel) {
         }
         if (payout || m.quote != null) item { PayoutCard(vm, m, busy) { payout = false } }
         m.today?.let { d ->
-            item { TodayCard(d) }
+            item { PeriodPicker(m.period, vm::selectPeriod) }
+            item {
+                // While the next period loads, the card stays as it was, dimmed.
+                val range = m.range
+                val isToday = d.date == today.toString()
+                val view = if (m.period > 1 && range != null && range.days == m.period) Today.periodView(range, today) else Today.dayView(d, isToday)
+                SalesCard(view, refreshing = m.period > 1 && (range == null || range.days != m.period))
+            }
             if (d.recent.isNotEmpty()) item { RecentSales(d.recent) }
         }
         item {

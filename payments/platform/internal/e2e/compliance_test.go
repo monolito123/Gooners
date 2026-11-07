@@ -47,7 +47,10 @@ func TestComplianceForDigitalAssets(t *testing.T) {
 
 	// ---- screening ----
 	withdraw := func(address, network, asset, amount, kind string, want int) map[string]any {
-		body := map[string]any{"merchant_id": merchant, "asset": asset, "network": network, "address": address, "amount": amount, "destination_type": kind}
+		body := map[string]any{"merchant_id": merchant, "asset": asset, "network": network, "address": address, "amount": amount}
+		if kind != "" {
+			body["destination_type"] = kind
+		}
 		if kind == "exchange" {
 			body["beneficiary_vasp"] = map[string]any{"name": "Exchange Exemplo S.A.", "country": "BR"}
 		}

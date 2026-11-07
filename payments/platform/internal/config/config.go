@@ -175,8 +175,18 @@ func tlsEnv(prefix string) *TLSFiles {
 	return t
 }
 
-// Load reads the configuration from the environment.
+// Load reads the configuration from the environment and enforces the environment's rules.
 func Load() (*Config, error) {
+	c, err := Read()
+	if err != nil {
+		return nil, err
+	}
+	return c, c.Validate()
+}
+
+// Read reads the configuration from the environment without the environment's rules: what
+// the integrations report needs to describe an incomplete setup.
+func Read() (*Config, error) {
 	c := &Config{
 		Env: env("PLATFORM_ENV", Sandbox), DatabaseURL: os.Getenv("DATABASE_URL"), AcquirerID: env("ACQUIRER_ID", "12345678"),
 		HTTPAddr: env("HTTP_ADDR", ":8080"), HTTPTLS: tlsEnv("HTTP_TLS"),
@@ -333,7 +343,7 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: ROUTES_FILE: %w", err)
 		}
 	}
-	return c, c.Validate()
+	return c, nil
 }
 
 // Validate enforces the environment rules.

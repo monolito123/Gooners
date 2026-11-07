@@ -61,7 +61,11 @@ func TestTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, qA := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": accountA, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "12345678000195"}}, 201)
+	_, qA := st.call("POST", "/v1/payouts/quotes", map[string]any{"account_id": accountA, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "12345678000195"}}, 201)
+	_, epA := st.call("POST", "/v1/webhook-endpoints", map[string]any{"url": "http://127.0.0.1:9/hook", "events": []string{"payment_intent.succeeded"}}, 201)
+	hookA := epA["id"].(string)
+	_, pixA := st.call("POST", "/v1/payment-intents", map[string]any{"merchant_id": merchantA, "amount": 700, "channel": "pix"}, 201)
+	st.call("POST", "/v1/payment-intents/"+pixA["id"].(string)+"/confirm", map[string]any{"payment_method_type": "pix"}, 200)
 	balanceBefore := st.ledgerBalance(ledger.MerchantWallet(merchantA))
 
 	// Tenant B sees none of it and can change none of it.
@@ -77,7 +81,7 @@ func TestTenantIsolation(t *testing.T) {
 		{"POST", "/v1/refunds", map[string]any{"payment_intent_id": piA, "amount": 100}},
 		{"GET", "/v1/accounts/" + accountA + "/balance", nil},
 		{"GET", "/v1/accounts/" + accountA + "/entries", nil},
-		{"POST", "/v1/payouts/quotes", map[string]any{"account_id": accountA, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "CNPJ", "key": "1"}}},
+		{"POST", "/v1/payouts/quotes", map[string]any{"account_id": accountA, "amount": 100, "destination": map[string]any{"type": "pix", "key_type": "cnpj", "key": "1"}}},
 		{"POST", "/v1/terminals", map[string]any{"merchant_id": merchantA}},
 		{"POST", "/v1/terminals/" + terminalA + "/revoke", map[string]any{"reason": "x"}},
 		{"GET", "/v1/disputes/" + dA.ID, nil},
@@ -85,6 +89,13 @@ func TestTenantIsolation(t *testing.T) {
 		{"POST", "/v1/disputes/" + dA.ID + "/accept", nil},
 		{"POST", "/v1/terminal/authorizations", map[string]any{"payment_intent_id": piA, "terminal_id": terminalA, "stan": "000777", "emv_application": "credit",
 			"sred": map[string]any{"format": "x", "ksn": "x", "ciphertext": ""}}},
+		{"GET", "/v1/merchants/" + merchantA + "/summary", nil},
+		{"GET", "/v1/merchants/" + merchantA + "/summary/period", nil},
+		{"GET", "/v1/webhook-endpoints/" + hookA, nil},
+		{"DELETE", "/v1/webhook-endpoints/" + hookA, nil},
+		{"POST", "/v1/webhook-endpoints/" + hookA + "/replay", map[string]any{"since": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)}},
+		{"POST", "/v1/webhook-endpoints/" + hookA + "/rotate-secret", nil},
+		{"POST", "/v1/sandbox/pix/payments/" + pixA["id"].(string), nil},
 	} {
 		if code, out := st.callAs(keyB, c.method, c.path, c.body, 0); code != http.StatusNotFound {
 			t.Errorf("tenant B %s %s: HTTP %d %v (want 404)", c.method, c.path, code, out)
@@ -93,9 +104,17 @@ func TestTenantIsolation(t *testing.T) {
 	if code, _ := st.callAs(keyB, "POST", "/v1/payouts", map[string]any{"quote_id": qA["id"]}, 0); code != http.StatusConflict {
 		t.Errorf("tenant B executing tenant A's quote: HTTP %d", code)
 	}
-	_, list := st.callAs(keyB, "GET", "/v1/disputes", nil, 200)
-	if len(list["data"].([]any)) != 0 {
-		t.Error("tenant B lists tenant A's disputes")
+	// Lists answer with tenant B's own rows only, whatever filter names tenant A's.
+	for _, path := range []string{"/v1/disputes", "/v1/payment-intents?merchant_id=" + merchantA, "/v1/payment-intents", "/v1/webhook-endpoints"} {
+		if _, list := st.callAs(keyB, "GET", path, nil, 200); len(list["data"].([]any)) != 0 {
+			t.Errorf("tenant B lists tenant A's rows at %s", path)
+		}
+	}
+	_, ms := st.callAs(keyB, "GET", "/v1/merchants?limit=100", nil, 200)
+	for _, m := range ms["data"].([]any) {
+		if m.(map[string]any)["id"] == merchantA {
+			t.Error("tenant B lists tenant A's merchant")
+		}
 	}
 	// Nothing moved and A's quote still works for A.
 	if got := st.ledgerBalance(ledger.MerchantWallet(merchantA)); got != balanceBefore {
@@ -105,6 +124,12 @@ func TestTenantIsolation(t *testing.T) {
 		t.Errorf("tenant A's dispute is %s", d.Status)
 	}
 	st.call("POST", "/v1/payouts", map[string]any{"quote_id": qA["id"]}, 201)
+	if _, ep := st.call("GET", "/v1/webhook-endpoints/"+hookA, nil, 200); ep["status"] != "enabled" {
+		t.Errorf("tenant A's webhook endpoint is %v", ep["status"])
+	}
+	if _, pi := st.call("GET", "/v1/payment-intents/"+pixA["id"].(string), nil, 200); pi["status"] != "requires_action" {
+		t.Errorf("tenant A's Pix charge is %v", pi["status"])
+	}
 
 	// The same idempotency key in two tenants is two requests.
 	k := ids.ULID()
@@ -161,7 +186,8 @@ func TestAuthenticationAndScopes(t *testing.T) {
 	if code, _ := st.callAs(readOnly, "GET", path, nil, 0); code != http.StatusOK {
 		t.Errorf("read scope cannot read: %d", code)
 	}
-	for _, c := range [][2]string{{"POST", "/v1/payment-intents"}, {"POST", "/v1/refunds"}, {"GET", "/v1/disputes"}, {"POST", "/v1/payouts/quotes"}, {"POST", "/v1/webhook-endpoints"}, {"POST", "/v1/merchants"}} {
+	for _, c := range [][2]string{{"POST", "/v1/payment-intents"}, {"POST", "/v1/refunds"}, {"GET", "/v1/disputes"}, {"POST", "/v1/payouts/quotes"}, {"POST", "/v1/webhook-endpoints"}, {"POST", "/v1/merchants"},
+		{"GET", "/v1/merchants"}, {"GET", "/v1/webhook-endpoints"}, {"DELETE", "/v1/webhook-endpoints/we_x"}, {"POST", "/v1/sandbox/pix/payments/pi_x"}} {
 		if code, _ := st.callAs(readOnly, c[0], c[1], map[string]any{}, 0); code != http.StatusForbidden {
 			t.Errorf("read-only key %s %s: HTTP %d (want 403)", c[0], c[1], code)
 		}

@@ -83,7 +83,7 @@ var log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
+		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|integrations|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -104,6 +104,8 @@ func main() {
 		err = settle(ctx, os.Args[2:])
 	case "close-day":
 		err = closeDay(ctx, os.Args[2:])
+	case "integrations":
+		err = integrations(ctx, os.Args[2:])
 	default:
 		if cmd, ok := opsCommands[os.Args[1]]; ok {
 			err = cmd(ctx, os.Args[2:])

@@ -286,12 +286,14 @@ func TestTravelRule(t *testing.T) {
 	}
 	// Data that arrives before the coins: kept, then matched to the deposit.
 	pi, act := charge(t, st, merchant, 150_00, nil)
-	code, ans := st.inbound(map[string]any{"reference": "trp-1", "asset": "USDT", "network": "tron", "address": act["address"], "amount": act["amount"],
-		"originator_vasp": map[string]any{"name": "Outra Exchange S.A."}, "ivms101": ivms("Ana Souza", document)}, st.travelSecret)
+	first := map[string]any{"reference": "trp-1", "asset": "USDT", "network": "tron", "address": act["address"], "amount": act["amount"],
+		"originator_vasp": map[string]any{"name": "Outra Exchange S.A."}, "ivms101": ivms("Ana Souza", document)}
+	code, ans := st.inbound(first, st.travelSecret)
 	if code != 200 || ans["status"] != "accepted" {
 		t.Fatalf("a valid message: %d %v", code, ans)
 	}
-	if code, again := st.inbound(map[string]any{"reference": "trp-1", "asset": "USDT"}, st.travelSecret); code != 200 || again["reference"] != ans["reference"] {
+	// The sender retries the same message: the first answer again, nothing recorded twice.
+	if code, again := st.inbound(first, st.travelSecret); code != 200 || again["reference"] != ans["reference"] {
 		t.Fatalf("a message delivered twice: %d %v", code, again)
 	}
 	st.call("POST", "/v1/sandbox/crypto/payments/"+pi, nil, 200)

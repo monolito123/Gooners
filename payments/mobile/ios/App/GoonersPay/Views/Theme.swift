@@ -40,6 +40,11 @@ enum Theme {
     static let warning = Color(role: \.attentionText)
     static let info = Color(role: \.infoText)
 
+    /// The series a chart is about, what it is compared with, and the hairline grid.
+    static let chartFocus = Color(role: \.chartFocus)
+    static let chartCompare = Color(role: \.chartCompare)
+    static let chartGrid = Color(role: \.chartGrid)
+
     /// Payment methods in charts and lists.
     static func method(_ m: String) -> Color {
         switch m {
