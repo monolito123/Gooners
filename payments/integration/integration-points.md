@@ -33,9 +33,9 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 6 | Pix PSP (API Pix) and its webhook | Pix charges, refunds, daily reconciliation | Built | Required |
 | 7 | Pix payouts (bank transfer API) | Paying merchants out | Contract | Required |
 | 8 | Receivables registrar (CERC, Núclea, B3, TAG) | Registering receivables before advances | Contract | Required |
-| 9 | KMS/HSM key-encryption key | The vault's data keys | Interface | Required |
-| 10 | Payment HSM | Decrypting card data from readers | Interface | Required |
-| 11 | Enclave or KMS signer (secp256k1) | Receipt and transparency signatures | Interface | Required |
+| 9 | KMS key-encryption key (AWS KMS, Google Cloud KMS) | The vault's data keys | Built | Required |
+| 10 | Payment HSM (AWS Payment Cryptography) | Decrypting readers' DUKPT card data | Built; key ceremony with the reader vendor | Required |
+| 11 | Signer service (`cmd/signer`) in an enclave or confidential VM | Receipt and transparency signatures | Built; to deploy | Required |
 | 12 | Apple App Attest | Trusting iPhones | Built | Required |
 | 13 | Android key attestation and Google's status list | Trusting Android phones | Built | Required |
 | 14 | Play Integrity | A second Android signal | Missing | Optional |
@@ -93,7 +93,7 @@ The startup check refuses to run outside the sandbox without an https `PUBLIC_AP
 | Outbound, with câmbio | Wise | `api.wise.com` (`WISE_BASE_URL`) |
 | Outbound, with B3 | Broker and quotes | `BROKER_URL`, `brapi.dev` |
 
-**Secrets.** Every secret above arrives as an environment variable. In production they come from a secret manager, never from files in the image. Once the HSM, payment-HSM and signer adapters (§4) exist, the software-key variables (`VAULT_KEK_HEX`, `CARDDATA_DEV_KEY_HEX`, `RECEIPTS_SECRET_HEX`, `TRANSPARENCY_SECRET_HEX`) disappear, and production refuses them already.
+**Secrets.** Every secret above arrives as an environment variable. In production they come from a secret manager, never from files in the image. With the KMS, payment-HSM and signer adapters (§4), the software-key variables (`VAULT_KEK_HEX`, `CARDDATA_DEV_KEY_HEX`, `CARDDATA_BDK_HEX`, `RECEIPTS_SECRET_HEX`, `TRANSPARENCY_SECRET_HEX`) disappear, and production refuses them.
 
 ## 3. Money movement
 
@@ -152,15 +152,21 @@ What remains is a translator to the registrar the platform joins (CERC, Núclea,
 
 ## 4. Keys and card data
 
-All three seams are wired in `serve` (`cmd/platform/main.go`). Swapping the development call for the adapter is the whole change. [hsm.md](hsm.md) describes each.
+All three adapters are built and wired in `serve` (`cmd/platform/main.go`); the settings choose them. [hsm.md](hsm.md) describes each, with the key ceremony and the deployment.
 
-| # | Interface | Development implementation | Production adapter |
-|---|-----------|----------------------------|--------------------|
-| 9 | `vault.KEK` (`internal/vault/vault.go`): `Wrap`, `Unwrap` | `vault.NewLocalKEK` with `VAULT_KEK_HEX` | A KMS or HSM key (AWS KMS, Google Cloud KMS, a Thales or Entrust HSM) |
-| 10 | `carddata.Decryptor` (`internal/carddata/carddata.go`): `Decrypt(format, ksn, ciphertext)` | `carddata.NewDev` with `CARDDATA_DEV_KEY_HEX` | The payment HSM that holds the reader vendor's keys (DUKPT base keys, or the format the MPoC SDK and Tap to Pay provider use) |
-| 11 | `nostr.Author` (`pkg/nostr/nip59.go`): `SignEvent`, `SharedKey` | `nostr.KeysFromSecret` with `RECEIPTS_SECRET_HEX` and `TRANSPARENCY_SECRET_HEX` | A secp256k1 signer in an enclave or HSM. BIP-340 signing and the ECDH that NIP-44 needs never leave it |
+| # | Interface | Development | Production adapter | Settings |
+|---|-----------|-------------|--------------------|----------|
+| 9 | `vault.KEK` (`internal/vault`): `Wrap`, `Unwrap` | `vault.LocalKEK` (`VAULT_KEK_HEX`) | `vault.AWSKMS`, `vault.GCPKMS` | `KEK_PROVIDER`, `KEK_KEY_ID`, `AWS_REGION` |
+| 10 | `carddata.Decryptor` (`internal/carddata`): `Decrypt(format, ksn, ciphertext)` | The phones' development format; TDES DUKPT with the BDK in memory (`CARDDATA_BDK_HEX`) | `carddata.AWSPaymentCryptography` (TDES and AES-128 DUKPT) | `CARDDATA_HSM_KEY_ARN`, `AWS_REGION` |
+| 11 | `nostr.Author` (`pkg/nostr`): `SignEvent`, `SharedKey` | Keys in memory (`RECEIPTS_SECRET_HEX`, `TRANSPARENCY_SECRET_HEX`) | `signer.Remote`, over mutual TLS to `cmd/signer`, whose keys are sealed under the KMS key | `SIGNER_URL`, `SIGNER_TLS_CERT/KEY/CA` |
 
-Production refuses each development setting. It also ends with an error naming these adapters, so it cannot start until they exist.
+What remains is the counterparties' side:
+
+- a KMS key;
+- the BDK imported into AWS Payment Cryptography through the key ceremony with the reader vendor;
+- the signer deployed in a Nitro Enclave or confidential VM that alone may use its KMS key.
+
+Production refuses the development settings and starts once the three are configured. Two pieces are not built: PIN translation (`TranslatePinData`), and an on-premises payShield adapter.
 
 ## 5. Phones and apps
 
@@ -330,10 +336,10 @@ The code to write, smallest first. Contracts and certifications run alongside ([
    - with crypto: travel-rule network (#29), and the screening and analytics providers if used (#27, #28);
    - with B3: broker (#32).
 2. **The receipt claim page and the NIP-05 file** (#19), with two relays (#18).
-3. **The three key adapters** (#9–#11) and the payment HSM's key ceremony with the reader vendors.
+3. ~~The three key adapters~~ (#9–#11): built. What remains is the payment HSM's key ceremony with the reader vendors and deploying the signer.
 4. **The card readers:** the MPoC SDK adapter on Android (#15), Tap to Pay or a BLE reader on iPhone (#16).
 5. **The sponsor's dialect file** (#4) and the converter for its report and chargeback files (#5).
 6. **Operator SSO in front of the commands** (#24), and a KYB provider if operators should not clear merchants by hand (#25).
 7. **Later:** Play Integrity (#14), timestamp anchoring (#20), the partner token service (#22).
 
-`platform integrations -strict` passing in the production environment is the sign that everything the settings can show is in place. Items 3 and 4 also need the startup check's final adapter error removed once the adapters are wired.
+`platform integrations -strict` passing in the production environment is the sign that everything the settings can show is in place; production's startup check enforces the same list.

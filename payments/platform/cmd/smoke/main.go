@@ -92,7 +92,7 @@ func main() {
 	dir, _ := os.MkdirTemp("", "smoke-")
 	defer os.RemoveAll(dir)
 	bin, pki = dir, filepath.Join(dir, "pki")
-	for _, c := range []string{"platform", "schemesim", "pixsim", "devpki", "tapsim"} {
+	for _, c := range []string{"platform", "schemesim", "pixsim", "devpki", "tapsim", "signer"} {
 		run("go", "build", "-o", filepath.Join(bin, c), "./cmd/"+c)
 	}
 	run(filepath.Join(bin, "devpki"), "-out", pki)
@@ -112,13 +112,27 @@ func main() {
 	waitTCP(schemeAddr)
 	waitTCP(pixAddr)
 
+	// The signer holds the receipts and transparency keys, sealed under the KEK; the platform
+	// reaches it over mutual TLS and holds no Nostr key (internal/signer).
+	kekHex, signerAddr := hexKey(), freePort()
+	keysFile := filepath.Join(dir, "signer-keys.json")
+	seal := exec.Command(filepath.Join(bin, "signer"), "seal", "-out", keysFile, "-generate", "receipts,transparency")
+	seal.Env = append(os.Environ(), "VAULT_KEK_HEX="+kekHex)
+	if out, err := seal.CombinedOutput(); err != nil {
+		fail("signer seal: %v\n%s", err, out)
+	}
+	procs = append(procs, start([]string{"VAULT_KEK_HEX=" + kekHex, "SIGNER_KEYS_FILE=" + keysFile, "SIGNER_ADDR=" + signerAddr,
+		"SIGNER_TLS_CERT=" + p("signer-server.pem"), "SIGNER_TLS_KEY=" + p("signer-server.key"), "SIGNER_CLIENT_CA=" + p("ca.pem")}, "signer", "serve"))
+	waitTCP(signerAddr)
+
 	routes := filepath.Join(dir, "routes.json")
 	_ = os.WriteFile(routes, []byte(fmt.Sprintf(`[{"name":"sponsor","dialect":"generic-1987-ascii","addrs":[%q],"acquirer_id":"12345678","approval_prior":0.9}]`, schemeAddr)), 0o644)
 	tenant := "00000000-0000-4000-8000-000000000001"
-	devKey := hexKey()
+	devKey, bdk := hexKey(), hexKey()[:32]
 	env := []string{
 		"PLATFORM_ENV=sandbox", "DATABASE_URL=" + dsn, "HTTP_ADDR=" + apiAddr, "ROUTES_FILE=" + routes, "CARD_PRESENT_TIMEOUT=2s",
-		"VAULT_KEK_HEX=" + hexKey(), "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "RECEIPTS_SECRET_HEX=" + hexKey(), "TRANSPARENCY_SECRET_HEX=" + hexKey(),
+		"VAULT_KEK_HEX=" + kekHex, "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "CARDDATA_BDK_HEX=" + bdk,
+		"SIGNER_URL=https://" + signerAddr, "SIGNER_TLS_CA=" + p("ca.pem"), "SIGNER_TLS_CERT=" + p("platform-client.pem"), "SIGNER_TLS_KEY=" + p("platform-client.key"),
 		"PIX_BASE_URL=https://" + pixAddr + "/api/v2", "PIX_TOKEN_URL=https://" + pixAddr + "/oauth/token", "PIX_CLIENT_ID=platform",
 		"PIX_CLIENT_SECRET=dev-secret", "PIX_KEY=12345678000195", "PIX_TLS_CA=" + p("ca.pem"), "PIX_TLS_CERT=" + p("platform-client.pem"),
 		"PIX_TLS_KEY=" + p("platform-client.key"), "PAYOUT_BASE_URL=https://" + pixAddr + "/api/v2",
@@ -130,7 +144,7 @@ func main() {
 	procs = append(procs, start(env, "platform", "serve"))
 	waitTCP(apiAddr)
 	waitTCP(hookAddr)
-	ok("schemesim, pixsim and platform are listening (API, Pix webhook over mTLS)")
+	ok("schemesim, pixsim, the signer and platform are listening (API, Pix webhook and signer over mTLS)")
 
 	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke", "-scopes", "*,compliance:write").Output()
 	if err != nil {
@@ -192,6 +206,23 @@ func main() {
 		fail("tap decline: %v", r)
 	}
 	ok("tap R$ 45,51 declined: insufficient_funds")
+
+	// A certified reader's format: EMV data encrypted under the transaction's DUKPT key,
+	// decrypted by the platform's payment-HSM stand-in; the receipt is signed by the signer.
+	out, err := exec.Command(filepath.Join(bin, "tapsim"), "-api", api, "-key", key, "-merchant", m["id"].(string),
+		"-terminal", term["terminal_id"].(string), "-amount", "3150", "-bdk", bdk).Output()
+	if err != nil {
+		fail("tapsim dukpt: %v", err)
+	}
+	var reader map[string]any
+	_ = json.Unmarshal(out, &reader)
+	if reader["status"] != "approved" {
+		fail("DUKPT tap: %v", reader)
+	}
+	if rc, _ := reader["receipt"].(map[string]any); rc == nil || rc["nostr_event_id"] == nil {
+		fail("DUKPT tap without a receipt from the signer: %v", reader)
+	}
+	ok("tap R$ 31,50 from a reader's DUKPT data approved; its receipt signed by the signer process")
 
 	pi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 2390, "channel": "pix"}, 201)
 	conf := call("POST", "/v1/payment-intents/"+pi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "pix"}, 200)
@@ -354,7 +385,7 @@ func main() {
 	}
 	scrape, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 1`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
+	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 2`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
 		if !strings.Contains(string(scrape), want) {
 			fail("metrics lack %s:\n%s", want, scrape)
 		}

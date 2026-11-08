@@ -53,43 +53,55 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 	c.PublicURL = "https://api.goonerspay.example"
 	c.Routes[0].TLS = &TLSFiles{CA: "ca.pem"}
 	c.Routes[0].DialectFile = "/etc/platform/sponsor.json"
-	for _, want := range []string{"VAULT_KEK_HEX", "card decryptor", "receipts key", "registers receivables", "device attestation", "status list",
-		"PIX_BASE_URL", "PAYOUT_BASE_URL", "RELAYS", "RECEIPT_CLAIM_BASE", "fraud shield", "adapters"} {
-		err := c.Validate()
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("want an error about %q, got %v", want, err)
-		}
-		switch want {
-		case "VAULT_KEK_HEX":
-			c.VaultKEK = nil
-		case "card decryptor":
-			c.CardDataDevKey = nil
-		case "receipts key":
-			c.ReceiptsSecret = nil
-		case "registers receivables":
+	c.ReceiptsSecret = make([]byte, 32)
+	for _, step := range []struct {
+		want string
+		fix  func(*Config)
+	}{
+		{"KEK_PROVIDER", func(c *Config) {
+			c.KEKProvider, c.KEKKeyID, c.AWSRegion = "aws-kms", "alias/goonerspay-vault", "sa-east-1"
+		}},
+		{"VAULT_KEK_HEX", func(c *Config) { c.VaultKEK = nil }},
+		{"development card decryptor", func(c *Config) { c.CardDataDevKey = nil }},
+		{"CARDDATA_HSM_KEY_ARN", func(c *Config) { c.CardDataHSMKeyARN = "arn:aws:payment-cryptography:sa-east-1:111122223333:key/bdk" }},
+		{"receipts key", func(c *Config) { c.ReceiptsSecret = nil }},
+		{"SIGNER_URL", productionSigner},
+		{"registers receivables", func(c *Config) {
 			c.RegistrarURL, c.PlatformDocument = "https://registrar-adapter.internal", "99999999000191"
-		case "device attestation":
+		}},
+		{"device attestation", func(c *Config) {
 			c.AppAttestRoots, c.AppAttestAppID = "/etc/platform/apple-app-attest-root.pem", "ABCDE12345.br.com.gooners.pay"
 			c.AndroidAttestationRoots = "/etc/platform/google-attestation-roots.pem"
 			c.RiskMode, c.AndroidAttestationStatus = "off", "off"
-		case "status list":
-			c.AndroidAttestationStatus = "https://android.googleapis.com/attestation/status"
-		case "PIX_BASE_URL":
-			productionPix(c)
-			c.PayoutBaseURL, c.Relays, c.ClaimBase = "", nil, ""
-		case "PAYOUT_BASE_URL":
-			c.PayoutBaseURL = "https://psp.example/pagamentos"
-		case "RELAYS":
-			c.Relays = []string{"wss://relay.goonerspay.com.br"}
-		case "RECEIPT_CLAIM_BASE":
-			c.ClaimBase = "https://r.goonerspay.com.br/c"
-		case "fraud shield":
-			c.RiskMode = "shadow"
+		}},
+		{"status list", func(c *Config) { c.AndroidAttestationStatus = "https://android.googleapis.com/attestation/status" }},
+		{"PIX_BASE_URL", func(c *Config) { productionPix(c); c.PayoutBaseURL, c.Relays, c.ClaimBase = "", nil, "" }},
+		{"PAYOUT_BASE_URL", func(c *Config) { c.PayoutBaseURL = "https://psp.example/pagamentos" }},
+		{"RELAYS", func(c *Config) { c.Relays = []string{"wss://relay.goonerspay.com.br"} }},
+		{"RECEIPT_CLAIM_BASE", func(c *Config) { c.ClaimBase = "https://r.goonerspay.com.br/c" }},
+		{"fraud shield", func(c *Config) { c.RiskMode = "shadow" }},
+	} {
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), step.want) {
+			t.Fatalf("want an error about %q, got %v", step.want, err)
 		}
-		if want == "card decryptor" {
-			c.ReceiptsSecret = make([]byte, 32)
-		}
+		step.fix(c)
 	}
+	// With the KMS, the payment HSM and the signer, production starts.
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a complete production configuration refused: %v", err)
+	}
+}
+
+// productionKeys sets the three key adapters production requires.
+func productionKeys(c *Config) {
+	c.KEKProvider, c.KEKKeyID, c.AWSRegion, c.VaultKEK = "aws-kms", "alias/goonerspay-vault", "sa-east-1", nil
+	c.CardDataDevKey, c.CardDataHSMKeyARN = nil, "arn:aws:payment-cryptography:sa-east-1:111122223333:key/bdk"
+	c.ReceiptsSecret, c.TransparencySecret = nil, nil
+	productionSigner(c)
+}
+
+func productionSigner(c *Config) {
+	c.SignerURL, c.SignerTLS = "https://signer.internal:8446", &TLSFiles{CA: "signer-ca.pem", Cert: "platform.pem", Key: "platform.key"}
 }
 
 // productionPix fills the PSP, payout, relay and claim-page settings production requires.
@@ -106,7 +118,7 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 		productionPix(c)
 		c.Env, c.PublicURL = Production, "https://api.goonerspay.example"
 		c.Routes[0].TLS, c.Routes[0].DialectFile = &TLSFiles{CA: "ca.pem"}, "/etc/platform/sponsor.json"
-		c.VaultKEK, c.CardDataDevKey, c.ReceiptsSecret = nil, nil, nil
+		productionKeys(c)
 		c.RegistrarURL, c.PlatformDocument = "https://registrar.internal", "99999999000191"
 		c.AppAttestRoots, c.AppAttestAppID, c.AndroidAttestationRoots = "a.pem", "T.app", "g.pem"
 		return c
@@ -147,8 +159,8 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 	c.SanctionsLists = []string{"/etc/platform/sdn.csv"}
 	c.SenderLookups = map[string]string{"bitcoin": "https://esplora.internal", "ethereum": "https://eth.internal", "polygon": "https://polygon.internal", "tron": "https://tron.internal"}
 	c.TravelRuleURL, c.TravelRuleSecret, c.PlatformLEI = "https://travel-rule.internal", "whsec_x", "506700GE1G29325QX363"
-	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
-		t.Errorf("with authorizations the remaining check is the HSM adapters: %v", err)
+	if err := c.Validate(); err != nil {
+		t.Errorf("with the authorizations and the providers, production starts: %v", err)
 	}
 }
 
@@ -166,7 +178,7 @@ func TestIntegrationsReport(t *testing.T) {
 		}
 	}
 	if state["Scheme host (ISO 8583)"] != Simulated || state["Crypto exchanges"] != Simulated || state["FX provider"] != Simulated ||
-		state["Pix PSP (API Pix)"] != Off || state["Key custody (HSM/KMS)"] != Simulated || state["Travel rule network"] != Off {
+		state["Pix PSP (API Pix)"] != Off || state["KEK (KMS)"] != Simulated || state["Payment HSM (card data)"] != Simulated || state["Signer (receipts and transparency keys)"] != Off || state["Travel rule network"] != Off {
 		t.Fatalf("the sandbox: %v", state)
 	}
 	if Ready(is) {
@@ -182,15 +194,20 @@ func TestIntegrationsReport(t *testing.T) {
 		SanctionsLists: []string{"https://lists.example/sdn.csv"}, SenderLookupURL: "https://chain.example", TravelRuleURL: "https://tr.example", TravelRuleSecret: "whsec_x",
 		ReportingURL: "https://goonerspay.com.br", PublicURL: "https://api.goonerspay.com.br",
 		Relays: []string{"wss://relay.goonerspay.com.br"}, ClaimBase: "https://r.goonerspay.com.br/c"}
+	productionKeys(p)
 	is = p.Integrations()
 	for _, i := range is {
-		if i.Production && i.State != Live && i.Name != "Key custody (HSM/KMS)" {
+		if i.Production && i.State != Live {
 			t.Fatalf("%s is %s: %s", i.Name, i.State, i.Detail)
 		}
 	}
-	// Key custody stays the one gap the reference implementation leaves to the HSM adapters.
-	if Ready(is) {
-		t.Fatal("ready without the HSM adapters")
+	if !Ready(is) {
+		t.Fatal("a platform with every provider and key adapter configured is not ready")
+	}
+	q := *p
+	q.CardDataHSMKeyARN, q.CardDataBDK = "", []byte("0123456789abcdef")
+	if Ready(q.Integrations()) {
+		t.Fatal("ready with the BDK in memory")
 	}
 
 	// What the report used to get wrong: payouts without the API Pix connection they ride on,
@@ -214,14 +231,17 @@ func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
 		productionPix(c)
 		c.Env, c.PublicURL = Production, "https://api.goonerspay.com.br"
 		c.Routes[0].TLS, c.Routes[0].DialectFile = tls, "/etc/platform/sponsor.json"
-		c.VaultKEK, c.CardDataDevKey, c.ReceiptsSecret, c.TransparencySecret = nil, nil, nil, nil
+		productionKeys(c)
 		c.RegistrarURL, c.PlatformDocument = "https://registrar.internal", "99999999000191"
 		c.AppAttestRoots, c.AppAttestAppID, c.AndroidAttestationRoots = "a.pem", "T.app", "g.pem"
 		c.AndroidAttestationStatus = "https://android.googleapis.com/attestation/status"
 		return c
 	}
-	if err := full().Validate(); err == nil || !strings.Contains(err.Error(), "adapters") {
-		t.Fatalf("a complete configuration stops only at the HSM adapters: %v", err)
+	if err := full().Validate(); err != nil {
+		t.Fatalf("a complete configuration refused: %v", err)
+	}
+	if !Ready(full().Integrations()) {
+		t.Fatal("a complete configuration reported not ready")
 	}
 	for name, unset := range map[string]func(*Config){
 		"Pix PSP (API Pix)":  func(c *Config) { c.PixBaseURL = "" },
@@ -229,6 +249,13 @@ func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
 		"Nostr relays":       func(c *Config) { c.Relays = nil },
 		"Receipt claim page": func(c *Config) { c.ClaimBase = "https://r.goonerspay.example/c" },
 		"Public API (HTTPS)": func(c *Config) { c.PublicURL = "http://api.internal" },
+		"KEK (KMS)":          func(c *Config) { c.KEKProvider, c.VaultKEK = "local", make([]byte, 32) },
+		"Payment HSM (card data)": func(c *Config) {
+			c.CardDataHSMKeyARN, c.CardDataBDK = "", make([]byte, 16)
+		},
+		"Signer (receipts and transparency keys)": func(c *Config) {
+			c.SignerURL, c.SignerTLS, c.ReceiptsSecret = "", nil, make([]byte, 32)
+		},
 	} {
 		c := full()
 		unset(c)
@@ -241,8 +268,8 @@ func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
 		if !required {
 			t.Errorf("%s: the report does not flag it", name)
 		}
-		if err := c.Validate(); err == nil || strings.Contains(err.Error(), "adapters") {
-			t.Errorf("%s: production starts without it: %v", name, err)
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: production starts without it", name)
 		}
 	}
 }

@@ -34,10 +34,12 @@ func main() {
 	app := flag.String("app", "credit", "credit or debit")
 	devKey := flag.String("dev-key", os.Getenv("CARDDATA_DEV_KEY_HEX"), "development card-data key (hex)")
 	atc := flag.Int("atc", -1, "the card's transaction counter (EMV 9F36, 0-65535); omitted when negative, since a shared test card has none")
+	bdkHex := flag.String("bdk", "", "a TDES base derivation key (hex): send the card as a certified reader does, DUKPT-encrypted EMV data, instead of the development format")
 	flag.Parse()
 	k, err := hex.DecodeString(*devKey)
-	if err != nil || len(k) != 32 || *merchant == "" || *terminal == "" || *key == "" {
-		fmt.Fprintln(os.Stderr, "tapsim: -key, -merchant, -terminal and a 32-byte -dev-key are required")
+	bdk, bdkErr := hex.DecodeString(*bdkHex)
+	if (*bdkHex == "" && (err != nil || len(k) != 32)) || (*bdkHex != "" && (bdkErr != nil || len(bdk) != 16)) || *merchant == "" || *terminal == "" || *key == "" {
+		fmt.Fprintln(os.Stderr, "tapsim: -key, -merchant, -terminal and a 32-byte -dev-key (or a 16-byte -bdk) are required")
 		os.Exit(2)
 	}
 	post := func(path string, body any, idem bool) map[string]any {
@@ -70,14 +72,28 @@ func main() {
 	if *atc >= 0 {
 		emv += fmt.Sprintf("9F3602%04X", *atc&0xFFFF)
 	}
-	blob, err := carddata.DevEncrypt(k, ksn, carddata.Card{PAN: *pan, Expiry: "2911", AID: *aid, EMVHex: emv + "9A032610299C0100"})
+	format := carddata.DevFormat
+	var blob []byte
+	if len(bdk) == 16 {
+		// A reader's KSN: its 59-bit device identity, then a 21-bit counter.
+		ksn = fmt.Sprintf("FFFF9876543210E%05X", rand.IntN(0x1FFFF)+1)
+		panBCD := *pan
+		if len(panBCD)%2 == 1 {
+			panBCD += "F"
+		}
+		tlv, _ := hex.DecodeString(fmt.Sprintf("5A%02X%s5F2403291130", len(panBCD)/2, panBCD) + fmt.Sprintf("4F%02X%s", len(*aid)/2, *aid) + emv + "9A032610299C0100")
+		format = carddata.FormatDUKPTTDES
+		blob, err = carddata.EncryptDUKPT(bdk, ksn, tlv)
+	} else {
+		blob, err = carddata.DevEncrypt(k, ksn, carddata.Card{PAN: *pan, Expiry: "2911", AID: *aid, EMVHex: emv + "9A032610299C0100"})
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tapsim:", err)
 		os.Exit(1)
 	}
 	res := post("/v1/terminal/authorizations", map[string]any{
 		"payment_intent_id": pi["id"], "terminal_id": *terminal, "stan": stan, "emv_application": *app, "local_time": time.Now().Format(time.RFC3339),
-		"sred": map[string]any{"format": carddata.DevFormat, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
+		"sred": map[string]any{"format": format, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
 	}, false)
 	out, _ := json.MarshalIndent(res, "", "  ")
 	fmt.Println(string(out))

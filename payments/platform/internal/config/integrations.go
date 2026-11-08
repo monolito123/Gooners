@@ -116,14 +116,40 @@ func (c *Config) Integrations() []Integration {
 		}
 		add(i)
 	}
+	// Key custody (integration/hsm.md): the vault's KEK, card data and the Nostr keys.
 	{
-		i := Integration{Name: "Key custody (HSM/KMS)", For: "the vault's KEK, card data, receipt and transparency keys", Settings: []string{"VAULT_KEK_HEX", "CARDDATA_DEV_KEY_HEX", "RECEIPTS_SECRET_HEX", "TRANSPARENCY_SECRET_HEX"}, Production: true}
-		if len(c.VaultKEK) > 0 || len(c.CardDataDevKey) > 0 {
-			i.State, i.Detail = Simulated, "software keys; production wires the HSM, payment-HSM and enclave adapters (integration/hsm.md)"
-		} else {
-			i.State, i.Detail = Off, "no keys configured"
+		k := Integration{Name: "KEK (KMS)", For: "the vault's data keys: card numbers, webhook secrets, travel-rule data", Settings: []string{"KEK_PROVIDER", "KEK_KEY_ID", "AWS_REGION or GOOGLE_APPLICATION_CREDENTIALS"}, Production: true}
+		switch {
+		case c.KEKProvider == "aws-kms" || c.KEKProvider == "gcp-kms":
+			k.State, k.Detail = Live, c.KEKProvider+" "+c.KEKKeyID
+		case len(c.VaultKEK) > 0:
+			k.State, k.Detail = Simulated, "a software KEK in memory (VAULT_KEK_HEX)"
+		default:
+			k.State, k.Detail = Off, "no KEK"
 		}
-		add(i)
+		add(k)
+		h := Integration{Name: "Payment HSM (card data)", For: "decrypting readers' DUKPT card data", Settings: []string{"CARDDATA_HSM_KEY_ARN", "AWS_REGION"}, Production: true}
+		switch {
+		case c.CardDataHSMKeyARN != "":
+			h.State, h.Detail = Live, "AWS Payment Cryptography "+c.CardDataHSMKeyARN
+		case len(c.CardDataBDK) > 0:
+			h.State, h.Detail = Simulated, "TDES DUKPT with the BDK in memory (CARDDATA_BDK_HEX)"
+		case len(c.CardDataDevKey) > 0:
+			h.State, h.Detail = Simulated, "the phones' development format only (CARDDATA_DEV_KEY_HEX)"
+		default:
+			h.State, h.Detail = Off, "no card-data decryptor"
+		}
+		add(h)
+		sg := Integration{Name: "Signer (receipts and transparency keys)", For: "signing receipts, statements and the daily root", Settings: []string{"SIGNER_URL", "SIGNER_TLS_CERT/KEY/CA"}, Production: true}
+		switch {
+		case c.SignerURL != "":
+			sg.State, sg.Detail = Live, c.SignerURL
+		case len(c.ReceiptsSecret) > 0 || len(c.TransparencySecret) > 0:
+			sg.State, sg.Detail = Simulated, "keys in the platform's memory (RECEIPTS_SECRET_HEX, TRANSPARENCY_SECRET_HEX)"
+		default:
+			sg.State, sg.Detail = Off, "no receipts key: sales carry no receipt"
+		}
+		add(sg)
 	}
 
 	// Digital assets: exchanges, then the compliance services crypto needs.

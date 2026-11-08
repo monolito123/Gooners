@@ -158,13 +158,14 @@ The platform's side is the operator's: `platform integrations` lists every exter
 Every external dependency sits behind an interface with a simulator for the sandbox and an adapter for the real provider. [`integration/integration-points.md`](../integration/integration-points.md) lists each one with the exact place it plugs into the code, what exists and what remains to build. `platform integrations` reports each from the environment alone, and production refuses to start without the ones it marks required:
 
 ```
-   INTEGRATION                 STATE      PRODUCTION  DETAIL
-○  Public API (HTTPS)          off        required    PUBLIC_API_URL is not an https address (the sandbox's plain HTTP)
-○  Pix PSP (API Pix)           off        required    PIX_BASE_URL not set
-◐  Key custody (HSM/KMS)       simulated  required    software keys; production wires the HSM, payment-HSM and enclave adapters (integration/hsm.md)
-◐  Crypto exchanges            simulated              the sandbox exchange
-○  Nostr relays                off        required    nothing is published: the receipt QR leads nowhere
-○  Receipt claim page          off        required    RECEIPT_CLAIM_BASE is the placeholder https://r.goonerspay.example/c: host the page and set it
+   INTEGRATION                              STATE      PRODUCTION  DETAIL
+○  Public API (HTTPS)                       off        required    PUBLIC_API_URL is not an https address (the sandbox's plain HTTP)
+○  Pix PSP (API Pix)                        off        required    PIX_BASE_URL not set
+◐  KEK (KMS)                                simulated  required    a software KEK in memory (VAULT_KEK_HEX)
+◐  Signer (receipts and transparency keys)  simulated  required    keys in the platform's memory (RECEIPTS_SECRET_HEX, TRANSPARENCY_SECRET_HEX)
+◐  Crypto exchanges                         simulated              the sandbox exchange
+○  Nostr relays                             off        required    nothing is published: the receipt QR leads nowhere
+○  Receipt claim page                       off        required    RECEIPT_CLAIM_BASE is the placeholder https://r.goonerspay.example/c: host the page and set it
 ```
 
 (An excerpt: ● live, ◐ simulated, ◑ partly configured, ○ off.) `-json` prints the same for tooling.

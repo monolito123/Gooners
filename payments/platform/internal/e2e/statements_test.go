@@ -181,7 +181,11 @@ func TestCloseDueDaysCatchesUpInOrder(t *testing.T) {
 
 	now := time.Now().In(payments.BRT)
 	today := now.Format("2006-01-02")
-	if _, err := st.svc.CloseDueDays(ctx, now); err != nil {
+	// The first run happens after this morning's statement hour, so it closes yesterday. Pinned:
+	// before 01:00 the last day due is two days back, and the count below would change with the
+	// hour the test runs.
+	morning := time.Date(now.Year(), now.Month(), now.Day(), payments.StatementHour, 5, 0, 0, payments.BRT)
+	if _, err := st.svc.CloseDueDays(ctx, morning); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.svc.GetTransparencyRoot(ctx, today); err == nil {

@@ -36,7 +36,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -71,6 +70,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
+	"github.com/monolito123/Gooners/payments/platform/internal/signer"
 	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
@@ -271,6 +271,63 @@ func pixClients(c *config.Config) (*apipix.Client, pixout.Sender, error) {
 	return pix, sender, nil
 }
 
+// cardDecryptor accepts each card-data format the settings configure: the phones' development
+// format, readers' DUKPT in the payment HSM, or (sandbox and certification) DUKPT with the BDK
+// in memory.
+func cardDecryptor(c *config.Config) (carddata.Decryptor, error) {
+	f := carddata.Formats{}
+	if len(c.CardDataDevKey) > 0 {
+		d, err := carddata.NewDev(c.CardDataDevKey)
+		if err != nil {
+			return nil, err
+		}
+		f[carddata.DevFormat] = d
+	}
+	switch {
+	case c.CardDataHSMKeyARN != "":
+		h := carddata.NewAWSPaymentCryptography(c.CardDataHSMKeyARN, c.AWSRegion)
+		f[carddata.FormatDUKPTTDES], f[carddata.FormatDUKPTAES128] = h, h
+	case len(c.CardDataBDK) > 0:
+		f[carddata.FormatDUKPTTDES] = carddata.SoftwareDUKPT{BDK: c.CardDataBDK}
+	}
+	return f, nil
+}
+
+// authors returns the receipts and transparency signers: the signer service when SIGNER_URL is
+// set, otherwise keys in memory (the sandbox). Either is nil when not configured.
+func authors(ctx context.Context, c *config.Config) (receiptsAuthor, transparencyAuthor nostr.Author, err error) {
+	if c.SignerURL != "" {
+		tlsCfg, err := loadTLS(c.SignerTLS, false)
+		if err != nil {
+			return nil, nil, fmt.Errorf("signer tls: %w", err)
+		}
+		r, err := signer.Dial(ctx, c.SignerURL, "receipts", tlsCfg, time.Minute)
+		if err != nil {
+			return nil, nil, err
+		}
+		t, err := signer.Dial(ctx, c.SignerURL, "transparency", tlsCfg, time.Minute)
+		if err != nil {
+			return nil, nil, err
+		}
+		return r, t, nil
+	}
+	if len(c.ReceiptsSecret) == 32 {
+		k, err := nostr.KeysFromSecret(c.ReceiptsSecret)
+		if err != nil {
+			return nil, nil, err
+		}
+		receiptsAuthor = k
+	}
+	if len(c.TransparencySecret) == 32 {
+		k, err := nostr.KeysFromSecret(c.TransparencySecret)
+		if err != nil {
+			return nil, nil, err
+		}
+		transparencyAuthor = k
+	}
+	return receiptsAuthor, transparencyAuthor, nil
+}
+
 func serve(ctx context.Context) error {
 	c, err := config.Load()
 	if err != nil {
@@ -291,10 +348,11 @@ func serve(ctx context.Context) error {
 	for _, p := range pools {
 		go p.Run(ctx)
 	}
-	kek, err := vault.NewLocalKEK("local-dev", c.VaultKEK)
+	kek, err := vault.FromSettings(c.KEKProvider, c.KEKKeyID, c.VaultKEK, c.AWSRegion)
 	if err != nil {
 		return err
 	}
+	log.Info("vault KEK", "kek", kek.ID())
 	v, err := vault.New(pool, kek, c.VaultFingerprintKey)
 	if err != nil {
 		return err
@@ -302,7 +360,7 @@ func serve(ctx context.Context) error {
 	sw := authswitch.New(routes, authswitch.NewPgStore(pool), v, authswitch.Config{CardPresentTimeout: c.CardPresentTimeout, Logger: log})
 	go sw.RunReversals(ctx, time.Second)
 
-	dec, err := carddata.NewDev(c.CardDataDevKey)
+	dec, err := cardDecryptor(c)
 	if err != nil {
 		return err
 	}
@@ -310,17 +368,17 @@ func serve(ctx context.Context) error {
 	if deps.Pix, deps.Payout, err = pixClients(c); err != nil {
 		return err
 	}
-	if len(c.ReceiptsSecret) == 32 {
-		k, err := nostr.KeysFromSecret(c.ReceiptsSecret)
-		if err != nil {
-			return err
-		}
-		deps.Receipts = &receipts.Issuer{Author: k, ClaimBase: c.ClaimBase}
+	receiptsAuthor, transparencyAuthor, err := authors(ctx, c)
+	if err != nil {
+		return err
+	}
+	if receiptsAuthor != nil {
+		deps.Receipts = &receipts.Issuer{Author: receiptsAuthor, ClaimBase: c.ClaimBase}
 		if len(c.Relays) > 0 {
 			deps.Publisher = &receipts.Publisher{Relays: c.Relays}
 		}
-		npub, _ := nostr.EncodeNpub(k.PubHex)
-		log.Info("receipts signer", "npub", npub)
+		npub, _ := nostr.EncodeNpub(receiptsAuthor.Public())
+		log.Info("receipts signer", "npub", npub, "remote", c.SignerURL != "")
 	}
 	if deps.Attestor, err = attestor(ctx, c); err != nil {
 		return err
@@ -429,14 +487,10 @@ func serve(ctx context.Context) error {
 			deps.TravelRule = travelrule.Sandbox{}
 		}
 	}
-	if len(c.TransparencySecret) == 32 {
-		k, err := nostr.KeysFromSecret(c.TransparencySecret)
-		if err != nil {
-			return err
-		}
-		deps.Transparency = k
-		npub, _ := nostr.EncodeNpub(k.PubHex)
-		log.Info("transparency signer", "npub", npub)
+	if transparencyAuthor != nil {
+		deps.Transparency = transparencyAuthor
+		npub, _ := nostr.EncodeNpub(transparencyAuthor.Public())
+		log.Info("transparency signer", "npub", npub, "remote", c.SignerURL != "")
 	}
 	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
 		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview, TravelRuleRetention: c.TravelRuleRetention,
@@ -685,20 +739,21 @@ func closeDay(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	keys := map[string]nostr.Keys{}
-	for _, name := range []string{"RECEIPTS_SECRET_HEX", "TRANSPARENCY_SECRET_HEX"} {
-		raw, err := hex.DecodeString(os.Getenv(name))
-		if err != nil || len(raw) != 32 {
-			return fmt.Errorf("%s (32 bytes, hex) is required", name)
-		}
-		if keys[name], err = nostr.KeysFromSecret(raw); err != nil {
-			return err
-		}
+	c, err := config.Read()
+	if err != nil {
+		return err
+	}
+	rcpt, tr, err := authors(ctx, c)
+	if err != nil {
+		return err
+	}
+	if rcpt == nil || tr == nil {
+		return errors.New("close-day signs statements and the root: set SIGNER_URL (with SIGNER_TLS_*), or RECEIPTS_SECRET_HEX and TRANSPARENCY_SECRET_HEX in the sandbox")
 	}
 	padTo, _ := strconv.Atoi(os.Getenv("TRANSPARENCY_PAD_TO"))
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
-		deps := payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log, Transparency: keys["TRANSPARENCY_SECRET_HEX"],
-			Receipts: &receipts.Issuer{Author: keys["RECEIPTS_SECRET_HEX"]}}
+		deps := payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log, Transparency: tr,
+			Receipts: &receipts.Issuer{Author: rcpt}}
 		if r := os.Getenv("RELAYS"); r != "" {
 			deps.Publisher = &receipts.Publisher{Relays: strings.Split(r, ",")}
 		}

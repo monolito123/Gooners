@@ -81,7 +81,19 @@ type Config struct {
 
 	VaultKEK, VaultFingerprintKey, CardDataDevKey, ReceiptsSecret []byte
 	TransparencySecret                                            []byte // signs the daily public roots (kind 7715)
-	TransparencyPadTo                                             int    // log padding granularity; 0 = 4096
+
+	// Key custody (integration/hsm.md). KEKProvider is local (VAULT_KEK_HEX: the sandbox), aws-kms
+	// or gcp-kms, with KEKKeyID. Card data from terminals: the phones' development format
+	// (CARDDATA_DEV_KEY_HEX), readers' TDES DUKPT with the BDK in memory (CARDDATA_BDK_HEX: the
+	// sandbox and certification), or DUKPT in AWS Payment Cryptography (CARDDATA_HSM_KEY_ARN).
+	// SignerURL is the signer service that holds the receipts and transparency keys; SignerTLS
+	// is the platform's client certificate and the signer's CA.
+	KEKProvider, KEKKeyID, AWSRegion string
+	CardDataBDK                      []byte
+	CardDataHSMKeyARN                string
+	SignerURL                        string
+	SignerTLS                        *TLSFiles
+	TransparencyPadTo                int // log padding granularity; 0 = 4096
 
 	// Device attestation (docs/05 §2.4, §3.6). Configuring either set of roots turns on strict
 	// attestation: devices must prove they are the genuine app on genuine hardware.
@@ -216,6 +228,15 @@ func Read() (*Config, error) {
 	if c.TransparencySecret, err = hexEnv("TRANSPARENCY_SECRET_HEX"); err != nil {
 		return nil, err
 	}
+	c.KEKProvider, c.KEKKeyID = env("KEK_PROVIDER", "local"), os.Getenv("KEK_KEY_ID")
+	if c.AWSRegion = os.Getenv("AWS_REGION"); c.AWSRegion == "" {
+		c.AWSRegion = os.Getenv("AWS_DEFAULT_REGION")
+	}
+	if c.CardDataBDK, err = hexEnv("CARDDATA_BDK_HEX"); err != nil {
+		return nil, err
+	}
+	c.CardDataHSMKeyARN = os.Getenv("CARDDATA_HSM_KEY_ARN")
+	c.SignerURL, c.SignerTLS = os.Getenv("SIGNER_URL"), tlsEnv("SIGNER_TLS")
 	if v := os.Getenv("TRANSPARENCY_PAD_TO"); v != "" {
 		if c.TransparencyPadTo, err = strconv.Atoi(v); err != nil || c.TransparencyPadTo < 1 {
 			return nil, fmt.Errorf("config: TRANSPARENCY_PAD_TO must be a positive number of leaves")
@@ -378,19 +399,46 @@ func (c *Config) Validate() error {
 	if c.PixWebhookAddr != "" && (c.PixWebhookTLS == nil || c.PixWebhookTLS.CA == "") {
 		return errors.New("config: the Pix webhook listener needs PIX_WEBHOOK_TLS_CERT/KEY and the PSP's CA in PIX_WEBHOOK_TLS_CA")
 	}
+	switch c.KEKProvider {
+	case "", "local":
+	case "aws-kms":
+		if c.KEKKeyID == "" || c.AWSRegion == "" {
+			return errors.New("config: KEK_PROVIDER=aws-kms needs KEK_KEY_ID (the key's id, ARN or alias) and AWS_REGION")
+		}
+	case "gcp-kms":
+		if !strings.HasPrefix(c.KEKKeyID, "projects/") {
+			return errors.New("config: KEK_PROVIDER=gcp-kms needs KEK_KEY_ID, the key's resource name (projects/…/cryptoKeys/…)")
+		}
+	default:
+		return fmt.Errorf("config: KEK_PROVIDER %q: use local, aws-kms or gcp-kms", c.KEKProvider)
+	}
+	switch {
+	case len(c.CardDataBDK) != 0 && len(c.CardDataBDK) != 16:
+		return errors.New("config: CARDDATA_BDK_HEX is a double-length TDES key (16 bytes)")
+	case len(c.CardDataBDK) != 0 && c.CardDataHSMKeyARN != "":
+		return errors.New("config: DUKPT data goes either to the payment HSM (CARDDATA_HSM_KEY_ARN) or to the in-memory BDK (CARDDATA_BDK_HEX), not both")
+	case c.CardDataHSMKeyARN != "" && c.AWSRegion == "":
+		return errors.New("config: CARDDATA_HSM_KEY_ARN needs AWS_REGION")
+	case c.SignerURL != "" && (!strings.HasPrefix(c.SignerURL, "https://") || c.SignerTLS == nil || c.SignerTLS.Cert == "" || c.SignerTLS.CA == ""):
+		return errors.New("config: the signer is reached over mutual TLS: SIGNER_URL (https) and SIGNER_TLS_CERT/KEY/CA")
+	case c.SignerURL != "" && (len(c.ReceiptsSecret) > 0 || len(c.TransparencySecret) > 0):
+		return errors.New("config: with SIGNER_URL the receipts and transparency keys live in the signer: unset RECEIPTS_SECRET_HEX and TRANSPARENCY_SECRET_HEX")
+	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")
 	}
 	if c.Env == Production {
 		switch {
-		case len(c.VaultKEK) > 0:
-			return errors.New("config: production cannot use VAULT_KEK_HEX (a software KEK); wire the HSM/KMS KEK adapter")
-		case len(c.CardDataDevKey) > 0:
-			return errors.New("config: production cannot use the development card decryptor; wire the payment HSM adapter")
-		case len(c.ReceiptsSecret) > 0:
-			return errors.New("config: production cannot hold the receipts key in process memory; wire the enclave signer")
-		case len(c.TransparencySecret) > 0:
-			return errors.New("config: production cannot hold the transparency key in process memory; wire the enclave signer")
+		case c.KEKProvider == "" || c.KEKProvider == "local" || len(c.VaultKEK) > 0:
+			return errors.New("config: production keeps the KEK in a KMS: set KEK_PROVIDER (aws-kms or gcp-kms) and KEK_KEY_ID, and unset VAULT_KEK_HEX (a software KEK)")
+		case len(c.CardDataDevKey) > 0 || len(c.CardDataBDK) > 0:
+			return errors.New("config: production decrypts card data only in the payment HSM: unset the development card decryptor (CARDDATA_DEV_KEY_HEX) and the in-memory BDK (CARDDATA_BDK_HEX)")
+		case c.CardDataHSMKeyARN == "":
+			return errors.New("config: production decrypts readers' DUKPT data in the payment HSM: set CARDDATA_HSM_KEY_ARN (AWS Payment Cryptography) and AWS_REGION")
+		case len(c.ReceiptsSecret) > 0 || len(c.TransparencySecret) > 0:
+			return errors.New("config: production cannot hold the receipts key or the transparency key in process memory: use the signer service (SIGNER_URL)")
+		case c.SignerURL == "":
+			return errors.New("config: production signs receipts and roots through the signer service: set SIGNER_URL and SIGNER_TLS_CERT/KEY/CA")
 		case c.RegistrarURL == "" || c.PlatformDocument == "":
 			return errors.New("config: production registers receivables before any advance: set REGISTRAR_URL and PLATFORM_DOCUMENT")
 		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":
@@ -426,13 +474,18 @@ func (c *Config) Validate() error {
 		case c.RiskMode == "off":
 			return errors.New("config: production keeps the fraud shield on: RISK_MODE enforce, or shadow while a new policy is trialled")
 		}
-		return errors.New("config: production needs the HSM, payment-HSM and enclave adapters described in payments/integration/README.md, which this reference implementation leaves as interfaces")
 	}
-	if len(c.VaultKEK) != 32 || len(c.VaultFingerprintKey) < 32 {
-		return errors.New("config: VAULT_KEK_HEX (32 bytes) and VAULT_FINGERPRINT_KEY_HEX (≥ 32 bytes) are required")
+	if (c.KEKProvider == "" || c.KEKProvider == "local") && len(c.VaultKEK) != 32 {
+		return errors.New("config: VAULT_KEK_HEX (32 bytes) is required with the local KEK (KEK_PROVIDER=local)")
 	}
-	if len(c.CardDataDevKey) != 32 {
-		return errors.New("config: CARDDATA_DEV_KEY_HEX (32 bytes) is required for terminal data outside production")
+	if len(c.VaultFingerprintKey) < 32 {
+		return errors.New("config: VAULT_FINGERPRINT_KEY_HEX (≥ 32 bytes) is required")
+	}
+	if len(c.CardDataDevKey) != 0 && len(c.CardDataDevKey) != 32 {
+		return errors.New("config: CARDDATA_DEV_KEY_HEX is 32 bytes")
+	}
+	if len(c.CardDataDevKey) == 0 && len(c.CardDataBDK) == 0 && c.CardDataHSMKeyARN == "" {
+		return errors.New("config: terminal data needs a decryptor: CARDDATA_DEV_KEY_HEX, CARDDATA_BDK_HEX or CARDDATA_HSM_KEY_ARN")
 	}
 	return nil
 }

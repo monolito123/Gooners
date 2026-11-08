@@ -29,7 +29,7 @@ func main() {
 	must(err)
 	must(os.WriteFile(filepath.Join(*out, "ca.pem"), ca.PEM, 0o644))
 	hs := splitComma(*hosts)
-	for _, s := range []string{"platform-server", "pixsim-server", "schemesim-server"} {
+	for _, s := range []string{"platform-server", "pixsim-server", "schemesim-server", "signer-server"} {
 		l, err := ca.Server(s, hs...)
 		must(err)
 		must(l.WriteFiles(*out, s))
