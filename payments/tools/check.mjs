@@ -13,7 +13,7 @@ import {
   testKey, verifyEventStrict, unwrap, canonicalJson, verifyInclusion, statementLeafData,
   hexToBytes, bytesToHex, sha256, utf8ToBytes, nip19, fee,
 } from './lib.mjs';
-import { contrast, fmt, resolveTokens, simulate, deltaE } from './color.mjs';
+import { checkCategorical, contrast, fmt, resolveTokens, simulate, deltaE } from './color.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -199,6 +199,28 @@ const brCodes = new Set([...allText.matchAll(/000201[0-9A-Za-z.\/ *_-]*?6304([0-
 for (const code of brCodes) check(crc16(code.slice(0, -4)) === code.slice(-4), `Pix BR Code CRC16 ${code.slice(-4)} valid (${code.length} chars)`);
 check(brCodes.size > 0, 'found Pix BR Codes to check');
 
+// The integration guide's verifiers (10 §4), run against the same vector: valid, tampered,
+// stale and mid-rotation deliveries.
+{
+  const vector = docJson.map((j) => j.value.webhook_test_vector).find(Boolean);
+  const guide = docs.find((d) => d.rel.endsWith('10-integration-guide.md'))?.text || '';
+  const js = /```js\n([\s\S]*?export function verifyWebhook[\s\S]*?)```/.exec(guide)?.[1];
+  const py = /```python\n([\s\S]*?def verify_webhook[\s\S]*?)```/.exec(guide)?.[1];
+  if (js) {
+    const { verifyWebhook } = await import('data:text/javascript,' + encodeURIComponent(js));
+    const h = { 'webhook-id': vector.webhook_id, 'webhook-timestamp': vector.timestamp, 'webhook-signature': vector.signature };
+    const now = Number(vector.timestamp);
+    check(verifyWebhook(vector.secret, h, vector.body, now) && !verifyWebhook(vector.secret, h, vector.body + ' ', now)
+      && !verifyWebhook(vector.secret, h, vector.body, now + 301) && verifyWebhook(vector.secret, { ...h, 'webhook-signature': 'v1,AAAA ' + vector.signature }, vector.body, now),
+    '10 §4: the JavaScript verifier accepts the vector and refuses a tampered body and a stale timestamp; any signature passes during a rotation');
+  } else bad('10 §4: no JavaScript verifier found');
+  if (py) {
+    const run = spawnSync('python3', ['-I', '-c', `${py}\nimport json, sys\nv = json.loads(sys.argv[1])\nh = {'webhook-id': v['webhook_id'], 'webhook-timestamp': v['timestamp'], 'webhook-signature': v['signature']}\nb = v['body'].encode()\nn = int(v['timestamp'])\nok = verify_webhook(v['secret'], h, b, n) and not verify_webhook(v['secret'], h, b + b' ', n) and not verify_webhook(v['secret'], h, b, n + 301) and verify_webhook(v['secret'], dict(h, **{'webhook-signature': 'v1,AAAA ' + v['signature']}), b, n)\nprint('ok' if ok else 'fail')`, JSON.stringify(vector)], { encoding: 'utf8' });
+    if (run.error) console.log('  skip 10 §4 Python verifier: python3 not installed');
+    else check(run.stdout.trim() === 'ok', '10 §4: the Python verifier behaves the same' + (run.stdout.trim() === 'ok' ? '' : ': ' + (run.stderr || run.stdout)));
+  } else bad('10 §4: no Python verifier found');
+}
+
 for (const { doc, value } of docJson) {
   const v = value.webhook_test_vector;
   if (!v) continue;
@@ -254,7 +276,9 @@ oas.addSchema({ $id: 'oas', components: openapi.components });
 const schemaFor = (v) => {
   const byObject = {
     payment_intent: 'PaymentIntent', refund: 'Refund', payment_method: 'PaymentMethod', dispute: 'Dispute', account: 'Account',
-    transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement',
+    transfer: 'Transfer', payout_quote: 'PayoutQuote', payout: 'Payout', merchant: 'Merchant', device: 'Device', settlement: 'Settlement', risk_review: 'RiskReview',
+    conversion: 'Conversion', crypto_withdrawal: 'CryptoWithdrawal', international_payout: 'InternationalPayout', investment_order: 'InvestmentOrder', portfolio: 'Portfolio',
+    compliance_case: 'ComplianceCase', travel_rule_message: 'TravelRuleMessage', address_screening: 'AddressScreening', webhook_secret: 'RotatedSecret', day_summary: 'DaySummary', period_summary: 'PeriodSummary', webhook_endpoint: 'WebhookEndpoint',
   };
   if (v.object && byObject[v.object]) return byObject[v.object];
   if ('access_token' in v) return 'AccessToken';
@@ -267,7 +291,15 @@ const schemaFor = (v) => {
   if ('legal' in v && 'root_npub' in v) return 'MerchantCreate';
   if (v.type === 'card' && v.card?.number) return 'PaymentMethodCreate';
   if ('payment_method_types' in v && !('id' in v)) return 'PaymentIntentCreate';
-  if ('three_ds' in v && !('id' in v)) return 'PaymentIntentConfirm';
+  if (('three_ds' in v || v.payment_method_type === 'crypto') && !('id' in v)) return 'PaymentIntentConfirm';
+  if ('ivms101' in v && 'originator_vasp' in v) return 'TravelRuleInbound';
+  if ('address' in v && 'network' in v && !('id' in v)) return 'CryptoWithdrawalCreate';
+  if ('beneficiary' in v && !('id' in v)) return 'InternationalPayoutCreate';
+  if ('side' in v && 'asset' in v && !('id' in v) && !('address' in v)) return 'ConversionCreate';
+  if (('accepted' === v.status || 'rejected' === v.status) && 'reference' in v && !('object' in v)) return 'TravelRuleAnswer';
+  if ('profile' in v && 'answers' in v) return 'InvestorProfile';
+  if ('ticker' in v && 'lot' in v && 'market_open' in v) return 'InstrumentQuote';
+  if ('receive' in v && 'currency' in v) return 'InternationalAccount';
   return null;
 };
 let apiChecked = 0;
@@ -279,6 +311,45 @@ for (const { doc, i, value } of docJson.filter((j) => j.doc.endsWith('02-api-ref
   if (!validate(value)) bad(`${doc} block #${i + 1} (${name}): ${oas.errorsText(validate.errors)}`);
 }
 check(apiChecked >= 20, `${apiChecked} request and response examples matched to an OpenAPI schema and validated`);
+// The summaries' examples add up the way the platform computes them.
+for (const { value } of docJson.filter((j) => j.doc.endsWith('02-api-reference.md'))) {
+  if (value.object !== 'day_summary' && value.object !== 'period_summary') continue;
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+  const buckets = value.object === 'day_summary' ? value.hourly : value.daily.map((d) => d.gross);
+  const pct = (now, before) => Math.round(((now - before) * 1000) / before) / 10;
+  const cmp = value.last_week ?? value.previous;
+  check(sum(buckets) === value.gross && sum(value.by_method.map((m) => m.gross)) === value.gross && sum(value.by_method.map((m) => m.sales)) === value.sales
+    && value.net === value.gross - value.refunded - value.fees && value.average_ticket === Math.floor(value.gross / value.sales)
+    && cmp.change_pct === pct(value.gross, cmp.gross) && (value.object === 'day_summary' || sum(cmp.daily) === cmp.gross),
+  `02 ${value.object} example: buckets, methods, net, average ticket and change add up`);
+}
+
+// Every route the platform serves is in the contract, and every operation the contract offers
+// is served, unless the contract marks it planned (x-goonerspay-availability). Path parameter
+// names may differ ({id} and {terminal_id} are the same route).
+{
+  const server = readFileSync(join(root, 'platform', 'internal', 'api', 'server.go'), 'utf8');
+  const norm = (m, p) => `${m} ${p.replace(/\{[^}]+\}/g, '{}')}`;
+  const served = new Set([...server.matchAll(/(?:route|open)\("([A-Z]+) (\/[^"]*)"/g)].map((m) => norm(m[1], m[2])));
+  const offered = new Set();
+  const planned = new Set();
+  for (const [p, ops] of Object.entries(openapi.paths)) {
+    for (const [m, op] of Object.entries(ops)) {
+      if (!['get', 'post', 'put', 'patch', 'delete'].includes(m)) continue;
+      (op['x-goonerspay-availability'] === 'planned' ? planned : offered).add(norm(m.toUpperCase(), p));
+    }
+  }
+  const undocumented = [...served].filter((r) => !offered.has(r));
+  const unserved = [...offered].filter((r) => !served.has(r));
+  const plannedServed = [...planned].filter((r) => served.has(r));
+  check(!undocumented.length, `${served.size} routes served by the platform are in openapi.yaml${undocumented.length ? '; not documented: ' + undocumented.join(', ') : ''}`);
+  check(!unserved.length, `${offered.size} operations openapi.yaml offers are served${unserved.length ? '; not served: ' + unserved.join(', ') : ''} (${planned.size} marked planned)`);
+  check(!plannedServed.length, `no operation marked planned is already served${plannedServed.length ? ': ' + plannedServed.join(', ') : ''}`);
+}
+{
+  const r = spawnSync(process.execPath, [join(here, 'gen-postman.mjs'), '--check'], { encoding: 'utf8' });
+  check(r.status === 0, 'the Postman collection is generated from the current openapi.yaml' + (r.status ? ': ' + r.stderr.trim() : ''));
+}
 
 // ---------------------------------------------------------------- 5. Design tokens
 section('5. Design tokens: contrast and colour-vision tables');
@@ -289,6 +360,18 @@ for (const p of tokens.$extensions['goonerspay.contrastPairs']) {
   if (c < p.min) bad(`${p.theme} ${p.fg} on ${p.bg}: ${fmt(c)} < ${p.min}`);
 }
 ok(`${tokens.$extensions['goonerspay.contrastPairs'].length} token pairs meet their WCAG minimum`);
+// Chart identity hues: a categorical palette per theme, held to the data-visualization method
+// (docs/06 §8): lightness band, chroma, colour-vision and normal-vision distance, contrast.
+for (const p of tokens.$extensions['goonerspay.chartPalettes']) {
+  const hexes = p.roles.map((r) => tok(p.theme, r));
+  const r = checkCategorical(hexes, { mode: p.mode, surface: tok(p.theme, p.surface), pairs: p.pairs, relief: p.relief });
+  check(r.fails.length === 0, `${p.theme} chart palette (${p.roles.length} hues, ${p.pairs} pairs): colour-vision ΔE ${r.cvd.toFixed(1)}, normal ΔE ${r.normal.toFixed(1)}${r.fails.length ? ': ' + r.fails.join('; ') : ''}`);
+}
+{
+  // The platforms' generated tokens (Kotlin, Swift, CSS) match tokens.json (docs/06 §8).
+  const gen = spawnSync(process.execPath, [join(root, 'tools', 'gen-tokens.mjs'), '--check'], { encoding: 'utf8' });
+  check(gen.status === 0, 'the Android, iOS and console tokens are generated from tokens.json' + (gen.status === 0 ? '' : ': ' + gen.stderr.trim()));
+}
 for (const p of tokens.$extensions['goonerspay.rejected']) if (contrast(p.fg, p.bg) >= p.min) bad(`rejected pair ${p.fg}/${p.bg} actually passes`);
 let rows = 0;
 for (const d of docs) {
@@ -402,6 +485,14 @@ if (existsSync(vecFile)) {
   const nip98 = JSON.parse(Buffer.from(vec.nip98.authorization_header.slice(6), 'base64').toString());
   check(nip98.id === vec.nip98.event.id && verifyEventStrict(nip98).length === 0 && nip98.tags.find((t) => t[0] === 'payload')[1] === bytesToHex(sha256(utf8ToBytes(vec.nip98.body))), 'NIP-98 login vector');
   check(verifyEventStrict(vec.device_list.event).length === 0, 'kind 17710 device list vector');
+  check(vec.canonical_json.every((c) => canonicalJson(JSON.parse(c.json)) === c.canonical), `${vec.canonical_json.length} canonical JSON vectors match JavaScript's canonicalJson`);
+  {
+    const entries = vec.journal.entries;
+    const chained = entries.every((e, i) =>
+      verifyEventStrict(e.event).length === 0 && e.event.kind === 7714 && e.event.content === canonicalJson(e.fields) &&
+      JSON.parse(e.event.content).prev === (i === 0 ? null : entries[i - 1].event.id) && e.event.pubkey === testKey(vec.journal.device_role).pk);
+    check(chained, 'kind 7714 journal vector: canonical content, signatures and the prev chain');
+  }
   const j = vec.jwk_thumbprint.jwk;
   check(Buffer.from(sha256(utf8ToBytes(`{"crv":"${j.crv}","kty":"${j.kty}","x":"${j.x}","y":"${j.y}"}`))).toString('base64url') === vec.jwk_thumbprint.thumbprint, 'JWK thumbprint (RFC 7638)');
   const { createDecipheriv } = await import('node:crypto');
@@ -411,6 +502,107 @@ if (existsSync(vecFile)) {
   dc.setAuthTag(blob.subarray(blob.length - 16));
   check(Buffer.concat([dc.update(blob.subarray(12, blob.length - 16)), dc.final()]).toString() === vec.dev_card.plaintext, 'sandbox card blob decrypts');
   check(vec.brcode.every((b) => crc16(b.code.slice(0, -4)) === b.code.slice(-4)), 'BR Code CRCs');
+  // The on-device fraud model (07 §3.3), a third time: heaviest signals first, a noisy OR in
+  // integer thousandths truncated at every step.
+  const dr = vec.device_risk;
+  const deviceScore = (signals) => {
+    const known = [...new Set(signals.filter((s) => s in dr.weights))].sort((a, b) => dr.weights[b] - dr.weights[a] || (a < b ? -1 : a > b ? 1 : 0));
+    let clean = 1000;
+    for (const s of known) clean = Math.trunc((clean * (1000 - dr.weights[s])) / 1000);
+    return [1000 - clean, known.slice(0, dr.max_signals)];
+  };
+  check(dr.cases.every((c) => { const [m, sent] = deviceScore(c.signals); return m === c.score_milli && JSON.stringify(sent) === JSON.stringify(c.sent); }),
+    `${dr.cases.length} device risk vectors (model ${dr.model}) match JavaScript's scoring`);
+  const signalDocs = d07;
+  check(Object.keys(dr.weights).every((s) => signalDocs.includes('`' + s + '`')), 'every device signal code is documented in 07 §3.3');
+}
+
+// ---------------------------------------------------------------- 6d. Web console formats and charts
+// format.js holds the console's amount parsers and its sales chart model: the same rules and
+// cases as Money.parseReais and Today in the Kotlin and Swift cores (TodayTest, TodayTests).
+const consoleFormat = join(root, 'platform', 'internal', 'console', 'static', 'format.js');
+if (existsSync(consoleFormat)) {
+  section('6d. Web console formats and charts (same cases as the app cores)');
+  const f = await import(consoleFormat);
+  const reais = { '150': 15000, '150,5': 15050, '150,05': 15005, ' 0,99 ': 99, '1.234,56': 123456, '1.234.567': 123456700 };
+  check(Object.entries(reais).every(([k, v]) => f.parseReais(k) === v) && ['', ',50', '1,234', '12.34', '1.23,00', 'abc', '-5', '1,2,3', '12345678901'].every((k) => f.parseReais(k) === null),
+    'parseReais takes what people type and refuses "12.34" (never read as R$ 1.234 or R$ 12,34), as both apps do');
+  const qty = { '0,5': '0.5', '1.234,56': '1234.56', '0.001': '0.001', '1.5': '1.5', '100.00': '100.00', '1.000.000': '1000000' };
+  check(Object.entries(qty).every(([k, v]) => f.parseQuantity(k) === v) && ['1.000', '12.345', '', '-1', '1,2,3'].every((k) => f.parseQuantity(k) === null),
+    'parseQuantity refuses an amount that could be a thousand or one ("1.000")');
+  const compact = { 0: 'R$ 0', 90000: 'R$ 900', 99950: 'R$ 1 mil', 149999: 'R$ 1,5 mil', 250000: 'R$ 2,5 mil', 1000000: 'R$ 10 mil', 1234000: 'R$ 12 mil',
+    99999999: 'R$ 1 mi', 125000000: 'R$ 1,3 mi', 1500000000: 'R$ 15 mi' };
+  check(Object.entries(compact).every(([k, v]) => f.compact(Number(k)) === v), 'compact axis labels match the app cores');
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  check(same(f.ticks(0), [0, 10000]) && same(f.ticks(50), [0, 100]) && same(f.ticks(12000), [0, 5000, 10000, 15000]) && same(f.ticks(1000000), [0, 500000, 1000000])
+    && same(f.ticks(1200000), [0, 500000, 1000000, 1500000]) && same(f.axis(24), [0, 6, 12, 18, 23]) && same(f.axis(7), [0, 1, 2, 3, 4, 5, 6]) && same(f.axis(30), [0, 6, 12, 18, 24, 29]),
+  'axis ticks and labels match the app cores');
+  check(same(f.shares([10000, 2000]), [83, 17]) && same(f.shares([1, 1, 1]), [34, 33, 33]) && same(f.shares([0, 0]), [0, 0]) && f.change(50) === '+50%' && f.change(-12.5) === '−12,5%'
+    && f.change(0) === '0%' && f.change(null) === null && f.versus('2026-10-30', true) === 'vs. sexta passada até agora' && f.versus('2026-11-01', false) === 'vs. domingo passado',
+  'shares, changes and weekdays match the app cores');
+  const ex = (section) => docJson.find((j) => j.doc.endsWith('02-api-reference.md') && j.value.object === section)?.value;
+  const day = f.dayView(ex('day_summary'), true);
+  const period = f.periodView(ex('period_summary'), '2026-11-06');
+  check(day.title === 'Hoje' && day.change === '+50%' && day.compareName === 'sexta passada' && day.compare.length === 24 && same(day.ticks, [0, 5000, 10000])
+    && day.labels[11] === '11h' && day.spoken[23] === '23h às 0h' && same(day.axis, [0, 6, 12, 18, 23]), 'the day example draws as both apps draw it');
+  check(period.title === 'Últimos 7 dias' && period.range === '31/10 a 06/11' && period.change === '+12,4%' && period.versus === 'vs. os 7 dias anteriores até agora'
+    && period.spoken[0] === 'sábado, 31/10' && same(period.byMethod.map((m) => m.method), ['credit', 'debit', 'pix']) && period.shares.reduce((a, b) => a + b, 0) === 100
+    && same(period.ticks, [0, 50000, 100000, 150000]) && period.compare.length === 7, 'the period example draws as both apps draw it');
+}
+
+// ---------------------------------------------------------------- 6c. Web console verifier
+// The console verifies statements in the browser with its own BIP-340 and RFC 6962 code
+// (platform/internal/console/static/verify.js); it is held to the signed examples here.
+const consoleVerify = join(root, 'platform', 'internal', 'console', 'static', 'verify.js');
+if (existsSync(consoleVerify)) {
+  section('6c. Web console verifier (browser code, run in Node)');
+  const cv = await import(consoleVerify);
+  const st = examples['7713-settlement-statement.json'];
+  const rt = examples['7715-transparency-root.json'];
+  const mid = JSON.parse(st.content).merchant_id;
+  const keys = [K['platform-receipts'], K['platform-transparency']];
+  const good = await cv.verifyStatement(st, rt, mid, keys);
+  check(good.check.ok, 'the console verifies the example statement against the published root and keys');
+  const forged = { ...st, content: st.content.replace(/"gross":\d+/, '"gross":1') };
+  check(!(await cv.verifyStatement(forged, rt, mid, keys)).check.ok, 'the console rejects a statement with altered totals');
+  check(!(await cv.verifyStatement(st, rt, mid, [K['platform-receipts']])).check.ok, 'the console rejects a root signed by a key not on the list');
+  check(!(await cv.verifyStatement(st, rt, 'mer_someone_else', keys)).check.ok, "the console rejects another merchant's statement");
+  check(await cv.receiptIncluded(good.statement, examples['proof-receipt-0.json']), 'the console proves a receipt is in the statement');
+  const events = Object.values(examples).filter((e) => e && typeof e.sig === 'string');
+  const verified = await Promise.all(events.map((e) => cv.verifyEvent(e)));
+  check(verified.every(Boolean), `the console's BIP-340 code verifies all ${events.length} example events`);
+}
+
+// ---------------------------------------------------------------- 6e. Receipt claim page
+// The page a receipt's QR opens (platform/internal/console/static/claim/nostr.js) signs the
+// relay's NIP-42 challenge and opens the gift wrap with its own BIP-340, NIP-44 v2 and NIP-59
+// code; it is held here to the signed example and to nostr-tools.
+const claimCrypto = join(root, 'platform', 'internal', 'console', 'static', 'claim', 'nostr.js');
+if (existsSync(claimCrypto)) {
+  section('6e. Receipt claim page (browser code, run in Node)');
+  const cn = await import(claimCrypto);
+  const pure = await import('nostr-tools/pure');
+  const nt44 = await import('nostr-tools/nip44');
+  const ex = examples['1059-receipt-giftwrap.json'];
+  const k = ex.claim_url.split('#k=')[1];
+  const opened = await cn.unwrapReceipt(ex.wrap, k, K['platform-receipts']).catch((e) => ({ error: e.message }));
+  check(!opened.error && opened.seal.id === ex.seal.id && opened.receipt.kind === 7711 && opened.receipt.pubkey === K['platform-receipts'],
+    'the claim page opens the example gift wrap with its claim key: wrap, seal and receipt signatures, signed by the receipts key' + (opened.error ? ': ' + opened.error : ''));
+  const refused = async (wrap, signer) => cn.unwrapReceipt(wrap, k, signer).then(() => false, () => true);
+  check(await refused({ ...ex.wrap, content: ex.wrap.content.slice(0, 40) + (ex.wrap.content[40] === 'A' ? 'B' : 'A') + ex.wrap.content.slice(41) }, K['platform-receipts']) &&
+    await refused(ex.wrap, K['platform-transparency']), 'it refuses an altered wrap and a receipt sealed by another key');
+  const sk = pure.generateSecretKey();
+  const peer = pure.generateSecretKey();
+  const hexOf = (b) => Buffer.from(b).toString('hex');
+  const ev = await cn.signEvent({ kind: 22242, created_at: 1700000000, tags: [['relay', 'wss://relay.example'], ['challenge', 'c1']], content: '' }, hexOf(sk));
+  check(cn.publicKey(hexOf(sk)) === pure.getPublicKey(sk) && pure.verifyEvent({ ...ev }), "its NIP-42 AUTH event is signed as nostr-tools expects (BIP-340, NIP-01 id)");
+  const ckOurs = await cn.conversationKey(hexOf(sk), pure.getPublicKey(peer));
+  const ckTheirs = nt44.v2.utils.getConversationKey(sk, pure.getPublicKey(peer));
+  let interop = hexOf(ckOurs) === hexOf(ckTheirs);
+  for (const msg of ['a', 'recibo ✓ R$ 12,90', 'x'.repeat(300), 'y'.repeat(65535)]) {
+    interop &&= (await cn.nip44Decrypt(nt44.v2.encrypt(msg, ckTheirs), ckOurs)) === msg && nt44.v2.decrypt(await cn.nip44Encrypt(msg, ckOurs), ckTheirs) === msg;
+  }
+  check(interop, 'its NIP-44 v2 conversation keys and encryption interoperate with nostr-tools both ways (1 to 65,535 bytes)');
 }
 
 // ---------------------------------------------------------------- 7. External tools

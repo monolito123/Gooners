@@ -24,6 +24,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
+	"github.com/monolito123/Gooners/payments/platform/internal/console"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
@@ -45,6 +47,24 @@ type Config struct {
 	// and DPoP proofs sign the exact URL, so it must be what clients call. Empty in the
 	// sandbox: derived from the request.
 	PublicURL string
+	// TravelRuleSecret ("whsec_…") verifies the messages the travel-rule adapter posts to
+	// POST /v1/travel-rule/inbound. Empty: the route answers 503.
+	TravelRuleSecret string
+	// Nostr is what /.well-known/nostr.json publishes (NIP-05) and the receipt claim page
+	// reads: the keys that sign receipts and roots, and the relays that carry receipts.
+	Nostr NostrIdentity
+	// ClientCertHeader names the header a trusted TLS-terminating proxy puts the client's
+	// certificate in (URL-encoded PEM), for certificate-bound partner tokens behind the edge.
+	ClientCertHeader string
+	// DisputeAlertsSecret ("whsec_…") verifies the pre-dispute alerts the alerts provider's
+	// adapter posts to POST /v1/dispute-alerts/inbound. Empty: the route answers 503.
+	DisputeAlertsSecret string
+}
+
+// NostrIdentity names the platform's Nostr keys and relays.
+type NostrIdentity struct {
+	ReceiptsPub, TransparencyPub string
+	Relays                       []string
 }
 
 // MaxBody is the largest request body accepted.
@@ -83,7 +103,8 @@ type principal struct {
 	scopes   map[string]bool
 	terminal string // set when authenticated by a terminal certificate
 	keyID    string // set when authenticated by an API key
-	// A merchant app session: limited to this merchant, this device and its terminal.
+	// A merchant app session: limited to this merchant, this device and its terminal. A phone's
+	// terminal authenticated by its certificate carries its deviceID too.
 	sessionID, merchantID, deviceID, deviceTerminal string
 }
 
@@ -118,6 +139,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", s.ready)
+	// The web console (internal/console): static files on this origin, under their own CSP.
+	mux.Handle("GET /console/", console.Handler())
+	mux.Handle("GET /console", http.RedirectHandler("/console/", http.StatusMovedPermanently))
+	// The receipt claim page and the NIP-05 file it checks the receipts' signer against.
+	claim := console.ClaimHandler(s.cfg.Nostr.Relays)
+	mux.Handle("GET /c", claim)
+	mux.Handle("GET /c/", claim)
 
 	route := func(pattern, scope string, idem bool, h http.HandlerFunc) {
 		if idem {
@@ -126,51 +154,162 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(pattern, instrument(pattern, s.authenticate(scope, sessionRoutes[pattern], h)))
 	}
 	open := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, instrument(pattern, h)) }
+	open("GET /.well-known/nostr.json", s.nip05)
+	open("POST /oauth2/token", s.token)
+	open("POST /v1/dispute-alerts/inbound", s.disputeAlertInbound)
 	open("POST /v1/auth/nostr", s.loginNostr)
 	open("GET /v1/enrollment", s.getEnrollment)
 	open("POST /v1/enrollment", s.enroll)
 	route("POST /v1/merchants/{id}/devices", "merchants:write", true, s.registerDevice)
 	route("POST /v1/merchants/{id}/enrollment-codes", "merchants:write", true, s.createEnrollmentCode)
 	route("POST /v1/merchants", "merchants:write", true, s.createMerchant)
+	route("GET /v1/merchants", "merchants:write", false, s.listMerchants)
 	route("GET /v1/merchants/{id}", "merchants:write", false, s.getMerchant)
+	route("GET /v1/merchants/{id}/summary", "payments:read", false, s.merchantSummary)
+	route("GET /v1/merchants/{id}/summary/period", "payments:read", false, s.periodSummary)
 	route("POST /v1/terminals", "merchants:write", true, s.registerTerminal)
 	route("POST /v1/terminals/{id}/revoke", "merchants:write", true, s.revokeTerminal)
+	route("POST /v1/terminals/{id}/certificate", scopeTerminalCertificate, true, s.certifyTerminal)
 	route("POST /v1/payment-intents", "payments:write", true, s.createIntent)
+	route("GET /v1/payment-intents", "payments:read", false, s.listIntents)
 	route("GET /v1/payment-intents/{id}", "payments:read", false, s.getIntent)
 	route("POST /v1/payment-intents/{id}/confirm", "payments:write", true, s.confirmIntent)
 	route("POST /v1/payment-intents/{id}/capture", "payments:write", true, s.captureIntent)
 	route("POST /v1/payment-intents/{id}/cancel", "payments:write", true, s.cancelIntent)
 	route("POST /v1/terminal/authorizations", "terminal", false, s.terminalAuthorization)
+	route("POST /v1/terminal/journal", "payments:write", false, s.postJournal)
+	route("GET /v1/terminal/journal", "payments:read", false, s.journalState)
+	route("GET /v1/payment-intents/{id}/journal", "payments:read", false, s.intentJournal)
 	route("POST /v1/refunds", "refunds:write", true, s.createRefund)
 	route("GET /v1/refunds/{id}", "payments:read", false, s.getRefund)
 	route("GET /v1/accounts/{id}/balance", "accounts:read", false, s.balance)
 	route("GET /v1/accounts/{id}/entries", "accounts:read", false, s.entries)
+	route("POST /v1/transfers", "accounts:write", true, s.createTransfer)
+	route("GET /v1/transfers/{id}", "accounts:read", false, s.getTransfer)
 	route("POST /v1/payouts/quotes", "payouts:write", true, s.quote)
 	route("POST /v1/payouts", "payouts:write", true, s.payout)
 	route("GET /v1/disputes", "disputes:write", false, s.listDisputes)
+	route("GET /v1/dispute-alerts", "disputes:write", false, s.listDisputeAlerts)
 	route("GET /v1/disputes/{id}", "disputes:write", false, s.getDispute)
 	route("POST /v1/disputes/{id}/evidence", "disputes:write", true, s.disputeEvidence)
 	route("POST /v1/disputes/{id}/accept", "disputes:write", true, s.acceptDispute)
+	route("GET /v1/crypto/markets", "assets:read", false, s.cryptoMarkets)
+	route("POST /v1/crypto/withdrawals", "payouts:write", true, s.cryptoWithdrawal)
+	route("GET /v1/holdings", "assets:read", false, s.holdings)
+	route("POST /v1/conversions", "assets:write", true, s.quoteConversion)
+	route("GET /v1/conversions/{id}", "assets:read", false, s.getConversion)
+	route("POST /v1/conversions/{id}/execute", "assets:write", true, s.executeConversion)
+	route("GET /v1/international/accounts", "assets:read", false, s.internationalAccounts)
+	route("POST /v1/international/payouts", "payouts:write", true, s.internationalPayout)
+	route("GET /v1/investments/quotes/{ticker}", "assets:read", false, s.investmentQuote)
+	route("GET /v1/investments/profile", "assets:read", false, s.investorProfile)
+	route("PUT /v1/investments/profile", "assets:write", false, s.investorProfile) // PUT is idempotent by itself
+	route("POST /v1/investments/orders", "assets:write", true, s.investmentOrder)
+	route("GET /v1/investments/positions", "assets:read", false, s.investmentPositions)
+	if s.cfg.Env != "production" {
+		route("POST /v1/sandbox/crypto/payments/{id}", "payments:write", false, s.sandboxCryptoPayment)
+		route("POST /v1/sandbox/pix/payments/{id}", "payments:write", false, s.sandboxPixPayment)
+		route("POST /v1/sandbox/international/credits", "payments:write", false, s.sandboxInternationalCredit)
+	}
+	route("GET /v1/compliance/cases", "compliance:read", false, s.listCases)
+	route("GET /v1/compliance/cases/{id}", "compliance:read", false, s.getCase)
+	route("POST /v1/compliance/cases/{id}/decision", "compliance:write", true, s.decideCase)
+	route("GET /v1/compliance/screenings", "compliance:read", false, s.listScreenings)
+	route("GET /v1/travel-rule/messages", "compliance:read", false, s.listTravelRule)
+	route("GET /v1/travel-rule/messages/{id}", "travel_rule:read", false, s.getTravelRule) // the payload: names and documents
+	open("POST /v1/travel-rule/inbound", s.travelRuleInbound)                              // signed by the travel-rule adapter
+	route("GET /v1/risk/reviews", "risk:read", false, s.listRiskReviews)
+	route("GET /v1/risk/reviews/{id}", "risk:read", false, s.getRiskReview)
+	route("POST /v1/risk/reviews/{id}/resolve", "risk:write", true, s.resolveRiskReview)
+	route("GET /v1/settlements", "settlements:read", false, s.listSettlements)
+	route("GET /v1/settlements/{id}", "settlements:read", false, s.getSettlement)
+	route("GET /v1/settlements/{id}/statement", "settlements:read", false, s.settlementStatement)
+	route("GET /v1/settlements/{id}/proofs/{receipt_event_id}", "settlements:read", false, s.settlementProof)
+	open("GET /v1/transparency/{date}", s.transparencyRoot)
 	route("POST /v1/webhook-endpoints", "webhooks:write", true, s.createWebhook)
+	route("GET /v1/webhook-endpoints", "webhooks:write", false, s.listWebhooks)
+	route("GET /v1/webhook-endpoints/{id}", "webhooks:write", false, s.getWebhook)
+	route("DELETE /v1/webhook-endpoints/{id}", "webhooks:write", false, s.deleteWebhook)
 	route("POST /v1/webhook-endpoints/{id}/replay", "webhooks:write", true, s.replayWebhooks)
-	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(mux)))))
+	route("POST /v1/webhook-endpoints/{id}/rotate-secret", "webhooks:write", true, s.rotateWebhookSecret)
+	return s.recover(s.requestID(secureHeaders(limitBody(cleanInput(versioned(mux))))))
 }
+
+// APIVersion is the contract version this platform answers (02 §1.3).
+const APIVersion = "2026-10-01"
+
+// versioned holds API calls to a version the platform answers: a client names the version it
+// was written against in Api-Version (the current one when absent) and every response says
+// which version answered it.
+func versioned(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Api-Version", APIVersion) // on the refusal too: it names the version to use
+		if v := r.Header.Get("Api-Version"); v != "" && v != APIVersion {
+			detail := "this platform answers Api-Version " + APIVersion
+			if len(v) <= 32 {
+				detail = fmt.Sprintf("Api-Version %q is not supported; ", v) + detail
+			}
+			problem(w, r, http.StatusBadRequest, "unsupported-api-version", "Unsupported API version", detail)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// scopeTerminalCertificate marks the route that issues a terminal's certificate: open to the
+// terminal itself (mutual TLS) and to its phone's app session, never to API keys.
+const scopeTerminalCertificate = "terminal:certificate"
+
+// explicitOnly are the scopes "*" does not include: deciding on held funds, and reading the
+// names and documents travel-rule messages carry.
+var explicitOnly = map[string]bool{"compliance:write": true, "travel_rule:read": true}
 
 // sessionRoutes are the only routes a merchant app session may call. Each handler also
 // holds the session to its own merchant (ownership checks in handlers.go).
 var sessionRoutes = map[string]bool{
-	"GET /v1/merchants/{id}":                   true,
-	"POST /v1/merchants/{id}/devices":          true,
-	"POST /v1/merchants/{id}/enrollment-codes": true,
-	"POST /v1/payment-intents":                 true,
-	"GET /v1/payment-intents/{id}":             true,
-	"POST /v1/payment-intents/{id}/confirm":    true,
-	"POST /v1/payment-intents/{id}/cancel":     true,
-	"POST /v1/terminal/authorizations":         true,
-	"GET /v1/accounts/{id}/balance":            true,
-	"GET /v1/accounts/{id}/entries":            true,
-	"POST /v1/payouts/quotes":                  true,
-	"POST /v1/payouts":                         true,
+	"GET /v1/merchants/{id}":                             true,
+	"GET /v1/merchants/{id}/summary":                     true, // the apps' home screen
+	"GET /v1/merchants/{id}/summary/period":              true, // its 7- and 30-day charts
+	"GET /v1/payment-intents":                            true, // the merchant's own payments
+	"POST /v1/merchants/{id}/devices":                    true,
+	"POST /v1/merchants/{id}/enrollment-codes":           true,
+	"POST /v1/payment-intents":                           true,
+	"GET /v1/payment-intents/{id}":                       true,
+	"POST /v1/payment-intents/{id}/confirm":              true,
+	"POST /v1/payment-intents/{id}/cancel":               true,
+	"POST /v1/refunds":                                   true, // "Cancelar venda" of a Pix sale (docs/06 §5)
+	"POST /v1/terminal/authorizations":                   true,
+	"POST /v1/terminals/{id}/certificate":                true, // the phone's terminal's first certificate
+	"GET /v1/accounts/{id}/balance":                      true,
+	"GET /v1/accounts/{id}/entries":                      true,
+	"POST /v1/payouts/quotes":                            true,
+	"POST /v1/payouts":                                   true,
+	"GET /v1/settlements":                                true,
+	"GET /v1/settlements/{id}":                           true,
+	"GET /v1/settlements/{id}/statement":                 true,
+	"GET /v1/settlements/{id}/proofs/{receipt_event_id}": true,
+	"POST /v1/terminal/journal":                          true,
+	"GET /v1/terminal/journal":                           true,
+	"GET /v1/payment-intents/{id}/journal":               true,
+	"GET /v1/crypto/markets":                             true,
+	"POST /v1/crypto/withdrawals":                        true,
+	"GET /v1/holdings":                                   true,
+	"POST /v1/conversions":                               true,
+	"GET /v1/conversions/{id}":                           true,
+	"POST /v1/conversions/{id}/execute":                  true,
+	"GET /v1/international/accounts":                     true,
+	"POST /v1/international/payouts":                     true,
+	"GET /v1/investments/quotes/{ticker}":                true,
+	"GET /v1/investments/profile":                        true,
+	"PUT /v1/investments/profile":                        true,
+	"POST /v1/investments/orders":                        true,
+	"GET /v1/investments/positions":                      true,
+	"POST /v1/sandbox/crypto/payments/{id}":              true,
+	"POST /v1/sandbox/pix/payments/{id}":                 true,
 }
 
 // PixWebhookHandler serves the PSP's notifications at {webhookUrl}/pix. Mount it on a
@@ -237,6 +376,27 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 	})
 }
 
+// nip05 serves the platform's NIP-05 names: receipts@ and transparency@ this host, with the
+// relays that carry what they sign. Any page may read it (NIP-05 asks for CORS).
+func (s *Server) nip05(w http.ResponseWriter, r *http.Request) {
+	names, relays := map[string]string{}, map[string][]string{}
+	for name, pub := range map[string]string{"receipts": s.cfg.Nostr.ReceiptsPub, "transparency": s.cfg.Nostr.TransparencyPub} {
+		if pub == "" {
+			continue
+		}
+		if want := r.URL.Query().Get("name"); want != "" && want != name {
+			continue
+		}
+		names[name] = pub
+		if len(s.cfg.Nostr.Relays) > 0 {
+			relays[pub] = s.cfg.Nostr.Relays
+		}
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "max-age=300")
+	writeJSON(w, http.StatusOK, map[string]any{"names": names, "relays": relays})
+}
+
 // secureHeaders marks every response as non-cacheable, non-sniffable JSON that no page may
 // frame or load resources for. HSTS is set when the request arrived over TLS.
 func secureHeaders(next http.Handler) http.Handler {
@@ -294,6 +454,11 @@ func (s *Server) recover(next http.Handler) http.Handler {
 
 // NewAPIKey creates an API key for a tenant and returns it (only its hash is stored).
 func NewAPIKey(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, scopes []string, live bool) (string, error) {
+	return NewAPIKeyUntil(ctx, pool, tenantID, name, scopes, live, time.Time{})
+}
+
+// NewAPIKeyUntil creates an API key that stops authenticating at expires (never when zero).
+func NewAPIKeyUntil(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, scopes []string, live bool, expires time.Time) (string, error) {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 	var sb strings.Builder
 	if live {
@@ -306,7 +471,11 @@ func NewAPIKey(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, s
 		sb.WriteByte(alphabet[n.Int64()])
 	}
 	key := sb.String()
-	_, err := pool.Exec(ctx, `INSERT INTO api_clients (key_hash, tenant_id, name, scopes) VALUES ($1, $2, $3, $4)`, hashKey(key), tenantID, name, scopes)
+	var until *time.Time
+	if !expires.IsZero() {
+		until = &expires
+	}
+	_, err := pool.Exec(ctx, `INSERT INTO api_clients (key_hash, tenant_id, name, scopes, expires_at) VALUES ($1, $2, $3, $4, $5)`, hashKey(key), tenantID, name, scopes, until)
 	return key, err
 }
 
@@ -317,7 +486,9 @@ func CertFingerprint(der []byte) string { h := sha256.Sum256(der); return hex.En
 
 func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFunc) http.Handler {
 	authenticated := func(w http.ResponseWriter, r *http.Request, p principal) {
-		if ok, wait := s.perKey.take(p.limitKey()); !ok {
+		ok, wait := s.perKey.take(p.limitKey())
+		s.perKey.headers(w.Header(), p.limitKey())
+		if !ok {
 			w.Header().Set("Retry-After", retryAfter(wait))
 			problem(w, r, http.StatusTooManyRequests, "rate-limited", "Too many requests", "slow down and retry after the Retry-After delay")
 			return
@@ -325,6 +496,9 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This request's own copy: the sandbox maps a terminal route to payments:write for a
+		// session or an API key, and must not do it for every later request on the route.
+		scope := scope
 		// Only failed attempts count against the client's IP, so a client sharing an address
 		// (carrier-grade NAT) with an attacker is never locked out with a valid credential.
 		unauthorized := func(code, title, detail string) {
@@ -336,13 +510,13 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			problem(w, r, http.StatusUnauthorized, code, title, detail)
 		}
 		// Terminals authenticate with their mutual-TLS certificate.
-		if scope == "terminal" && r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
-			tenant, terminal, err := s.svc.TerminalByFingerprint(r.Context(), CertFingerprint(r.TLS.PeerCertificates[0].Raw))
+		if (scope == "terminal" || scope == scopeTerminalCertificate) && r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
+			tenant, terminal, device, err := s.svc.TerminalByFingerprint(r.Context(), CertFingerprint(r.TLS.PeerCertificates[0].Raw))
 			if err != nil {
 				unauthorized("unknown-terminal", "Unknown terminal certificate", "")
 				return
 			}
-			authenticated(w, r, principal{tenantID: tenant, terminal: terminal})
+			authenticated(w, r, principal{tenantID: tenant, terminal: terminal, deviceID: device})
 			return
 		}
 		// Merchant apps: a session token bound to a DPoP key (docs/02 §3.2).
@@ -363,7 +537,9 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 				}
 				scope = "payments:write"
 			}
-			if scope != "merchants:write" && !p.scopes[scope] { // merchants:write routes check ownership instead
+			// merchants:write routes check ownership instead, and a terminal certificate is
+			// only ever for the session's own device's terminal (certifyTerminal).
+			if scope != "merchants:write" && scope != scopeTerminalCertificate && !p.scopes[scope] {
 				problem(w, r, http.StatusForbidden, "forbidden", "Missing scope", scope)
 				return
 			}
@@ -375,16 +551,38 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			unauthorized("unauthorized", "Missing API key", "send Authorization: Bearer <key>")
 			return
 		}
-		var tenant string
-		var scopes []string
-		err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`, hashKey(key)).Scan(&tenant, &scopes)
-		if err != nil {
-			unauthorized("unauthorized", "Invalid API key", "")
-			return
+		var p principal
+		if strings.HasPrefix(key, "at_") {
+			// A partner's certificate-bound access token (POST /oauth2/token).
+			tp, code, err := s.tokenPrincipal(r, key)
+			if err != nil {
+				unauthorized(code, "Invalid access token", err.Error())
+				return
+			}
+			p = tp
+		} else {
+			var tenant string
+			var scopes []string
+			var expired bool
+			err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes, COALESCE(expires_at <= now(), false) FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`,
+				hashKey(key)).Scan(&tenant, &scopes, &expired)
+			if err != nil {
+				unauthorized("unauthorized", "Invalid API key", "")
+				return
+			}
+			if expired {
+				unauthorized("key-expired", "The API key expired", "issue a new key and retire this one")
+				return
+			}
+			p = principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}
+			for _, sc := range scopes {
+				p.scopes[sc] = true
+			}
 		}
-		p := principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}
-		for _, sc := range scopes {
-			p.scopes[sc] = true
+		if scope == scopeTerminalCertificate {
+			problem(w, r, http.StatusForbidden, "forbidden", "Not available to API keys",
+				"a terminal renews its certificate over its mutual-TLS connection; a phone's app asks for its terminal's first one")
+			return
 		}
 		if scope == "terminal" {
 			// Without a certificate, terminals may use an API key only in the sandbox.
@@ -394,7 +592,9 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			}
 			scope = "payments:write"
 		}
-		if !p.scopes[scope] && !p.scopes["*"] {
+		// "*" grants every scope but compliance:write: releasing or blocking funds a sanctions
+		// screening held is the platform's compliance officers' decision, on keys granted it by name.
+		if !p.scopes[scope] && !(p.scopes["*"] && !explicitOnly[scope]) {
 			problem(w, r, http.StatusForbidden, "forbidden", "Missing scope", scope)
 			return
 		}
@@ -545,10 +745,16 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, payments.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
 		problem(w, r, http.StatusNotFound, "not-found", "Not found", err.Error())
+	case errors.Is(err, payments.ErrSplitMismatch):
+		problem(w, r, http.StatusUnprocessableEntity, "split-mismatch", "The splits do not add up to the amount", err.Error())
 	case errors.Is(err, payments.ErrInvalid):
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", err.Error())
 	case errors.Is(err, mobileauth.ErrUnauthorized):
 		problem(w, r, http.StatusUnauthorized, "unauthorized", "Unauthorized", err.Error())
+	case errors.Is(err, attest.ErrIntegrity):
+		problem(w, r, http.StatusForbidden, "integrity-refused", "The Play Integrity verdict refuses this sale", err.Error())
+	case errors.Is(err, payments.ErrAssertion):
+		problem(w, r, http.StatusForbidden, "assertion-invalid", "The request needs a valid App Attest assertion", err.Error())
 	case errors.Is(err, payments.ErrMerchantInactive):
 		problem(w, r, http.StatusConflict, "merchant-not-active", "The merchant is not active", err.Error())
 	case errors.Is(err, payments.ErrConflict):
@@ -559,6 +765,12 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusPaymentRequired, "card-declined", "The card was declined", err.Error())
 	case errors.Is(err, payments.ErrExpired):
 		problem(w, r, http.StatusGone, "expired", "Expired", err.Error())
+	case errors.Is(err, payments.ErrScreened):
+		problem(w, r, http.StatusForbidden, "address-refused", "The destination was refused by sanctions screening", err.Error())
+	case errors.Is(err, payments.ErrTravelRuleRejected):
+		problem(w, r, http.StatusUnprocessableEntity, "travel-rule-rejected", "The receiving provider refused the transfer", err.Error())
+	case errors.Is(err, payments.ErrUnavailable):
+		problem(w, r, http.StatusServiceUnavailable, "upstream-unavailable", "A required upstream is unavailable; retry later", err.Error())
 	case errors.Is(err, payments.ErrDisabled):
 		problem(w, r, http.StatusServiceUnavailable, "not-configured", "Feature not configured", err.Error())
 	case errors.As(err, &pe):

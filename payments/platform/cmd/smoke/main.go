@@ -14,11 +14,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
@@ -31,6 +36,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/monolito123/Gooners/payments/platform/internal/transparency"
+	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
 
 var bin, pki string
@@ -78,6 +88,54 @@ func waitTCP(addr string) {
 	fail("nothing listening on %s", addr)
 }
 
+// claimReceipt does what the claim page does: authenticate to the relay as the claim key,
+// wait for the gift wrap to it, and open it.
+func claimReceipt(relayURL, claimHex string) (*nostr.Event, error) {
+	claim, err := nostr.KeysFromHex(claimHex)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, relayURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	send := func(v ...any) error { b, _ := json.Marshal(v); return ws.Write(ctx, websocket.MessageText, b) }
+	for {
+		_, b, err := ws.Read(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var f []json.RawMessage
+		if json.Unmarshal(b, &f) != nil || len(f) < 2 {
+			continue
+		}
+		var typ string
+		_ = json.Unmarshal(f[0], &typ)
+		switch typ {
+		case "AUTH":
+			var challenge string
+			_ = json.Unmarshal(f[1], &challenge)
+			auth := &nostr.Event{Kind: 22242, CreatedAt: time.Now().Unix(), Tags: [][]string{{"relay", relayURL}, {"challenge", challenge}}}
+			if err := auth.Sign(claim, nil); err != nil {
+				return nil, err
+			}
+			_ = send("AUTH", auth)
+		case "OK":
+			_ = send("REQ", "claim", map[string]any{"kinds": []int{1059}, "#p": []string{claim.PubHex}})
+		case "EVENT":
+			var wrap nostr.Event
+			if len(f) < 3 || json.Unmarshal(f[2], &wrap) != nil {
+				continue
+			}
+			inner, _, err := nostr.Unwrap(&wrap, claim)
+			return inner, err
+		}
+	}
+}
+
 func hexKey() string { b := make([]byte, 32); _, _ = rand.Read(b); return hex.EncodeToString(b) }
 
 func main() {
@@ -90,13 +148,13 @@ func main() {
 	dir, _ := os.MkdirTemp("", "smoke-")
 	defer os.RemoveAll(dir)
 	bin, pki = dir, filepath.Join(dir, "pki")
-	for _, c := range []string{"platform", "schemesim", "pixsim", "devpki", "tapsim"} {
+	for _, c := range []string{"platform", "schemesim", "pixsim", "devpki", "tapsim", "signer", "relaysim"} {
 		run("go", "build", "-o", filepath.Join(bin, c), "./cmd/"+c)
 	}
 	run(filepath.Join(bin, "devpki"), "-out", pki)
 	p := func(f string) string { return filepath.Join(pki, f) }
 
-	schemeAddr, pixAddr, apiAddr, hookAddr, metricsAddr := freePort(), freePort(), freePort(), freePort(), freePort()
+	schemeAddr, pixAddr, apiAddr, hookAddr, metricsAddr, terminalAddr := freePort(), freePort(), freePort(), freePort(), freePort(), freePort()
 	var procs []*exec.Cmd
 	defer func() {
 		for _, c := range procs {
@@ -110,26 +168,49 @@ func main() {
 	waitTCP(schemeAddr)
 	waitTCP(pixAddr)
 
+	// The signer holds the receipts and transparency keys, sealed under the KEK; the platform
+	// reaches it over mutual TLS and holds no Nostr key (internal/signer).
+	kekHex, signerAddr := hexKey(), freePort()
+	keysFile := filepath.Join(dir, "signer-keys.json")
+	seal := exec.Command(filepath.Join(bin, "signer"), "seal", "-out", keysFile, "-generate", "receipts,transparency")
+	seal.Env = append(os.Environ(), "VAULT_KEK_HEX="+kekHex)
+	if out, err := seal.CombinedOutput(); err != nil {
+		fail("signer seal: %v\n%s", err, out)
+	}
+	procs = append(procs, start([]string{"VAULT_KEK_HEX=" + kekHex, "SIGNER_KEYS_FILE=" + keysFile, "SIGNER_ADDR=" + signerAddr,
+		"SIGNER_TLS_CERT=" + p("signer-server.pem"), "SIGNER_TLS_KEY=" + p("signer-server.key"), "SIGNER_CLIENT_CA=" + p("ca.pem")}, "signer", "serve"))
+	waitTCP(signerAddr)
+	// The sandbox relay: receipts are published to it, and the claim page reads them from it.
+	relayAddr := freePort()
+	procs = append(procs, start(nil, "relaysim", "-listen", relayAddr))
+	waitTCP(relayAddr)
+
 	routes := filepath.Join(dir, "routes.json")
 	_ = os.WriteFile(routes, []byte(fmt.Sprintf(`[{"name":"sponsor","dialect":"generic-1987-ascii","addrs":[%q],"acquirer_id":"12345678","approval_prior":0.9}]`, schemeAddr)), 0o644)
 	tenant := "00000000-0000-4000-8000-000000000001"
-	devKey := hexKey()
+	devKey, bdk := hexKey(), hexKey()[:32]
 	env := []string{
 		"PLATFORM_ENV=sandbox", "DATABASE_URL=" + dsn, "HTTP_ADDR=" + apiAddr, "ROUTES_FILE=" + routes, "CARD_PRESENT_TIMEOUT=2s",
-		"VAULT_KEK_HEX=" + hexKey(), "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "RECEIPTS_SECRET_HEX=" + hexKey(),
+		"VAULT_KEK_HEX=" + kekHex, "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "CARDDATA_BDK_HEX=" + bdk,
+		"RELAYS=ws://" + relayAddr, "RECEIPT_CLAIM_BASE=http://" + apiAddr + "/c",
+		"SIGNER_URL=https://" + signerAddr, "SIGNER_TLS_CA=" + p("ca.pem"), "SIGNER_TLS_CERT=" + p("platform-client.pem"), "SIGNER_TLS_KEY=" + p("platform-client.key"),
 		"PIX_BASE_URL=https://" + pixAddr + "/api/v2", "PIX_TOKEN_URL=https://" + pixAddr + "/oauth/token", "PIX_CLIENT_ID=platform",
 		"PIX_CLIENT_SECRET=dev-secret", "PIX_KEY=12345678000195", "PIX_TLS_CA=" + p("ca.pem"), "PIX_TLS_CERT=" + p("platform-client.pem"),
 		"PIX_TLS_KEY=" + p("platform-client.key"), "PAYOUT_BASE_URL=https://" + pixAddr + "/api/v2",
 		"PIX_WEBHOOK_ADDR=" + hookAddr, "PIX_WEBHOOK_TLS_CA=" + p("ca.pem"), "PIX_WEBHOOK_TLS_CERT=" + p("platform-server.pem"),
 		"PIX_WEBHOOK_TLS_KEY=" + p("platform-server.key"), "PIX_WEBHOOK_PUBLIC_URL=https://" + hookAddr,
 		"BOOTSTRAP_TENANT=" + tenant, "BOOTSTRAP_CAPITAL=100000000", "METRICS_ADDR=" + metricsAddr,
+		"PLATFORM_DOCUMENT=22222222000191", "REPORTING_URL=https://goonerspay.example",
+		// The terminal host and the terminal CA that signs terminals' CSRs.
+		"TERMINAL_ADDR=" + terminalAddr, "TERMINAL_TLS_CERT=" + p("platform-server.pem"), "TERMINAL_TLS_KEY=" + p("platform-server.key"),
+		"TERMINAL_TLS_CA=" + p("terminal-ca.pem"), "TERMINAL_CA_CERT=" + p("terminal-ca.pem"), "TERMINAL_CA_KEY=" + p("terminal-ca.key"),
 	}
 	procs = append(procs, start(env, "platform", "serve"))
 	waitTCP(apiAddr)
 	waitTCP(hookAddr)
-	ok("schemesim, pixsim and platform are listening (API, Pix webhook over mTLS)")
+	ok("schemesim, pixsim, the signer and platform are listening (API, Pix webhook and signer over mTLS)")
 
-	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke").Output()
+	keyOut, err := exec.Command(filepath.Join(bin, "platform"), "apikey", "-tenant", tenant, "-name", "smoke", "-scopes", "*,compliance:write").Output()
 	if err != nil {
 		fail("apikey: %v", err)
 	}
@@ -189,6 +270,75 @@ func main() {
 		fail("tap decline: %v", r)
 	}
 	ok("tap R$ 45,51 declined: insufficient_funds")
+
+	// A certified reader's format: EMV data encrypted under the transaction's DUKPT key,
+	// decrypted by the platform's payment-HSM stand-in; the receipt is signed by the signer.
+	out, err := exec.Command(filepath.Join(bin, "tapsim"), "-api", api, "-key", key, "-merchant", m["id"].(string),
+		"-terminal", term["terminal_id"].(string), "-amount", "3150", "-bdk", bdk).Output()
+	if err != nil {
+		fail("tapsim dukpt: %v", err)
+	}
+	var reader map[string]any
+	_ = json.Unmarshal(out, &reader)
+	if reader["status"] != "approved" {
+		fail("DUKPT tap: %v", reader)
+	}
+	if rc, _ := reader["receipt"].(map[string]any); rc == nil || rc["nostr_event_id"] == nil {
+		fail("DUKPT tap without a receipt from the signer: %v", reader)
+	}
+	ok("tap R$ 31,50 from a reader's DUKPT data approved; its receipt signed by the signer process")
+
+	// A smart POS registered by its CSR: the terminal CA signs its certificate, and it sells on
+	// the terminal host over mutual TLS with it, without an API key.
+	waitTCP(terminalAddr)
+	posKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "smart-pos"}}, posKey)
+	pos := call("POST", "/v1/terminals", map[string]any{"merchant_id": m["id"], "type": "smart_pos", "csr": base64.StdEncoding.EncodeToString(csr)}, 201)
+	posKeyDER, _ := x509.MarshalECPrivateKey(posKey)
+	posCert, posKeyFile := filepath.Join(dir, "pos.pem"), filepath.Join(dir, "pos.key")
+	_ = os.WriteFile(posCert, []byte(pos["certificate"].(string)), 0o600)
+	_ = os.WriteFile(posKeyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: posKeyDER}), 0o600)
+	out, err = exec.Command(filepath.Join(bin, "tapsim"), "-api", api, "-key", key, "-merchant", m["id"].(string), "-terminal", pos["terminal_id"].(string),
+		"-amount", "2200", "-dev-key", devKey, "-pan", "4000000000000002", "-terminal-url", "https://"+terminalAddr,
+		"-cert", posCert, "-cert-key", posKeyFile, "-ca", p("ca.pem")).Output()
+	if err != nil {
+		fail("tapsim over mutual TLS: %v", err)
+	}
+	var mtls map[string]any
+	_ = json.Unmarshal(out, &mtls)
+	if mtls["status"] != "approved" {
+		fail("sale over mutual TLS: %v", mtls)
+	}
+	ok("smart POS %s registered by its CSR; R$ 22,00 approved over mutual TLS with the certificate the terminal CA signed", pos["terminal_id"])
+
+	// The customer's receipt QR: the claim page, the NIP-05 file naming the signer's key, and
+	// the gift wrap read from the relay as the claim key (what the page does in the browser).
+	rc := reader["receipt"].(map[string]any)
+	claimURL := rc["claim_qr"].(string)
+	if !strings.HasPrefix(claimURL, api+"/c#k=") {
+		fail("claim URL %s", claimURL)
+	}
+	if resp, err := http.Get(api + "/c"); err != nil || resp.StatusCode != 200 {
+		fail("claim page: %v %v", err, resp)
+	}
+	var nip05 struct {
+		Names  map[string]string   `json:"names"`
+		Relays map[string][]string `json:"relays"`
+	}
+	if resp, err := http.Get(api + "/.well-known/nostr.json?name=receipts"); err != nil {
+		fail("nip-05: %v", err)
+	} else {
+		_ = json.NewDecoder(resp.Body).Decode(&nip05)
+		resp.Body.Close()
+	}
+	receipt, err := claimReceipt("ws://"+relayAddr, strings.SplitN(claimURL, "#k=", 2)[1])
+	if err != nil {
+		fail("claim the receipt: %v", err)
+	}
+	if receipt.ID != rc["nostr_event_id"] || receipt.PubKey != nip05.Names["receipts"] || len(nip05.Relays[receipt.PubKey]) == 0 {
+		fail("claimed receipt %s by %s; NIP-05 %v", receipt.ID, receipt.PubKey, nip05)
+	}
+	ok("the receipt QR opens: the claim key read the wrap from the relay (NIP-42), signed by receipts@ as NIP-05 names it")
 
 	pi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 2390, "channel": "pix"}, 201)
 	conf := call("POST", "/v1/payment-intents/"+pi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "pix"}, 200)
@@ -268,13 +418,90 @@ func main() {
 	}
 	ok("Pix day reconciled against GET /pix: %v", run["summary"])
 
+	// The day closed into a signed statement and a public transparency root (docs/03 §6).
+	today := time.Now().In(brt).Format("2006-01-02")
+	cli("close-day", "-date", today)
+	sts := call("GET", "/v1/settlements?merchant_id="+m["id"].(string), nil, 200)["data"].([]any)
+	if len(sts) != 1 {
+		fail("settlements after close-day: %v", sts)
+	}
+	set := sts[0].(map[string]any)
+	stmt := call("GET", "/v1/settlements/"+set["id"].(string)+"/statement", nil, 200)
+	var statement struct {
+		Lines []struct {
+			Receipt string `json:"receipt_event_id"`
+		} `json:"lines"`
+		Commitment   string `json:"statement_commitment"`
+		Transparency struct {
+			Salt string `json:"leaf_salt"`
+		} `json:"transparency"`
+	}
+	_ = json.Unmarshal([]byte(stmt["content"].(string)), &statement)
+	resp, err = http.Get("http://" + apiAddr + "/v1/transparency/" + today)
+	if err != nil || resp.StatusCode != 200 {
+		fail("public transparency root: %v %v", err, resp)
+	}
+	var root map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&root)
+	resp.Body.Close()
+	proof := call("GET", "/v1/settlements/"+set["id"].(string)+"/proofs/"+statement.Lines[0].Receipt, nil, 200)
+	ti := proof["transparency_inclusion"].(map[string]any)
+	var path []string
+	for _, x := range ti["audit_path"].([]any) {
+		path = append(path, x.(string))
+	}
+	leaf, _ := transparency.LeafData(statement.Transparency.Salt, statement.Commitment)
+	hops, _ := transparency.ParsePath(path)
+	logRoot, _ := hex.DecodeString(root["root"].(string))
+	if !transparency.VerifyInclusion(leaf, int(ti["leaf_index"].(float64)), int(ti["tree_size"].(float64)), hops, logRoot) {
+		fail("the statement's leaf is not proven in the public root: %v", proof)
+	}
+	ok("day closed: statement of %d receipts, net R$ %.2f, proven in a public root of %v leaves", len(statement.Lines), set["net"].(float64)/100, root["tree_size"])
+
+	// Crypto, international accounts and B3 in the sandbox (docs/09).
+	cpi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 5000, "channel": "crypto"}, 201)
+	cq := call("POST", "/v1/payment-intents/"+cpi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
+	act, _ := cq["next_action"].(map[string]any)
+	if paid := call("POST", "/v1/sandbox/crypto/payments/"+cpi["id"].(string), nil, 200); paid["status"] != "captured" {
+		fail("crypto payment: %v", paid)
+	}
+	ok("R$ 50,00 paid in USDT on Tron (%v to %v), sold for reais, intent captured", act["amount"], act["address"])
+	accts := call("GET", "/v1/international/accounts?merchant_id="+m["id"].(string), nil, 200)
+	if n := len(accts["data"].([]any)); n != 3 {
+		fail("international accounts: %v", accts)
+	}
+	quote := call("GET", "/v1/investments/quotes/PETR4", nil, 200)
+	ok("international accounts in USD, EUR and GBP; B3 quote PETR4 R$ %v (lot %v)", quote["last"], quote["lot"])
+	// A withdrawal to the sandbox's sanctioned test address is refused before anything moves.
+	if r := call("POST", "/v1/crypto/withdrawals", map[string]any{"merchant_id": m["id"], "asset": "USDT", "network": "ethereum",
+		"address": "0x0000000000000000000000000000000000000bad", "amount": "1"}, 403); r["code"] != "address_refused" {
+		fail("sanctions screening: %v", r)
+	}
+	// A payment from the sandbox's sanctioned sender is held for compliance, not settled.
+	hpi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 2000, "channel": "crypto"}, 201)
+	call("POST", "/v1/payment-intents/"+hpi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "crypto", "asset": "USDT", "network": "tron"}, 200)
+	if held := call("POST", "/v1/sandbox/crypto/payments/"+hpi["id"].(string), map[string]any{"from": "TSanctionedTestAddressForSandbox12"}, 200); held["status"] != "processing" {
+		fail("a sanctioned sender's payment: %v", held)
+	}
+	if cs, _ := call("GET", "/v1/compliance/cases", nil, 200)["data"].([]any); len(cs) != 1 || cs[0].(map[string]any)["reason"] != "sanctions_hit" {
+		fail("the held payment's compliance case: %v", cs)
+	}
+	// This month's DeCripto, written by the operator command as it would be filed.
+	dc := filepath.Join(dir, "decripto.txt")
+	cli("decripto", "-month", time.Now().In(brt).Format("2006-01"), "-out", dc)
+	file, _ := os.ReadFile(dc)
+	if !strings.HasPrefix(string(file), "0000|22222222000191|") || !strings.Contains(string(file), "\r\n0350|") || !strings.Contains(string(file), "\r\n9999|1|50,00|") {
+		fail("decripto:\n%s", file)
+	}
+	ok("sanctioned address refused; a sanctioned sender's payment held for compliance; DeCripto written (%d lines)", strings.Count(string(file), "\r\n"))
+
 	resp, err = http.Get("http://" + metricsAddr + "/metrics")
 	if err != nil {
 		fail("metrics: %v", err)
 	}
 	scrape, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 1`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
+	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 3`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
 		if !strings.Contains(string(scrape), want) {
 			fail("metrics lack %s:\n%s", want, scrape)
 		}
@@ -282,6 +509,6 @@ func main() {
 	ok("/metrics exposes authorizations, open disputes and safeguarding headroom")
 
 	cli("verify-ledger")
-	ok("ledger invariants L1–L5 hold")
+	ok("ledger invariants L1–L6 hold")
 	fmt.Println("SMOKE OK")
 }

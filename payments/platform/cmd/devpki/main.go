@@ -1,10 +1,13 @@
 // Command devpki writes a throwaway PKI for the local stack: a CA and the server and client
-// certificates for the platform, the PSP simulator and a test terminal. Never use in production.
+// certificates for the platform and the simulators, and a terminal CA with its key and a test
+// terminal's certificate. Never use in production.
 //
 //	devpki -out ./dev/pki
 package main
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"os"
@@ -29,19 +32,29 @@ func main() {
 	must(err)
 	must(os.WriteFile(filepath.Join(*out, "ca.pem"), ca.PEM, 0o644))
 	hs := splitComma(*hosts)
-	for _, s := range []string{"platform-server", "pixsim-server", "schemesim-server"} {
+	for _, s := range []string{"platform-server", "pixsim-server", "schemesim-server", "signer-server"} {
 		l, err := ca.Server(s, hs...)
 		must(err)
 		must(l.WriteFiles(*out, s))
 	}
-	for _, c := range []string{"platform-client", "pixsim-client", "terminal-TP000001"} {
+	for _, c := range []string{"platform-client", "pixsim-client"} {
 		l, err := ca.Client(c)
 		must(err)
 		must(l.WriteFiles(*out, c))
-		if c == "terminal-TP000001" {
-			fmt.Printf("terminal certificate sha256: %s\n", api.CertFingerprint(l.TLS.Certificate[0]))
-		}
 	}
+	// The terminal CA: the terminal listener trusts it (TERMINAL_TLS_CA) and the platform signs
+	// terminals' CSRs with it (TERMINAL_CA_CERT, TERMINAL_CA_KEY); terminal-TP000001 is a
+	// certificate from an external PKI's point of view, registered by its SHA-256.
+	tca, err := testpki.NewCA("goonersPAY dev terminal CA")
+	must(err)
+	must(os.WriteFile(filepath.Join(*out, "terminal-ca.pem"), tca.PEM, 0o644))
+	keyDER, err := x509.MarshalPKCS8PrivateKey(tca.Key)
+	must(err)
+	must(os.WriteFile(filepath.Join(*out, "terminal-ca.key"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
+	l, err := tca.Client("terminal-TP000001")
+	must(err)
+	must(l.WriteFiles(*out, "terminal-TP000001"))
+	fmt.Printf("terminal certificate sha256: %s\n", api.CertFingerprint(l.TLS.Certificate[0]))
 	fmt.Println("wrote", *out)
 }
 

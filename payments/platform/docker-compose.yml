@@ -39,6 +39,13 @@ services:
       - -keys=12345678000195
     volumes: ["pki:/pki:ro"]
 
+  # The sandbox's Nostr relay: receipts are published to it, and the claim page a sale's QR
+  # opens (http://localhost:8080/c#k=…) reads them from it as the claim key (NIP-42).
+  relaysim:
+    build: .
+    entrypoint: ["/usr/local/bin/relaysim", "-listen", ":7447"]
+    ports: ["7447:7447"]
+
   platform:
     build: .
     depends_on:
@@ -46,7 +53,8 @@ services:
       pki: { condition: service_completed_successfully }
       schemesim: { condition: service_started }
       pixsim: { condition: service_started }
-    ports: ["8080:8080", "127.0.0.1:9090:9090"]
+      relaysim: { condition: service_started }
+    ports: ["8080:8080", "8445:8445", "127.0.0.1:9090:9090"]
     volumes:
       - pki:/pki:ro
       - ./deploy/routes.sandbox.json:/etc/platform/routes.json:ro
@@ -61,6 +69,10 @@ services:
       VAULT_FINGERPRINT_KEY_HEX: 66696e6765727072696e742d6b65792d666f722d73616e64626f782d6f6e6c79
       CARDDATA_DEV_KEY_HEX: 6361726464617461206465762d6b657920666f722073616e64626f78206f6e6c
       RECEIPTS_SECRET_HEX: 7265636569707473207369676e696e67206b65792073616e64626f78206f6e6c
+      TRANSPARENCY_SECRET_HEX: 7472616e73706172656e6379207369676e696e67206b65792073616e64626f78
+      RELAYS: ws://relaysim:7447
+      RELAYS_PUBLIC: ws://localhost:7447
+      RECEIPT_CLAIM_BASE: http://localhost:8080/c
       PIX_BASE_URL: https://pixsim:8443/api/v2
       PIX_TOKEN_URL: https://pixsim:8443/oauth/token
       PIX_CLIENT_ID: platform
@@ -75,6 +87,13 @@ services:
       PIX_WEBHOOK_TLS_CERT: /pki/platform-server.pem
       PIX_WEBHOOK_TLS_KEY: /pki/platform-server.key
       PIX_WEBHOOK_PUBLIC_URL: https://platform:8444
+      # The terminal host (mutual TLS) and the terminal CA that signs terminals' CSRs.
+      TERMINAL_ADDR: ":8445"
+      TERMINAL_TLS_CERT: /pki/platform-server.pem
+      TERMINAL_TLS_KEY: /pki/platform-server.key
+      TERMINAL_TLS_CA: /pki/terminal-ca.pem
+      TERMINAL_CA_CERT: /pki/terminal-ca.pem
+      TERMINAL_CA_KEY: /pki/terminal-ca.key
       BOOTSTRAP_TENANT: 00000000-0000-4000-8000-000000000001
       BOOTSTRAP_CAPITAL: "100000000"
 

@@ -8,20 +8,31 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/db"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
+	"github.com/monolito123/Gooners/payments/platform/internal/kyb"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/tsa"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
+	"github.com/monolito123/Gooners/payments/platform/internal/worm"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
@@ -42,6 +53,42 @@ type Config struct {
 	// MaxPaymentAmount caps one payment intent (centavos), limiting what a stolen credential
 	// can charge or move in one request. Default R$ 1.000.000,00; never above MaxAmount.
 	MaxPaymentAmount int64
+	// TransparencyPadTo pads each day's transparency log to a multiple of this many leaves
+	// (docs/03 §6.4). Default 4096.
+	TransparencyPadTo int
+	// PlatformDocument is the platform's CNPJ: the beneficiary of the assignments it registers,
+	// and the declarant of the DeCripto.
+	PlatformDocument string
+	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
+	ReportingName, ReportingURL string
+	// RiskMode is how the fraud shield acts on card-present sales: enforce (default),
+	// shadow (assess and record only) or off.
+	RiskMode string
+	// Crypto and FX pricing in basis points (docs/09); zero takes the defaults.
+	CryptoFeeBps, CryptoSpreadBps int
+	FXFeeBps, FXSpreadBps         int
+	// IOF on foreign exchange, in basis points: reais going abroad, currency coming in.
+	IOFOutBps, IOFInBps int
+	// PlatformLEI is the platform's Legal Entity Identifier, sent as the originating
+	// provider's in travel-rule messages when it has one (its CNPJ goes otherwise).
+	PlatformLEI string
+	// TravelRuleThreshold is the value (centavos) from which a withdrawal carries
+	// travel-rule data. Zero, the default, is every withdrawal: Resolução BCB 520/2025 sets
+	// no minimum.
+	TravelRuleThreshold int64
+	// TravelRuleReview is the value (centavos) from which a deposit that arrived with no
+	// identification of its originator opens a compliance review. Default R$ 5.000,00.
+	TravelRuleReview int64
+	// TravelRuleRetention is how long the personal data of the travel rule is kept before it
+	// is redacted. Default ten years (Circular BCB 3.978/2020, art. 67).
+	TravelRuleRetention time.Duration
+	// RequireKYB starts new merchants in kyb_in_review outside production too (production
+	// always does). KYBAutoApprove activates a merchant whose KYB check comes back approved;
+	// without it an operator activates it. KYBPolicy tunes the check.
+	RequireKYB, KYBAutoApprove bool
+	KYBPolicy                  kyb.Policy
+	// AuditExportPrefix is put before the audit copies' keys in the WORM store ("prod/").
+	AuditExportPrefix string
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -50,18 +97,33 @@ const MaxAmount int64 = 999_999_999_999
 
 // Service wires the components.
 type Service struct {
-	cfg       Config
-	pool      *pgxpool.Pool
-	ledger    *ledger.Ledger
-	sw        *authswitch.Switch
-	vault     *vault.Vault
-	dec       carddata.Decryptor
-	pix       *apipix.Client
-	payout    pixout.Sender
-	receipts  *receipts.Issuer
-	publisher *receipts.Publisher
-	attest    Attestor
-	log       *slog.Logger
+	cfg          Config
+	pool         *pgxpool.Pool
+	ledger       *ledger.Ledger
+	sw           *authswitch.Switch
+	vault        *vault.Vault
+	dec          carddata.Decryptor
+	pix          *apipix.Client
+	payout       pixout.Sender
+	receipts     *receipts.Issuer
+	publisher    *receipts.Publisher
+	attest       Attestor
+	transparency nostr.Author
+	registrar    registrar.Registrar
+	log          *slog.Logger
+	baselines    sync.Map // tenant/merchant → baseline (risk.go)
+	exchanges    *exchange.Router
+	fx           fx.Provider
+	broker       brokerage.Broker
+	screener     AddressScreener
+	senders      SenderLookup
+	travelRule   TravelRuleProvider
+	terminalCA   *terminalpki.CA
+	kyb          kyb.Registry
+	stamps       []*tsa.Client
+	worm         worm.Store
+	play         *attest.PlayIntegrity
+	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
 // Deps are the service's collaborators. Pix, Payout, Receipts and Publisher are optional.
@@ -76,7 +138,41 @@ type Deps struct {
 	Receipts  *receipts.Issuer
 	Publisher *receipts.Publisher
 	Attestor  Attestor // device attestation; required in production
-	Logger    *slog.Logger
+	// Transparency signs the daily public roots (kind 7715). With Receipts, it turns on
+	// daily statements; in production it is the attested enclave signer.
+	Transparency nostr.Author
+	// Registrar registers receivable units and the platform's contract effects before any
+	// advance (docs/07 §1.6). Required in production; the sandbox uses an in-memory one.
+	Registrar registrar.Registrar
+	// Exchanges trade and hold crypto-assets (docs/09); nil turns crypto off.
+	Exchanges *exchange.Router
+	// FX converts currency and holds merchants' international accounts; nil turns it off.
+	FX fx.Provider
+	// Broker routes merchants' orders to B3; nil turns investments off.
+	Broker brokerage.Broker
+	// Screener checks withdrawal addresses against sanctions lists before anything is sent
+	// (docs/09 §6.1). Without one, withdrawals are refused.
+	Screener AddressScreener
+	// Senders finds who sent each crypto deposit, so screening can clear them before the
+	// deposit settles (docs/09 §6.5). Without one, every deposit is held for compliance.
+	Senders SenderLookup
+	// TravelRule sends travel-rule data to the provider receiving a withdrawal (docs/09
+	// §6.6). Without one, withdrawals to other providers are refused.
+	TravelRule TravelRuleProvider
+	// TerminalCA issues terminals' client certificates from their CSRs (docs/05 §2.4); nil
+	// leaves certificates to an external terminal PKI.
+	TerminalCA *terminalpki.CA
+	// KYB reads new merchants' CNPJ registrations (docs/04 §2.5); with Config.RequireKYB, the
+	// periodic job checks every merchant in kyb_in_review. nil leaves KYB to operators.
+	KYB kyb.Registry
+	// Timestamps are the RFC 3161 authorities that date each daily transparency root.
+	Timestamps []*tsa.Client
+	// Audit copies each day's audit rows to WORM storage (S3 Object Lock); nil keeps them in
+	// the database only.
+	Audit worm.Store
+	// PlayIntegrity checks the Google verdict each Android card sale carries; nil skips it.
+	PlayIntegrity *attest.PlayIntegrity
+	Logger        *slog.Logger
 }
 
 // New returns the service.
@@ -102,20 +198,34 @@ func New(cfg Config, d Deps) *Service {
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}
+	if cfg.TravelRuleReview <= 0 {
+		cfg.TravelRuleReview = 500_000
+	}
+	if cfg.TravelRuleRetention <= 0 {
+		cfg.TravelRuleRetention = 10 * 365 * 24 * time.Hour
+	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
-		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, log: d.Logger}
+		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA, kyb: d.KYB, stamps: d.Timestamps, worm: d.Audit, play: d.PlayIntegrity}
 }
 
 // Errors surfaced to the API as problem details.
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrConflict  = errors.New("conflict")
-	ErrInvalid   = errors.New("invalid request")
-	ErrDisabled  = errors.New("not configured")
-	ErrDeclined  = errors.New("declined")
-	ErrFunds     = errors.New("insufficient funds")
-	ErrExpired   = errors.New("expired")
-	ErrSandboxed = errors.New("not allowed outside the sandbox")
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict")
+	ErrInvalid  = errors.New("invalid request")
+	ErrDisabled = errors.New("not configured")
+	ErrDeclined = errors.New("declined")
+	ErrFunds    = errors.New("insufficient funds")
+	ErrExpired  = errors.New("expired")
+	// ErrUnavailable is an upstream the operation needs (the receivables registrar) not answering.
+	ErrUnavailable = errors.New("upstream unavailable")
+	ErrSandboxed   = errors.New("not allowed outside the sandbox")
+	// ErrScreened is a destination sanctions screening refused.
+	ErrScreened = errors.New("refused by sanctions screening")
+	// ErrTravelRuleRejected is a withdrawal the receiving provider refused on its travel-rule
+	// data (an unknown account, a beneficiary that does not match).
+	ErrTravelRuleRejected = errors.New("refused by the receiving provider")
 )
 
 func invalid(format string, a ...any) error {
@@ -166,6 +276,9 @@ type Merchant struct {
 	Plan       pricing.Plan `json:"plan"`
 	Status     string       `json:"status"`
 	StatusNote string       `json:"status_reason,omitempty"`
+	// KYB is the onboarding check's outcome and what the partner may see of it.
+	KYB        *KYBResult `json:"kyb,omitempty"`
+	CreatedAt  string     `json:"created_at,omitempty"`
 	rootPubHex string
 	document   string
 	pixKey     string
@@ -210,7 +323,7 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 	id := ids.New("mer")
 	m := &Merchant{ID: id, Object: "merchant", AccountID: "acc_" + id[4:], LegalName: in.LegalName, TradeName: in.TradeName, MCC: in.MCC,
 		SchemeMID: in.SchemeMID, City: in.City, RootNpub: in.RootNpub, Plan: in.Plan, Status: "active", rootPubHex: rootHex}
-	if s.cfg.Env == "production" {
+	if s.cfg.Env == "production" || s.cfg.RequireKYB {
 		m.Status = "kyb_in_review"
 	}
 	plan, _ := json.Marshal(in.Plan)
@@ -232,7 +345,9 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 	m := &Merchant{Object: "merchant"}
 	var plan []byte
-	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote)
+	var created time.Time
+	var kybResult []byte
+	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote, &created, &kybResult)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -240,13 +355,15 @@ func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 		return nil, err
 	}
 	_ = json.Unmarshal(plan, &m.Plan)
+	m.KYB = kybSummary(kybResult)
+	m.CreatedAt = created.UTC().Format(time.RFC3339)
 	if m.rootPubHex != "" {
 		m.RootNpub, _ = nostr.EncodeNpub(m.rootPubHex)
 	}
 	return m, nil
 }
 
-const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, '')`
+const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, ''), created_at, kyb_result`
 
 // GetMerchant loads a merchant.
 func (s *Service) GetMerchant(ctx context.Context, tenantID, id string) (*Merchant, error) {
@@ -264,11 +381,22 @@ type Terminal struct {
 	MerchantID string `json:"merchant_id"`
 	Type       string `json:"type"`
 	Status     string `json:"status"`
+	// Certificate is the client certificate the platform just issued (PEM), returned once,
+	// when issued; the SHA-256 and expiry stay on the terminal.
+	Certificate          string     `json:"certificate,omitempty"`
+	CertificateSHA256    string     `json:"certificate_sha256,omitempty"`
+	CertificateExpiresAt *time.Time `json:"certificate_expires_at,omitempty"`
+	KeySecurityLevel     string     `json:"key_security_level,omitempty"`
 }
 
-// RegisterTerminal creates a terminal ID (DE 41). Certificate issuance after attestation is
-// the job of the terminal PKI (docs/05 §2.4); certFingerprint binds the terminal to it.
+// RegisterTerminal creates a terminal ID (DE 41) bound to a certificate the terminal PKI
+// issued elsewhere (certFingerprint, its SHA-256), or to none yet; RegisterTerminalCSR has
+// the platform issue it.
 func (s *Service) RegisterTerminal(ctx context.Context, tenantID, merchantID, typ, certFingerprint string) (*Terminal, error) {
+	return s.registerTerminal(ctx, tenantID, merchantID, typ, certFingerprint, nil)
+}
+
+func (s *Service) registerTerminal(ctx context.Context, tenantID, merchantID, typ, certFingerprint string, req *TerminalCertificateRequest) (*Terminal, error) {
 	m, err := s.GetMerchant(ctx, tenantID, merchantID)
 	if err != nil {
 		return nil, err
@@ -279,25 +407,71 @@ func (s *Service) RegisterTerminal(ctx context.Context, tenantID, merchantID, ty
 	if typ == "" {
 		typ = "mpoc_cots"
 	}
-	for i := 0; i < 5; i++ {
-		u := ids.ULID()
-		id := "T" + u[len(u)-7:]
-		_, err := s.pool.Exec(ctx, `INSERT INTO terminals (id, tenant_id, merchant_id, type, cert_fingerprint) VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
-			id, tenantID, merchantID, typ, certFingerprint)
-		if err == nil {
-			return &Terminal{ID: id, Object: "terminal", MerchantID: merchantID, Type: typ, Status: "active"}, nil
-		}
+	if req != nil && s.terminalCA == nil {
+		return nil, ErrNoTerminalCA
 	}
-	return nil, errors.New("could not allocate a terminal ID")
+	var t *Terminal
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if certFingerprint != "" {
+			// A certificate belongs to one terminal: one registered twice would authenticate as
+			// whichever terminal the lookup found, so another merchant's sales could land here.
+			var taken bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM terminals WHERE cert_fingerprint = $1 OR prev_cert_fingerprint = $1)`, certFingerprint).
+				Scan(&taken); err != nil {
+				return err
+			}
+			if taken {
+				return fmt.Errorf("%w: that certificate is already registered to a terminal", ErrConflict)
+			}
+		}
+		for i := 0; ; i++ {
+			u := ids.ULID()
+			id := "T" + u[len(u)-7:]
+			res, err := tx.Exec(ctx, `INSERT INTO terminals (id, tenant_id, merchant_id, type, cert_fingerprint) VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+				ON CONFLICT (id) DO NOTHING`, id, tenantID, merchantID, typ, certFingerprint)
+			if db.IsUniqueViolation(err) {
+				return fmt.Errorf("%w: that certificate is already registered to a terminal", ErrConflict)
+			}
+			if err != nil {
+				return err
+			}
+			if res.RowsAffected() == 1 {
+				t = &Terminal{ID: id, Object: "terminal", MerchantID: merchantID, Type: typ, Status: "active", CertificateSHA256: certFingerprint}
+				break
+			}
+			if i == 4 {
+				return errors.New("could not allocate a terminal ID")
+			}
+		}
+		if req == nil {
+			return nil
+		}
+		// The certificate names the new terminal ID, so it is issued inside the transaction:
+		// a refused CSR or an unreachable CA leaves no terminal without its certificate.
+		return s.certify(ctx, tx, tenantID, t, *req, "")
+	})
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
-// TerminalByFingerprint finds the terminal bound to a client certificate.
-func (s *Service) TerminalByFingerprint(ctx context.Context, fp string) (tenantID, terminalID string, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT tenant_id::text, id FROM terminals WHERE cert_fingerprint = $1 AND status = 'active'`, fp).Scan(&tenantID, &terminalID)
+// TerminalByFingerprint finds the terminal bound to a client certificate: its current one,
+// or the one its last renewal replaced until the terminal first presents the new one. A
+// phone's terminal also names its device, whose attestation rules still apply to its sales.
+func (s *Service) TerminalByFingerprint(ctx context.Context, fp string) (tenantID, terminalID, deviceID string, err error) {
+	var current, pending bool
+	err = s.pool.QueryRow(ctx, `SELECT tenant_id::text, id, COALESCE(device_id, ''), cert_fingerprint = $1, prev_cert_fingerprint IS NOT NULL FROM terminals
+		WHERE (cert_fingerprint = $1 OR prev_cert_fingerprint = $1) AND status = 'active' ORDER BY cert_fingerprint = $1 DESC LIMIT 1`, fp).
+		Scan(&tenantID, &terminalID, &deviceID, &current, &pending)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrNotFound
+		return "", "", "", ErrNotFound
 	}
-	return tenantID, terminalID, err
+	if err == nil && current && pending {
+		// The terminal holds its new certificate: the one it replaced stops working.
+		_, err = s.pool.Exec(ctx, `UPDATE terminals SET prev_cert_fingerprint = NULL WHERE id = $1 AND cert_fingerprint = $2`, terminalID, fp)
+	}
+	return tenantID, terminalID, deviceID, err
 }
 
 // ---------------------------------------------------------------- journals with safeguarding legs
@@ -323,8 +497,11 @@ func outflowConfirmed(n int64) []ledger.Posting {
 	return []ledger.Posting{{Account: ledger.AccPixInTransit, Direction: ledger.Debit, Amount: n}, {Account: ledger.AccSafeguardingReserve, Direction: ledger.Credit, Amount: n}}
 }
 
-func cardRefund(brand, m string, n int64) []ledger.Posting {
-	return append(ledger.CardRefund(brand, m, n), ledger.SafeguardRelease(n)...)
+// cardRefund debits the shares of a refund of n from their merchants' wallets (one share, the
+// merchant's, without splits) and owes n to the scheme.
+func cardRefund(brand string, shares []share, n int64) []ledger.Posting {
+	ps := append(walletDebits(shares), ledger.Posting{Account: ledger.SchemePayable(brand), Direction: ledger.Credit, Amount: n})
+	return append(ps, ledger.SafeguardRelease(n)...)
 }
 
 func (s *Service) post(ctx context.Context, tenantID, key, typ, ref string, ps []ledger.Posting) error {

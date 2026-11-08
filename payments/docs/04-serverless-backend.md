@@ -194,7 +194,7 @@ There is no dual write anywhere: a service never writes to the database *and* pu
 
 Step Functions state machines, each with explicit compensation steps:
 
-- **KYB**: CNPJ registry → representatives → liveness → sanctions and PEP screening → MCC risk → pricing → device binding → active. Human review states for medium-risk results, with SLA timers.
+- **KYB**: CNPJ registry → representatives → liveness → sanctions and PEP screening → MCC risk → pricing → device binding → active. Human review states for medium-risk results, with SLA timers. Built in the platform: the CNPJ registry (BrasilAPI or a self-hosted minhareceita), representatives against the registered partners, sanctions screening of every name (OFAC and the UN list), MCC risk and company age, with `review` for people and automatic activation of clean results ([runbook §4.1](../integration/operations-runbook.md#41-kyb-approval)). Liveness, individuals' identity (CPF) and PEP lists wait for providers.
 - **Payout**: quote → risk check → ledger hold → Pix send → confirm or return → release or post.
 - **Dispute**: intake → evidence assembly → merchant window → submission → outcome → ledger.
 - **Daily clearing**: cut-off → build files → submit → acknowledgements → register receivables → reconcile.

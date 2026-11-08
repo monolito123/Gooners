@@ -2,9 +2,9 @@ name: goonersPAY platform (Go)
 
 on:
   push:
-    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
+    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', 'payments/api/openapi.yaml', 'payments/tools/check-responses.mjs', '.github/workflows/payments-platform.yml']
   pull_request:
-    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', '.github/workflows/payments-platform.yml']
+    paths: ['payments/platform/**', 'payments/nostr/examples/**', 'payments/mobile/conformance/**', 'payments/docs/02-api-reference.md', 'payments/api/openapi.yaml', 'payments/tools/check-responses.mjs', '.github/workflows/payments-platform.yml']
   workflow_dispatch:
 
 permissions:
@@ -48,6 +48,19 @@ jobs:
       # Testes unitários e de integração (inclusive o fluxo ponta a ponta pela API, simuladores e PostgreSQL).
       - name: Testes (race detector)
         run: go test -race -count=1 ./...
+
+      # O que um integrador recebe é o que o contrato diz: cada resposta (e cada pedido aceito) da
+      # suíte ponta a ponta validado contra api/openapi.yaml, e cada operação oferecida exercitada.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: payments/tools/package-lock.json
+      - name: Contrato da API (respostas reais contra o OpenAPI)
+        run: |
+          (cd ../tools && npm ci --omit=dev --ignore-scripts)
+          GOONERSPAY_RECORD="$RUNNER_TEMP/responses.jsonl" go test -count=1 ./internal/e2e/
+          node ../tools/check-responses.mjs "$RUNNER_TEMP/responses.jsonl" --strict
 
       # Contagem de execuções, não duração: com -fuzztime em segundos o coordenador do Go às vezes
       # lê o fim do prazo antes de o contexto filho ser cancelado e o reporta como falha

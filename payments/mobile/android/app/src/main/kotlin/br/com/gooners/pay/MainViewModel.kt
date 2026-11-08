@@ -6,19 +6,33 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import br.com.gooners.pay.core.Money
+import br.com.gooners.pay.core.statements.Statement
+import br.com.gooners.pay.core.api.Settlement
 import br.com.gooners.pay.core.api.ApiException
 import br.com.gooners.pay.core.api.Balance
+import br.com.gooners.pay.core.api.DaySummary
+import br.com.gooners.pay.core.api.PeriodSummary
 import br.com.gooners.pay.core.api.DeviceCreate
 import br.com.gooners.pay.core.api.Entry
 import br.com.gooners.pay.core.api.GoonersPayApi
 import br.com.gooners.pay.core.api.PixDestination
 import br.com.gooners.pay.core.api.Quote
 import br.com.gooners.pay.core.auth.DeviceList
+import br.com.gooners.pay.core.auth.KeyAttestation
+import br.com.gooners.pay.core.api.Conversion
+import br.com.gooners.pay.core.api.ConversionRequest
+import br.com.gooners.pay.core.api.Holding
+import br.com.gooners.pay.core.api.InternationalAccount
+import br.com.gooners.pay.core.api.Portfolio
 import br.com.gooners.pay.core.checkout.CheckoutController
+import br.com.gooners.pay.core.checkout.CryptoChoice
+import br.com.gooners.pay.core.journal.Journal
 import br.com.gooners.pay.core.nostr.Bech32
 import br.com.gooners.pay.core.nostr.Event
 import br.com.gooners.pay.core.nostr.NostrKeys
+import br.com.gooners.pay.core.risk.RiskMonitor
 import br.com.gooners.pay.core.toHex
+import br.com.gooners.pay.core.wording.Wording
 import br.com.gooners.pay.security.KeyVault
 import br.com.gooners.pay.security.UnlockCancelled
 import br.com.gooners.pay.security.UnlockReason
@@ -40,7 +54,7 @@ sealed interface Screen {
     data object Home : Screen
 }
 
-enum class Tab(val label: String) { CHARGE("Cobrar"), MONEY("Recebíveis"), DEVICES("Aparelhos"), SETTINGS("Ajustes") }
+enum class Tab(val label: String) { CHARGE("Cobrar"), MONEY("Dinheiro"), ASSETS("Ativos"), DEVICES("Aparelhos"), SETTINGS("Ajustes") }
 
 data class MoneyState(
     val balance: Balance? = null,
@@ -48,6 +62,25 @@ data class MoneyState(
     val quote: Quote? = null,
     val destination: PixDestination? = null,
     val lastPayout: String? = null,
+    val settlements: List<Settlement> = emptyList(),
+    /** The statement open on screen, checked on the phone. */
+    val statement: Statement? = null,
+    /** The day at a glance; null until loaded, or from a platform without the summary. */
+    val today: DaySummary? = null,
+    /** The sales card's period in days: 1 is today by hour, 7 and 30 are by day. */
+    val period: Int = 1,
+    /** The last 7 or 30 days, once loaded for the period chosen. */
+    val range: PeriodSummary? = null,
+)
+
+/** Crypto, foreign currency and B3 (docs/09). */
+data class AssetsState(
+    val holdings: List<Holding> = emptyList(),
+    val accounts: List<InternationalAccount> = emptyList(),
+    val portfolio: Portfolio = Portfolio(),
+    /** A conversion quoted and waiting for confirmation; prices before commitment. */
+    val quote: Conversion? = null,
+    val done: String? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -65,17 +98,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val message: StateFlow<String?> = _message.asStateFlow()
     private val _money = MutableStateFlow(MoneyState())
     val money: StateFlow<MoneyState> = _money.asStateFlow()
+    private val _assets = MutableStateFlow(AssetsState())
+    val assets: StateFlow<AssetsState> = _assets.asStateFlow()
     private val _devices = MutableStateFlow(settings.deviceList)
     val devices: StateFlow<List<DeviceList.Entry>> = _devices.asStateFlow()
 
     private var authed: GoonersPayApi.Authed? = null
+    private var journal: Journal? = null
 
     val checkout = CheckoutController(
         api = { authed ?: error("Sessão encerrada. Abra o app novamente.") },
         reader = { c.reader() },
         stan = settings.stan,
         scope = viewModelScope,
+        journal = { journal },
+        risk = RiskMonitor(c.posture),
+        memory = settings.methods,
+        cryptoOffer = { if (settings.acceptsCrypto) CryptoChoice() else null },
     )
+
+    val feedback = c.feedback
+
+    /** The journal, once the merchant's root key is known (it names it in every entry). */
+    private fun journal(): Journal? {
+        journal?.let { return it }
+        val device = c.vault.publicKey(KeyVault.DEVICE) ?: return null
+        val root = settings.merchantRootPub.ifEmpty { return null }
+        return Journal(c.journalStore, device, root, BuildConfig.VERSION_NAME).also { journal = it }
+    }
 
     val isOwner: Boolean get() = c.vault.has(KeyVault.ROOT)
     val ownNpub: String? get() = c.vault.publicKey(KeyVault.DEVICE)?.let(Bech32::npub)
@@ -91,6 +141,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun select(t: Tab) {
         _tab.value = t
         if (t == Tab.MONEY) refreshMoney()
+        if (t == Tab.ASSETS) refreshAssets()
     }
 
     fun dismissMessage() {
@@ -108,7 +159,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             forget()
             _message.value = "As chaves deste aparelho foram invalidadas por uma mudança no bloqueio de tela. Pareie novamente."
         } catch (e: ApiException) {
-            _message.value = e.problem?.detail ?: e.problem?.title ?: "Erro ${e.status}"
+            _message.value = Wording.calm(e.status, e.problem?.detail ?: e.problem?.title)
+        } catch (e: java.io.IOException) {
+            _message.value = Wording.calm(0, null)
         } catch (e: Exception) {
             _message.value = e.message ?: e.toString()
         } finally {
@@ -142,10 +195,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun login() {
         val api = c.api()
         val dpop = c.vault.dpopSigner()
-        val session = withKey(KeyVault.DEVICE) { api.login(it, dpop, settings.deviceId.ifEmpty { null }) }
-        authed = api.Authed({ unlocker.withKeys { c.vault.load(KeyVault.DEVICE) } }, dpop, session)
+        journal()?.append("session_start")
+        val session = withKey(KeyVault.DEVICE) { key ->
+            val deviceId = settings.deviceId.ifEmpty { null }
+            try {
+                api.login(key, dpop, deviceId)
+            } catch (e: ApiException) {
+                // A phone the owner added (or a platform that turned strict attestation on)
+                // proves itself at login: once, with its key attestation.
+                if (e.status != 401 || e.problem?.detail?.contains("attestation_required") != true) throw e
+                api.login(key, dpop, deviceId, c.integrity.evidence(key.publicKeyHex))
+            }.also { journal()?.signPending(key) }
+        }
+        val a = api.Authed({ unlocker.withKeys { c.vault.load(KeyVault.DEVICE) } }, dpop, session, onKey = { journal()?.signPending(it) })
+        authed = a
         settings.deviceId = session.deviceId
         settings.merchantId = session.merchantId
+        if (settings.merchantRootPub.isEmpty()) {
+            // A cashier phone learns the root key from the merchant; its journal starts now.
+            a.merchant().rootNpub?.let { settings.merchantRootPub = Bech32.decode("npub", it).toHex() }
+            journal()?.append("session_start")
+        }
+        syncJournal()
+    }
+
+    /** Uploads signed journal entries; the platform's answer says what it still lacks. */
+    private fun syncJournal() = viewModelScope.launch {
+        val a = authed ?: return@launch
+        val j = journal() ?: return@launch
+        runCatching { a.syncJournal(j) }.onSuccess { st ->
+            if (st?.status == "fork_detected") _message.value = "A goonersPAY bloqueou este terminal: o diário do aparelho foi duplicado. Fale com o suporte."
+        }
     }
 
     /**
@@ -166,6 +246,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val device = NostrKeys.generate()
         try {
             unlocker.withKeys { c.vault.store(KeyVault.DEVICE, device) }
+            // The DPoP key is born attested to this device key (forget() removed any older one).
+            c.vault.dpopSigner(KeyAttestation.challenge(device.publicKeyHex))
             if (enrollment.rootNpub != null) {
                 _screen.value = Screen.AwaitingApproval(device.npub, enrollment.tradeName)
                 return@run
@@ -178,6 +260,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val list = DeviceList.event(root, enrollment.merchantId, entries, now)
                 val created = api.enroll(code.trim(), DeviceCreate(device.npub, "android", Build.MODEL, c.integrity.evidence(device.publicKeyHex), list))
                 settings.deviceId = created.id
+                settings.merchantRootPub = root.publicKeyHex
                 settings.deviceList = entries
                 settings.deviceListAt = now
                 _devices.value = entries
@@ -216,9 +299,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshMoney() = run {
         val a = authed ?: return@run
         val balance = a.balance()
+        // An older platform has no day summary: the screen simply shows no "Hoje" card.
+        val today = try { a.daySummary() } catch (e: ApiException) { if (e.status == 404) null else throw e }
         val entries = a.entries(20).data
-        _money.update { it.copy(balance = balance, entries = entries) }
+        val settlements = a.settlements().data
+        _money.update { it.copy(balance = balance, today = today, entries = entries, settlements = settlements) }
+        if (_money.value.period > 1) loadRange(a, _money.value.period)
     }
+
+    /** Shows today by hour, or the last 7 or 30 days by day. */
+    fun selectPeriod(days: Int) = run {
+        _money.update { it.copy(period = days) }
+        val a = authed ?: return@run
+        if (days > 1) loadRange(a, days)
+    }
+
+    private suspend fun loadRange(a: GoonersPayApi.Authed, days: Int) {
+        val today = java.time.LocalDate.now(java.time.ZoneId.of("America/Sao_Paulo"))
+        val range = a.periodSummary(from = today.minusDays(days - 1L).toString(), to = today.toString())
+        _money.update { if (it.period == days) it.copy(range = range) else it }
+    }
+
+    /** Opens a day's statement: fetched, then checked against the public root on the phone. */
+    fun openStatement(s: Settlement) = run {
+        val a = authed ?: return@run
+        val keys = BuildConfig.PLATFORM_KEYS.split(',').map { it.trim() }.filter { it.length == 64 }.toSet()
+        _money.update { it.copy(statement = a.verifiedStatement(s, keys)) }
+    }
+
+    fun closeStatement() = _money.update { it.copy(statement = null) }
 
     fun quotePayout(amount: Money, keyType: String, key: String) = run {
         val a = authed ?: return@run
@@ -237,6 +346,57 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val p = a.payout(q.id)
         _money.update { it.copy(quote = null, lastPayout = "Saque ${Money(p.amount).format()}: ${p.status}") }
         refreshMoney()
+    }
+
+    // ---- crypto, foreign currency and B3 ----
+
+    fun refreshAssets() = run {
+        val a = authed ?: return@run
+        // Each part stands alone: a platform without B3 still shows the crypto and the accounts.
+        val holdings = runCatching { a.holdings().data }.getOrDefault(_assets.value.holdings)
+        val accounts = runCatching { a.internationalAccounts().data }.getOrDefault(_assets.value.accounts)
+        val portfolio = runCatching { a.portfolio() }.getOrDefault(_assets.value.portfolio)
+        _assets.update { it.copy(holdings = holdings, accounts = accounts, portfolio = portfolio) }
+    }
+
+    /** Buy spends reais (amount in reais); sell spends the asset (amount in the asset). */
+    fun quoteConversion(side: String, asset: String, amount: String) = run {
+        val a = authed ?: return@run
+        val req = if (side == "buy") {
+            val brl = Money.parseReais(amount) ?: error("Digite o valor em reais, por exemplo 150,00.")
+            ConversionRequest(side, asset, brlAmount = brl.centavos)
+        } else {
+            ConversionRequest(side, asset, amount = amount.trim().replace(',', '.'))
+        }
+        _assets.update { it.copy(quote = a.quoteConversion(req), done = null) }
+    }
+
+    /** The sandbox's stand-in for the customer's wallet. */
+    fun simulateCrypto(intentId: String) = run {
+        authed?.simulateCryptoPayment(intentId)
+    }
+
+    fun cancelConversion() = _assets.update { it.copy(quote = null) }
+
+    /** Executes the quoted conversion after a fresh biometric confirmation, as a payout. */
+    fun confirmConversion() = run {
+        val a = authed ?: return@run
+        val q = _assets.value.quote ?: return@run
+        unlocker.confirm(UnlockReason.PAYOUT)
+        val x = a.executeConversion(q.id)
+        _assets.update { it.copy(quote = null, done = (if (x.side == "buy") "Comprado: " else "Vendido: ") + "${x.amount} ${x.asset}") }
+        refreshAssets()
+    }
+
+    // ---- settings ----
+
+    fun setApprovalTone(on: Boolean) {
+        settings.approvalTone = on
+    }
+
+    fun setAcceptsCrypto(on: Boolean) {
+        settings.acceptsCrypto = on
+        checkout.refresh() // the keypad's long press sees the change at once
     }
 
     // ---- devices (owner) ----
@@ -276,7 +436,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newEnrollmentCode() = run {
         val a = authed ?: return@run
-        _message.value = "Código para o novo aparelho: ${a.createEnrollmentCode().code} (vale 15 minutos)"
+        _message.value = "Código para o novo aparelho: ${a.createEnrollmentCode().code}. Vale 15 minutos e uma única vez."
     }
 
     // ---- settings ----
@@ -288,9 +448,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun forget() {
         authed = null
+        journal = null
+        c.journalStore.delete()
         c.vault.wipe()
         settings.clear()
         _devices.value = emptyList()
         _money.value = MoneyState()
+        _assets.value = AssetsState()
     }
 }

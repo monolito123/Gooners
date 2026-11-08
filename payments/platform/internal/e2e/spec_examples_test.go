@@ -44,14 +44,20 @@ func TestSpecRequestExamplesAreAccepted(t *testing.T) {
 
 	intent := specExample(t, `"payment_method_types"`, `"splits"`, `"statement_descriptor"`)
 	intent["merchant_id"] = m["id"]
-	if code, p := st.call("POST", "/v1/payment-intents", intent, 0); code != 422 || p["code"] != "splits_not_supported" {
-		t.Fatalf("splits must be refused explicitly, got %d %v", code, p)
+	// The example's split accounts are illustrative: another tenant's IDs are refused; with
+	// two of this tenant's accounts the same request is accepted as written.
+	if code, p := st.call("POST", "/v1/payment-intents", intent, 0); code != 422 || !strings.Contains(p["detail"].(string), "not one of the tenant's accounts") {
+		t.Fatalf("unknown split accounts: %d %v", code, p)
 	}
-	delete(intent, "splits")
+	seller, sellerAcc := st.merchant(st.key)
+	_, marketAcc := st.merchant(st.key)
+	splits := intent["splits"].([]any)
+	splits[0].(map[string]any)["account_id"], splits[1].(map[string]any)["account_id"] = sellerAcc, marketAcc
 	_, pi := st.call("POST", "/v1/payment-intents", intent, 201)
-	if pi["installments"].(map[string]any)["count"].(float64) != 3 || pi["channel"] != "ecommerce" {
+	if pi["installments"].(map[string]any)["count"].(float64) != 3 || pi["channel"] != "ecommerce" || len(pi["splits"].([]any)) != 2 || pi["split_reversal"] != "pro_rata" {
 		t.Fatalf("intent %v", pi)
 	}
+	_ = seller
 
 	terminal := specExample(t, `"device_id"`, `"certificate_sha256"`)
 	terminal["merchant_id"] = m["id"]

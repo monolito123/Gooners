@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -59,6 +61,20 @@ func (l *limiter) take(key string) (bool, time.Duration) {
 		return true, 0
 	}
 	return false, time.Duration((1 - b.tokens) / l.rate * float64(time.Second))
+}
+
+// headers tells the client its quota and what is left of it (the RateLimit-Policy and
+// RateLimit fields of draft-ietf-httpapi-ratelimit-headers): the quota is the bucket's burst,
+// refilled over burst/rate seconds; t is the seconds until the bucket is full again.
+func (l *limiter) headers(h http.Header, key string) {
+	l.mu.Lock()
+	tokens := l.burst
+	if b, ok := l.buckets[key]; ok {
+		tokens = b.tokens
+	}
+	l.mu.Unlock()
+	h.Set("RateLimit-Policy", fmt.Sprintf(`"per-key";q=%d;w=%d`, int(l.burst), int(math.Ceil(l.burst/l.rate))))
+	h.Set("RateLimit", fmt.Sprintf(`"per-key";r=%d;t=%d`, int(math.Max(0, math.Floor(tokens))), int(math.Ceil((l.burst-tokens)/l.rate))))
 }
 
 // clientIP is the peer address, or the address the trusted proxy appended to

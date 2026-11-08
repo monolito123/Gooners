@@ -27,3 +27,10 @@ func TestULID(t *testing.T) {
 		t.Fatal("U is not a Crockford character")
 	}
 }
+
+func TestFromSeed(t *testing.T) {
+	a, b := FromSeed("tr", []byte("tenant\nkey-1")), FromSeed("tr", []byte("tenant\nkey-1"))
+	if a != b || !strings.HasPrefix(a, "tr_") || !Valid(a[3:]) || a == FromSeed("tr", []byte("tenant\nkey-2")) {
+		t.Fatalf("%s %s", a, b)
+	}
+}

@@ -8,6 +8,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -33,21 +35,49 @@ func main() {
 	aid := flag.String("aid", "A0000000031010", "EMV AID (Visa credit A0000000031010, Mastercard A0000000041010, Elo A0000004942010)")
 	app := flag.String("app", "credit", "credit or debit")
 	devKey := flag.String("dev-key", os.Getenv("CARDDATA_DEV_KEY_HEX"), "development card-data key (hex)")
+	atc := flag.Int("atc", -1, "the card's transaction counter (EMV 9F36, 0-65535); omitted when negative, since a shared test card has none")
+	bdkHex := flag.String("bdk", "", "a TDES base derivation key (hex): send the card as a certified reader does, DUKPT-encrypted EMV data, instead of the development format")
+	terminalURL := flag.String("terminal-url", "", "the terminal host (https): send the authorization over mutual TLS with -cert and -cert-key instead of with the API key")
+	certFile := flag.String("cert", "", "the terminal's client certificate (PEM)")
+	certKey := flag.String("cert-key", "", "the terminal's private key (PEM)")
+	caFile := flag.String("ca", "", "the CA of the terminal host's server certificate (PEM)")
 	flag.Parse()
 	k, err := hex.DecodeString(*devKey)
-	if err != nil || len(k) != 32 || *merchant == "" || *terminal == "" || *key == "" {
-		fmt.Fprintln(os.Stderr, "tapsim: -key, -merchant, -terminal and a 32-byte -dev-key are required")
+	bdk, bdkErr := hex.DecodeString(*bdkHex)
+	if (*bdkHex == "" && (err != nil || len(k) != 32)) || (*bdkHex != "" && (bdkErr != nil || len(bdk) != 16)) || *merchant == "" || *terminal == "" || *key == "" {
+		fmt.Fprintln(os.Stderr, "tapsim: -key, -merchant, -terminal and a 32-byte -dev-key (or a 16-byte -bdk) are required")
 		os.Exit(2)
+	}
+	// The terminal host authenticates the terminal by its certificate.
+	terminalClient := http.DefaultClient
+	if *terminalURL != "" {
+		pair, err := tls.LoadX509KeyPair(*certFile, *certKey)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "tapsim: -cert/-cert-key:", err)
+			os.Exit(2)
+		}
+		roots := x509.NewCertPool()
+		if pemCA, err := os.ReadFile(*caFile); err != nil || !roots.AppendCertsFromPEM(pemCA) {
+			fmt.Fprintln(os.Stderr, "tapsim: -ca: no certificates")
+			os.Exit(2)
+		}
+		terminalClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{pair}, RootCAs: roots, MinVersion: tls.VersionTLS13}}}
 	}
 	post := func(path string, body any, idem bool) map[string]any {
 		b, _ := json.Marshal(body)
-		req, _ := http.NewRequest("POST", *apiURL+path, bytes.NewReader(b))
-		req.Header.Set("Authorization", "Bearer "+*key)
+		base, client := *apiURL, http.DefaultClient
+		if path == "/v1/terminal/authorizations" && *terminalURL != "" {
+			base, client = *terminalURL, terminalClient
+		}
+		req, _ := http.NewRequest("POST", base+path, bytes.NewReader(b))
+		if client == http.DefaultClient {
+			req.Header.Set("Authorization", "Bearer "+*key)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		if idem {
 			req.Header.Set("Idempotency-Key", ids.ULID())
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "tapsim:", err)
 			os.Exit(1)
@@ -65,15 +95,32 @@ func main() {
 	pi := post("/v1/payment-intents", map[string]any{"merchant_id": *merchant, "amount": *amount, "channel": "card_present"}, true)
 	stan := fmt.Sprintf("%06d", rand.IntN(999999)+1)
 	ksn := fmt.Sprintf("FFFF9876543210E%05d", rand.IntN(99999))
-	blob, err := carddata.DevEncrypt(k, ksn, carddata.Card{PAN: *pan, Expiry: "2911", AID: *aid,
-		EMVHex: "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE119F360200429A032610299C0100"})
+	emv := "9F2608A1B2C3D4E5F607089F2701809F3704C0FFEE11"
+	if *atc >= 0 {
+		emv += fmt.Sprintf("9F3602%04X", *atc&0xFFFF)
+	}
+	format := carddata.DevFormat
+	var blob []byte
+	if len(bdk) == 16 {
+		// A reader's KSN: its 59-bit device identity, then a 21-bit counter.
+		ksn = fmt.Sprintf("FFFF9876543210E%05X", rand.IntN(0x1FFFF)+1)
+		panBCD := *pan
+		if len(panBCD)%2 == 1 {
+			panBCD += "F"
+		}
+		tlv, _ := hex.DecodeString(fmt.Sprintf("5A%02X%s5F2403291130", len(panBCD)/2, panBCD) + fmt.Sprintf("4F%02X%s", len(*aid)/2, *aid) + emv + "9A032610299C0100")
+		format = carddata.FormatDUKPTTDES
+		blob, err = carddata.EncryptDUKPT(bdk, ksn, tlv)
+	} else {
+		blob, err = carddata.DevEncrypt(k, ksn, carddata.Card{PAN: *pan, Expiry: "2911", AID: *aid, EMVHex: emv + "9A032610299C0100"})
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tapsim:", err)
 		os.Exit(1)
 	}
 	res := post("/v1/terminal/authorizations", map[string]any{
 		"payment_intent_id": pi["id"], "terminal_id": *terminal, "stan": stan, "emv_application": *app, "local_time": time.Now().Format(time.RFC3339),
-		"sred": map[string]any{"format": carddata.DevFormat, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
+		"sred": map[string]any{"format": format, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)},
 	}, false)
 	out, _ := json.MarshalIndent(res, "", "  ")
 	fmt.Println(string(out))

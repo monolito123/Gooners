@@ -1,6 +1,6 @@
 # Integration kit: card hosts, Visa, Mastercard and banks for Pix
 
-This folder explains how to connect the platform ([`../platform`](../platform)) to its real counterparties. For each one it covers what is already built and tested, what the counterparty must provide, and the steps to go from the simulators to their test environment and then to production.
+This folder explains how to connect the platform ([`../platform`](../platform)) to its real counterparties. [integration-points.md](integration-points.md) is the complete map: every server, provider, SDK and file exchange the system needs, the exact place each plugs into the code, and what remains to build. For each one it covers what is already built and tested, what the counterparty must provide, and the steps to go from the simulators to their test environment and then to production.
 
 ## Readiness at a glance
 
@@ -12,6 +12,21 @@ This folder explains how to connect the platform ([`../platform`](../platform)) 
 | **Bank / PSP for Pix** | API Pix client (OAuth2 over mutual TLS, `cob`, `pix`, devolução, webhook), mTLS webhook receiver that re-reads every Pix before crediting, daily reconciliation by `GET /pix` that heals missed webhooks, MED returns, BR Code, payouts through a sender seam, PSP simulator | Account and Pix key, API Pix homologation and production URLs, OAuth client, certificates, its transfer API | An adapter for the bank's transfer API (one file) | [pix.md](pix.md) |
 | **Operations** (day to day) | Merchant lifecycle (KYB approval, restriction, closure), terminal and API key revocation, chargeback intake and outcomes, settlement and Pix reconciliation with an exception queue, an audit trail, Prometheus metrics | Operators with SSO identities; a Prometheus and alerting stack | A back-office UI over the same commands | [operations-runbook.md](operations-runbook.md) |
 | **Key custody** (production) | Typed seams: `vault.KEK`, `carddata.Decryptor`, `nostr.Author` | An HSM / KMS, a payment HSM, an enclave | Three adapters | [hsm.md](hsm.md) |
+| **Receivables registrar** (CERC, Núclea, B3, TAG) | Every receivable unit registered with its total; the platform's assignment registered before any advance, at capture and in payouts; liens of other institutions respected; reversals cancel the assignment; a nightly re-registration. Interface, in-memory registrar and a generic JSON contract | Participation in the arrangement, API credentials, the registrar's API specification | An adapter from the registrar's API to `internal/registrar`'s contract (`REGISTRAR_URL`) | [07 §1.6](../docs/07-enhancements.md#16-registrar-interplay) |
+| **Device attestation** (Apple, Google) | Offline verification of App Attest and Android hardware key attestation; sessions pinned to the attested key; phones added by the owner attest at their first login | Apple's App Attestation Root CA, Google's hardware attestation roots, the release signing certificate digest, the Team ID | Play Integrity through Google's decode API; the attestation revocation list | [05 §2.4](../docs/05-mobile.md#24-attestation-and-device-integrity) |
+| **Transparency anchoring** | Daily statements and the chain of signed public roots, published to relays, with inclusion proofs through the API | An ICP-Brasil timestamp authority; at least two independent relays | RFC 3161 and OpenTimestamps clients | [03 §6.6](../docs/03-nostr-layer.md#66-anchoring) |
+
+## Which connections are live
+
+The platform reports its own readiness from its configuration, without connecting to anything:
+
+```bash
+platform integrations           # every external API: live, simulated, partly configured or off
+platform integrations -strict   # exits 1 while a connection production requires is not live
+platform integrations -json     # the same, for tooling
+```
+
+Production's startup check refuses to serve without the connections marked required, so `-strict` is the pre-flight to run before a release. Partners integrating with the API, rather than counterparties the platform connects to, start from [the integration guide](../docs/10-integration-guide.md).
 
 [security-assessment.md](security-assessment.md) is the internal security assessment: method, findings and their fixes, controls verified, and what an independent test must still cover.
 

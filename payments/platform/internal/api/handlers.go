@@ -1,13 +1,20 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
+	"errors"
+	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
+	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
 
 func (s *Server) createMerchant(w http.ResponseWriter, r *http.Request) {
@@ -97,25 +104,124 @@ func (s *Server) getMerchant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 
+// merchantSummary is the merchant's day at a glance (?date=YYYY-MM-DD, Brasília; today by default).
+func (s *Server) merchantSummary(w http.ResponseWriter, r *http.Request) {
+	if !owns(from(r.Context()), r.PathValue("id")) {
+		notYours(w, r)
+		return
+	}
+	sum, err := s.svc.DaySummary(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), r.URL.Query().Get("date"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
+}
+
 func (s *Server) registerTerminal(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		MerchantID      string `json:"merchant_id"`
-		DeviceID        string `json:"device_id"`
-		Type            string `json:"type"`
-		CertFingerprint string `json:"certificate_sha256"`
-		CSR             string `json:"csr"`
+		MerchantID      string   `json:"merchant_id"`
+		DeviceID        string   `json:"device_id"`
+		Type            string   `json:"type"`
+		CertFingerprint string   `json:"certificate_sha256"`
+		CSR             string   `json:"csr"`
+		KeyAttestation  []string `json:"key_attestation"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.CSR != "" && in.CertFingerprint == "" {
-		problem(w, r, http.StatusNotImplemented, "terminal-pki-not-enabled", "Certificate issuance needs the terminal PKI",
-			"issue the terminal certificate after attestation (docs/05 §2.4) and register its SHA-256 as certificate_sha256")
+	tenant := from(r.Context()).tenantID
+	var t *payments.Terminal
+	var err error
+	switch {
+	case in.CSR != "" && in.CertFingerprint != "":
+		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "send a csr for the platform to sign, or the certificate_sha256 of one the terminal PKI issued; not both")
+		return
+	case in.CSR != "" && !s.svc.IssuesTerminalCertificates():
+		s.failCertificate(w, r, payments.ErrNoTerminalCA)
+		return
+	case in.CSR != "":
+		req, ok := certificateRequest(w, r, in.CSR, in.KeyAttestation)
+		if !ok {
+			return
+		}
+		t, err = s.svc.RegisterTerminalCSR(r.Context(), tenant, in.MerchantID, in.Type, req)
+	default:
+		if in.CertFingerprint != "" && !sha256Hex.MatchString(in.CertFingerprint) {
+			problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "certificate_sha256 is the certificate's SHA-256 in lowercase hex")
+			return
+		}
+		t, err = s.svc.RegisterTerminal(r.Context(), tenant, in.MerchantID, in.Type, in.CertFingerprint)
+	}
+	if err != nil {
+		s.failCertificate(w, r, err)
 		return
 	}
-	t, err := s.svc.RegisterTerminal(r.Context(), from(r.Context()).tenantID, in.MerchantID, in.Type, in.CertFingerprint)
+	writeJSON(w, http.StatusCreated, t)
+}
+
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// certificateRequest reads a terminal's CSR and its key attestation chain.
+func certificateRequest(w http.ResponseWriter, r *http.Request, csr string, attestation []string) (payments.TerminalCertificateRequest, bool) {
+	req, err := terminalpki.ParseCSR(csr)
 	if err != nil {
-		s.fail(w, r, err)
+		problem(w, r, http.StatusUnprocessableEntity, "invalid-csr", "The CSR cannot be signed", err.Error())
+		return payments.TerminalCertificateRequest{}, false
+	}
+	chain := make([][]byte, 0, len(attestation))
+	for _, c := range attestation {
+		der, err := base64.StdEncoding.DecodeString(c)
+		if err != nil {
+			problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "key_attestation holds base64 DER certificates, leaf first")
+			return payments.TerminalCertificateRequest{}, false
+		}
+		chain = append(chain, der)
+	}
+	return payments.TerminalCertificateRequest{CSR: req, KeyAttestation: chain}, true
+}
+
+// failCertificate answers a CSR on a platform without a terminal CA with 501, the contract's
+// answer since terminals could first be registered; other errors as usual.
+func (s *Server) failCertificate(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, payments.ErrNoTerminalCA) {
+		problem(w, r, http.StatusNotImplemented, "terminal-pki-not-enabled", "Certificate issuance needs the terminal PKI", err.Error())
+		return
+	}
+	s.fail(w, r, err)
+}
+
+// certifyTerminal serves POST /v1/terminals/{id}/certificate: a terminal renews its certificate
+// over its mutual-TLS connection, or the app on a phone asks for the first certificate of the
+// terminal its device runs (docs/05 §2.4).
+func (s *Server) certifyTerminal(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CSR            string   `json:"csr"`
+		KeyAttestation []string `json:"key_attestation"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p, id := from(r.Context()), r.PathValue("id")
+	if (p.terminal != "" && p.terminal != id) || (p.sessionID != "" && p.deviceTerminal != id) {
+		problem(w, r, http.StatusForbidden, "forbidden", "Not this terminal", "a terminal renews only its own certificate, and an app only its device's terminal's")
+		return
+	}
+	if !s.svc.IssuesTerminalCertificates() {
+		s.failCertificate(w, r, payments.ErrNoTerminalCA)
+		return
+	}
+	req, ok := certificateRequest(w, r, in.CSR, in.KeyAttestation)
+	if !ok {
+		return
+	}
+	presented := ""
+	if p.terminal != "" {
+		presented = CertFingerprint(r.TLS.PeerCertificates[0].Raw)
+	}
+	t, err := s.svc.CertifyTerminal(r.Context(), p.tenantID, id, req, presented)
+	if err != nil {
+		s.failCertificate(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, t)
@@ -135,6 +241,47 @@ func (s *Server) revokeTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, t)
+}
+
+func (s *Server) listRiskReviews(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	rs, more, err := s.svc.ListRiskReviews(r.Context(), from(r.Context()).tenantID, q.Get("status"), q.Get("starting_after"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var next any
+	if more {
+		next = rs[len(rs)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": rs, "has_more": more, "next_cursor": next})
+}
+
+func (s *Server) getRiskReview(w http.ResponseWriter, r *http.Request) {
+	rv, err := s.svc.GetRiskReview(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rv)
+}
+
+func (s *Server) resolveRiskReview(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Resolution string `json:"resolution"`
+		Note       string `json:"note"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p := from(r.Context())
+	rv, err := s.svc.ResolveRiskReview(r.Context(), p.tenantID, r.PathValue("id"), in.Resolution, in.Note, p.actor())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rv)
 }
 
 func (s *Server) listDisputes(w http.ResponseWriter, r *http.Request) {
@@ -201,14 +348,8 @@ func (s *Server) createIntent(w http.ResponseWriter, r *http.Request) {
 			Nostr         *bool  `json:"nostr"`
 			RecipientNpub string `json:"recipient_npub"`
 		} `json:"receipt"`
-		Splits []any `json:"splits"`
 	}
 	if !decode(w, r, &in) {
-		return
-	}
-	if len(in.Splits) > 0 {
-		problem(w, r, http.StatusUnprocessableEntity, "splits-not-supported", "Split payments are not supported in this release",
-			"see payments/platform/README.md, implemented subset")
 		return
 	}
 	in.IntentInput.StatementDescriptor = in.StatementDescriptor
@@ -258,11 +399,25 @@ func (s *Server) confirmIntent(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		PaymentMethodType string `json:"payment_method_type"`
 		PaymentMethod     string `json:"payment_method"`
+		Asset             string `json:"asset"`   // crypto
+		Network           string `json:"network"` // crypto
+		// Payer is who the customer declared they are, when the checkout asked (crypto):
+		// the deposit's originator for the travel rule.
+		Payer *travelrule.Party `json:"payer"`
 	}
 	if r.ContentLength != 0 && !decode(w, r, &in) {
 		return
 	}
 	if !s.ownIntent(w, r, r.PathValue("id")) {
+		return
+	}
+	if in.PaymentMethodType == "crypto" {
+		pi, err := s.svc.ConfirmCrypto(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), in.Asset, in.Network, in.Payer)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, pi)
 		return
 	}
 	if in.PaymentMethodType != "" && in.PaymentMethodType != "pix" {
@@ -327,6 +482,17 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 		} `json:"attestation"`
 		JournalEventID string `json:"journal_event_id"`
 	}
+	// The exact bytes are kept: an iPhone's App Attest assertion signs them.
+	raw, err := io.ReadAll(r.Body)
+	if tooLarge(err) {
+		problem(w, r, http.StatusRequestEntityTooLarge, "body-too-large", "Request body too large", "the limit is 1 MiB")
+		return
+	}
+	if err != nil {
+		problem(w, r, http.StatusBadRequest, "bad-body", "Unreadable body", "")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
 	if !decode(w, r, &in) {
 		return
 	}
@@ -342,6 +508,23 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 	if !s.ownIntent(w, r, in.PaymentIntentID) {
 		return
 	}
+	if p.deviceID != "" {
+		// A phone, by its session or by its terminal's certificate: an iPhone signs each sale
+		// with its App Attest key either way.
+		assertion, err := base64.StdEncoding.DecodeString(r.Header.Get("App-Attest-Assertion"))
+		if err != nil {
+			problem(w, r, http.StatusBadRequest, "bad-assertion", "App-Attest-Assertion must be base64", "")
+			return
+		}
+		if err := s.svc.CheckAssertion(r.Context(), p.tenantID, p.deviceID, raw, assertion); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if err := s.svc.CheckPlayIntegrity(r.Context(), p.tenantID, p.deviceID, raw, r.Header.Get("Play-Integrity-Token")); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
 	ct, err := base64.StdEncoding.DecodeString(in.SRED.Ciphertext)
 	if err != nil {
 		problem(w, r, http.StatusBadRequest, "bad-ciphertext", "sred.ciphertext must be base64", "")
@@ -354,10 +537,17 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := s.svc.AuthorizeTerminal(r.Context(), p.tenantID, payments.TerminalAuth{
+	ta := payments.TerminalAuth{
 		PaymentIntentID: in.PaymentIntentID, TerminalID: in.TerminalID, TerminalSTAN: in.STAN, LocalTime: local, Application: in.EMVApplication,
 		Format: in.SRED.Format, KSN: in.SRED.KSN, Ciphertext: ct, JournalEventID: in.JournalEventID,
-	})
+	}
+	if in.DeviceRisk != nil {
+		if ta.Device, err = payments.DeviceRisk(in.DeviceRisk.Score, in.DeviceRisk.Model, in.DeviceRisk.Signals); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	res, err := s.svc.AuthorizeTerminal(r.Context(), p.tenantID, ta)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -372,7 +562,7 @@ func (s *Server) createRefund(w http.ResponseWriter, r *http.Request) {
 		Reason          string            `json:"reason"`
 		Metadata        map[string]string `json:"metadata"`
 	}
-	if !decode(w, r, &in) {
+	if !decode(w, r, &in) || !s.ownIntent(w, r, in.PaymentIntentID) {
 		return
 	}
 	ref, err := s.svc.CreateRefund(r.Context(), from(r.Context()).tenantID, in.PaymentIntentID, in.Amount)
@@ -404,17 +594,56 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, b)
 }
 
+// createTransfer serves POST /v1/transfers (docs/02 §6.5).
+func (s *Server) createTransfer(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		FromAccount string `json:"from_account"`
+		ToAccount   string `json:"to_account"`
+		Amount      int64  `json:"amount"`
+		Currency    string `json:"currency"`
+		Description string `json:"description"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Currency != "" && in.Currency != "BRL" {
+		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "transfers move reais between accounts (currency BRL)")
+		return
+	}
+	p := from(r.Context())
+	t, err := s.svc.CreateTransfer(r.Context(), p.tenantID, payments.TransferInput{FromAccount: in.FromAccount, ToAccount: in.ToAccount, Amount: in.Amount,
+		Description: in.Description}, r.Header.Get("Idempotency-Key"), p.actor())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (s *Server) getTransfer(w http.ResponseWriter, r *http.Request) {
+	t, err := s.svc.GetTransfer(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (s *Server) entries(w http.ResponseWriter, r *http.Request) {
 	if !s.ownAccount(w, r, r.PathValue("id")) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	es, more, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit)
+	es, more, err := s.svc.Entries(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), limit, r.URL.Query().Get("starting_after"))
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": es, "has_more": more})
+	var next any
+	if more && len(es) > 0 {
+		next = es[len(es)-1]["id"]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": es, "has_more": more, "next_cursor": next})
 }
 
 func (s *Server) quote(w http.ResponseWriter, r *http.Request) {
@@ -480,6 +709,27 @@ func (s *Server) replayWebhooks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"replayed": n})
 }
 
+func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		// OverlapHours is how long the old secret keeps signing too (default 24; 0 at once).
+		OverlapHours *float64 `json:"overlap_hours"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	overlap := 24 * time.Hour
+	if in.OverlapHours != nil {
+		overlap = time.Duration(*in.OverlapHours * float64(time.Hour))
+	}
+	p := from(r.Context())
+	rs, err := s.svc.RotateWebhookSecret(r.Context(), p.tenantID, r.PathValue("id"), p.actor(), overlap)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rs)
+}
+
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		URL             string   `json:"url"`
@@ -495,4 +745,143 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, e)
+}
+
+// ---------------------------------------------------------------- settlements and transparency
+
+func (s *Server) listSettlements(w http.ResponseWriter, r *http.Request) {
+	p, q := from(r.Context()), r.URL.Query()
+	merchant := q.Get("merchant_id")
+	if p.merchantID != "" {
+		if merchant != "" && merchant != p.merchantID {
+			notYours(w, r)
+			return
+		}
+		merchant = p.merchantID // an app session sees only its own merchant
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	sts, more, err := s.svc.ListSettlements(r.Context(), p.tenantID, merchant, q.Get("starting_after"), limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if sts == nil {
+		sts = []*payments.Settlement{}
+	}
+	var next any
+	if more {
+		next = sts[len(sts)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": sts, "has_more": more, "next_cursor": next})
+}
+
+// ownSettlement loads a settlement the caller may read.
+func (s *Server) ownSettlement(w http.ResponseWriter, r *http.Request) (*payments.Settlement, bool) {
+	p := from(r.Context())
+	st, err := s.svc.GetSettlement(r.Context(), p.tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return nil, false
+	}
+	if !owns(p, st.MerchantID) {
+		notYours(w, r)
+		return nil, false
+	}
+	return st, true
+}
+
+func (s *Server) getSettlement(w http.ResponseWriter, r *http.Request) {
+	if st, ok := s.ownSettlement(w, r); ok {
+		writeJSON(w, http.StatusOK, st)
+	}
+}
+
+func (s *Server) settlementStatement(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.ownSettlement(w, r); !ok {
+		return
+	}
+	ev, err := s.svc.StatementEvent(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ev)
+}
+
+func (s *Server) settlementProof(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.ownSettlement(w, r); !ok {
+		return
+	}
+	proof, err := s.svc.SettlementProof(r.Context(), from(r.Context()).tenantID, r.PathValue("id"), r.PathValue("receipt_event_id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, proof)
+}
+
+// transparencyRoot serves a day's public root without authentication: it is published to
+// public relays anyway, and anyone may verify a merchant's proof against it.
+func (s *Server) transparencyRoot(w http.ResponseWriter, r *http.Request) {
+	root, err := s.svc.GetTransparencyRoot(r.Context(), r.PathValue("date"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, root)
+}
+
+// ---------------------------------------------------------------- terminal journal
+
+// postJournal takes a device's signed journal entries (docs/03 §7). Only enrolled devices
+// keep a journal: the entries must be signed by the session's own device key.
+func (s *Server) postJournal(w http.ResponseWriter, r *http.Request) {
+	p := from(r.Context())
+	if p.deviceID == "" {
+		problem(w, r, http.StatusForbidden, "forbidden", "Journal entries come from enrolled devices", "log in with the device key (POST /v1/auth/nostr)")
+		return
+	}
+	var in struct {
+		Entries []nostr.Event `json:"entries"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	st, err := s.svc.IngestJournal(r.Context(), p.tenantID, p.merchantID, p.deviceID, in.Entries)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) journalState(w http.ResponseWriter, r *http.Request) {
+	p := from(r.Context())
+	if p.deviceID == "" {
+		problem(w, r, http.StatusForbidden, "forbidden", "Journal state is per device", "")
+		return
+	}
+	st, err := s.svc.JournalState(r.Context(), p.tenantID, p.merchantID, p.deviceID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) intentJournal(w http.ResponseWriter, r *http.Request) {
+	if !s.ownIntent(w, r, r.PathValue("id")) {
+		return
+	}
+	if _, err := s.svc.GetIntent(r.Context(), from(r.Context()).tenantID, r.PathValue("id")); err != nil {
+		s.fail(w, r, err) // an unknown payment is a 404, not an empty journal
+		return
+	}
+	evs, err := s.svc.IntentJournal(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": evs})
 }

@@ -347,3 +347,26 @@ func IsNotFound(err error) bool {
 // Token returns a valid access token. Partner-bank APIs that share the PSP's OAuth server
 // (for example the transfer API in internal/pixout) can reuse it.
 func (c *Client) Token(ctx context.Context) (string, error) { return c.accessToken(ctx) }
+
+// SimulatePayment asks a sandbox PSP to pay a charge as a customer would (the simulator's
+// POST /sim/pagar/{txid}, beside its API). A real PSP has no such route: a sandbox only.
+func (c *Client) SimulatePayment(ctx context.Context, txid string) error {
+	u, err := url.Parse(c.cfg.BaseURL)
+	if err != nil {
+		return err
+	}
+	u.Path, u.RawQuery = "/sim/pagar/"+url.PathEscape(txid), ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req) // #nosec G704 -- the operator's configured PSP base URL
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("apipix: simulated payment: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}

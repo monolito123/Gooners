@@ -38,20 +38,23 @@ struct HomeView: View {
         @Bindable var model = model
         return TabView(selection: $model.tab) {
             ChargeView()
-                .tabItem { Label("Cobrar", systemImage: "creditcard") }
+                .tabItem { Label("Cobrar", systemImage: AppIcon.charge) }
                 .tag(HomeTab.charge)
-            NavigationStack { MoneyView().navigationTitle("Recebíveis") }
-                .tabItem { Label("Recebíveis", systemImage: "banknote") }
+            NavigationStack { MoneyView().navigationTitle("Dinheiro") }
+                .tabItem { Label("Dinheiro", systemImage: AppIcon.money) }
                 .tag(HomeTab.money)
+            NavigationStack { AssetsView().navigationTitle("Ativos") }
+                .tabItem { Label("Ativos", systemImage: AppIcon.assets) }
+                .tag(HomeTab.assets)
             if model.isOwner {
                 NavigationStack { DevicesView().navigationTitle("Aparelhos") }
-                    .tabItem { Label("Aparelhos", systemImage: "iphone.gen3") }
+                    .tabItem { Label("Aparelhos", systemImage: AppIcon.devices) }
                     .tag(HomeTab.devices)
             }
             NavigationStack { SettingsView().navigationTitle("Ajustes") }
-                .tabItem { Label("Ajustes", systemImage: "gearshape") }
+                .tabItem { Label("Ajustes", systemImage: AppIcon.settings) }
                 .tag(HomeTab.settings)
         }
-        .tint(Theme.action)
+        .tint(Theme.actionText)
     }
 }

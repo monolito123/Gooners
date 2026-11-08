@@ -105,6 +105,17 @@ The customer does not need an app, an account, a phone number or an e-mail addre
 4. When the customer's client authenticates to the relay as `P_k` (NIP-42), the relay records that the receipt was **claimed**. This is useful evidence in "not recognized" disputes ([01 §7.2](01-acquiring-engine.md#72-automated-evidence)). The claim page discloses this.
 5. Unclaimed claim wraps expire from relays after 90 days (NIP-40 `expiration` on the wrap). The merchant's copy and the archive keep the receipt.
 
+**As built.** The platform serves the claim page at `/c`, so `RECEIPT_CLAIM_BASE` is `https://<host>/c` for a host routed to it.
+
+- **Discovery.** The page reads `/.well-known/nostr.json` (NIP-05) on the same host. It names the receipts key (`receipts@<host>`) and the relays (`RELAYS_PUBLIC`, by default `RELAYS`).
+- **Opening the receipt.** It answers the relay's NIP-42 challenge with the claim key, then opens the wrap and the seal with NIP-44 v2. It checks the wrap's, the seal's and the receipt's signatures, and that the receipts key signed them.
+- **Showing it.** It shows the receipt in Portuguese, with "imprimir ou salvar em PDF" and the signed receipt as a download.
+- **Security.** Its policy allows scripts and connections only to its own origin and the named relays. The key never leaves the fragment.
+- **Tests.**
+  - Its crypto (`static/claim/nostr.js`) is held to the example below and to nostr-tools by `npm run check`.
+  - `TestReceiptClaim` and the smoke test claim a real sale's receipt through a relay.
+- **Sandbox relay.** `relaysim` (`internal/relay`) is a relay with these rules: anyone publishes, gift wraps are read only by their authenticated recipient, and claims are logged.
+
 ### 3.3 Example receipt (kind 7711, inner event)
 
 ```json
@@ -262,6 +273,16 @@ log_root(date)       = MTH( sort_by_leaf_hash( leaves(date) ∪ dummy_padding(da
 | Every receipt in the statement is the one the platform signed | That the statement is complete. The merchant's device journal and reconciliation ([§7](#7-terminal-journal-and-offline-first-logging), [§9](#9-cross-node-reconciliation)) catch omissions |
 | The history of roots is append-only (each root names its predecessor) | Anything about other merchants |
 
+### 6.3a The operations audit trail
+
+Every operator action and every partner call that changes access is a row of the platform's audit trail (`ops_audit`), and the rows form a hash chain: each row's hash is SHA-256 over the previous row's hash and the row's own fields, so editing, removing or inserting a row breaks every hash after it. The table is append-only for the application's role. Each day's root also carries the chain's head when the day closed, in its content:
+
+```json
+{ "audit": { "seq": 1874, "head": "9c0f…e1" } }
+```
+
+The audit rows themselves stay private; the head reveals only how many there were. Once a root is published, rewriting the trail up to that row (even recomputing the whole chain) no longer matches a head the public already holds: `platform audit-verify` walks the chain and compares it with every published head ([runbook §6](../integration/operations-runbook.md#6-audit-trail)). Roots from before the head was added simply have no `audit` field.
+
 ### 6.4 Privacy
 
 The public sees one root per day, a tree size rounded up to a multiple of 4,096 with dummy leaves, and leaves sorted by hash. A leaf is a salted commitment: without the salt, which exists only inside the merchant's encrypted statement, nobody can test whether a guessed statement is in the tree. Neither the number of merchants (beyond the rounding) nor any merchant's volume can be read from the log. This matters for [07 §2](07-enhancements.md#2-zero-knowledge-compliance-zkc): the log adds transparency without leaking the volume data the ZK features protect.
@@ -324,7 +345,13 @@ Daily totals in the example statement ([`7713-settlement-statement.json`](../nos
 
 ### 6.6 Anchoring
 
-Each root event ID is timestamped by an **RFC 3161 timestamp authority accredited under ICP-Brasil**, which gives it legal evidentiary value in Brazil, and by **OpenTimestamps**, which anchors it in Bitcoin for public verifiability without any trusted party. Both tokens are stored in the WORM archive and served at `GET /v1/transparency/{date}/timestamps`. The roots are mirrored to at least two public relays that the platform does not operate, so any later fork is visible to anyone.
+Each root event ID (a SHA-256) is time-stamped by **RFC 3161 time-stamping authorities**, every one in `TSA_URLS`. An authority accredited under ICP-Brasil (an ACT) gives the stamp legal evidentiary value in Brazil; public authorities (DigiCert, Sectigo) add independent witnesses. The platform verifies each token against the authority's roots (`TSA_ROOTS`) before keeping it, and serves the tokens with the root at `GET /v1/transparency/{date}` (`timestamps`). Anyone can check one with the event ID alone:
+
+```bash
+openssl ts -verify -digest <event id> -in token.der -token_in -CAfile authority-root.pem
+```
+
+**OpenTimestamps**, which would anchor the roots in Bitcoin without any trusted party, is not built. The roots are mirrored to at least two public relays that the platform does not operate, so any later fork is visible to anyone.
 
 ---
 

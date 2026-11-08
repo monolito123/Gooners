@@ -3,6 +3,7 @@ package ids
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"time"
 )
 
@@ -20,7 +21,22 @@ func ULIDAt(t time.Time) string {
 		ms >>= 8
 	}
 	_, _ = rand.Read(b[6:])
-	// 128 bits → 26 base32 characters (the first carries 3 bits).
+	return encode(b)
+}
+
+// FromSeed returns prefix_ID where the ID is the first 128 bits of SHA-256(seed), in the
+// ULID alphabet: the same seed always gives the same ID (an operation identified by its
+// tenant and Idempotency-Key, say), so a retry finds what the first attempt did. Such IDs do
+// not sort by time.
+func FromSeed(prefix string, seed []byte) string {
+	sum := sha256.Sum256(seed)
+	var b [16]byte
+	copy(b[:], sum[:16])
+	return prefix + "_" + encode(b)
+}
+
+// encode writes 128 bits as 26 base32 characters (the first carries 3 bits).
+func encode(b [16]byte) string {
 	out := make([]byte, 26)
 	var acc uint64
 	bits := 0

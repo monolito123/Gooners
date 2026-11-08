@@ -5,7 +5,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/platform ./cmd/schemesim ./cmd/pixsim ./cmd/devpki ./cmd/tapsim
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/platform ./cmd/signer ./cmd/relaysim ./cmd/schemesim ./cmd/pixsim ./cmd/devpki ./cmd/tapsim
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ /usr/local/bin/

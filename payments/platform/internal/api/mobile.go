@@ -73,7 +73,7 @@ func (s *Server) countFailure(w http.ResponseWriter, r *http.Request) bool {
 // loginNostr serves POST /v1/auth/nostr (docs/02 §3.2).
 func (s *Server) loginNostr(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
-	if tooLarge(err) || len(body) > 4096 {
+	if tooLarge(err) || len(body) > 32<<10 { // attestation evidence (certificate chains) travels with a first login
 		problem(w, r, http.StatusRequestEntityTooLarge, "body-too-large", "Request body too large", "")
 		return
 	}
@@ -85,8 +85,9 @@ func (s *Server) loginNostr(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		DPoPJWK  mobileauth.JWK `json:"dpop_jwk"`
-		DeviceID string         `json:"device_id"`
+		DPoPJWK     mobileauth.JWK `json:"dpop_jwk"`
+		DeviceID    string         `json:"device_id"`
+		Attestation map[string]any `json:"attestation"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
@@ -94,7 +95,7 @@ func (s *Server) loginNostr(w http.ResponseWriter, r *http.Request) {
 		problem(w, r, http.StatusBadRequest, "bad-json", "Malformed JSON", err.Error())
 		return
 	}
-	sess, err := s.svc.Login(r.Context(), ev, in.DeviceID, in.DPoPJWK)
+	sess, err := s.svc.Login(r.Context(), ev, in.DeviceID, in.DPoPJWK, in.Attestation)
 	if errors.Is(err, mobileauth.ErrUnauthorized) {
 		if !s.countFailure(w, r) {
 			problem(w, r, http.StatusUnauthorized, "unauthorized", "Login refused", err.Error())

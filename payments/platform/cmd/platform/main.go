@@ -13,6 +13,10 @@
 // access or money needs -actor, the operator's SSO identity, for the audit trail:
 //
 //	platform merchant-status -tenant UUID -merchant ID -status active|restricted|closed -reason R -actor A
+//	platform login                                               (operator SSO: the identity provider's device login)
+//	platform whoami                                              (the identity operator commands record)
+//	platform kyb -tenant UUID -merchant ID                       (a merchant's full KYB result)
+//	platform kyb-recheck -tenant UUID -merchant ID -reason R -actor A
 //	platform terminal-revoke -tenant UUID -terminal ID -reason R -actor A
 //	platform apikey-list -tenant UUID
 //	platform apikey-revoke -tenant UUID -id ak_… -reason R -actor A
@@ -24,10 +28,17 @@
 //	platform recon-exceptions -tenant UUID
 //	platform recon-resolve -tenant UUID -id N -resolution R -actor A
 //	platform recon-allocate -tenant UUID -amount CENTS -to ACCOUNT -reason R -actor A
+//	platform recon-custody                  compare the exchanges' balances with the ledger now
+//	platform decripto [-month YYYY-MM] [-out FILE]   write a month's DeCripto for filing
+//	platform decripto-filed -month YYYY-MM -sha256 H -receipt N -actor A
+//	platform compliance-cases -tenant T [-status open|all]   held deposits and travel-rule reviews
+//	platform audit-verify                   check the audit trail's hash chain against the published heads
+//	platform compliance-decide -tenant T -case C -action release|block|close -reason R -actor A
 package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -37,6 +48,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -45,19 +57,34 @@ import (
 
 	"github.com/monolito123/Gooners/payments/platform/dialects"
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/awsauth"
+	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/chain"
 	"github.com/monolito123/Gooners/payments/platform/internal/config"
 	"github.com/monolito123/Gooners/payments/platform/internal/db"
+	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
+	"github.com/monolito123/Gooners/payments/platform/internal/fx"
+	"github.com/monolito123/Gooners/payments/platform/internal/gcpauth"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
+	"github.com/monolito123/Gooners/payments/platform/internal/kyb"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
+	"github.com/monolito123/Gooners/payments/platform/internal/screening"
+	"github.com/monolito123/Gooners/payments/platform/internal/signer"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
+	"github.com/monolito123/Gooners/payments/platform/internal/tsa"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
+	"github.com/monolito123/Gooners/payments/platform/internal/worm"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 	"github.com/monolito123/Gooners/payments/platform/pkg/iso8583"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
@@ -67,7 +94,7 @@ var log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|verify-ledger|release-due|settle|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
+		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|integrations|login|whoami|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|oauth-client|kyb|kyb-recheck|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate|recon-custody|decripto|decripto-filed|compliance-cases|compliance-decide|audit-verify")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,6 +113,10 @@ func main() {
 		err = releaseDue(ctx, os.Args[2:])
 	case "settle":
 		err = settle(ctx, os.Args[2:])
+	case "close-day":
+		err = closeDay(ctx, os.Args[2:])
+	case "integrations":
+		err = integrations(ctx, os.Args[2:])
 	default:
 		if cmd, ok := opsCommands[os.Args[1]]; ok {
 			err = cmd(ctx, os.Args[2:])
@@ -118,12 +149,17 @@ func apikey(ctx context.Context, args []string) error {
 	name := fs.String("name", "default", "key name")
 	scopes := fs.String("scopes", "*", "comma-separated scopes")
 	live := fs.Bool("live", false, "issue a sk_live_ key")
+	expires := fs.Duration("expires", 365*24*time.Hour, "how long the key works (0: until revoked)")
 	_ = fs.Parse(args)
 	if *tenant == "" {
 		return errors.New("-tenant is required")
 	}
+	var until time.Time
+	if *expires > 0 {
+		until = time.Now().Add(*expires)
+	}
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
-		key, err := api.NewAPIKey(ctx, pool, *tenant, *name, strings.Split(*scopes, ","), *live)
+		key, err := api.NewAPIKeyUntil(ctx, pool, *tenant, *name, strings.Split(*scopes, ","), *live, until)
 		if err == nil {
 			fmt.Println(key)
 		}
@@ -246,6 +282,63 @@ func pixClients(c *config.Config) (*apipix.Client, pixout.Sender, error) {
 	return pix, sender, nil
 }
 
+// cardDecryptor accepts each card-data format the settings configure: the phones' development
+// format, readers' DUKPT in the payment HSM, or (sandbox and certification) DUKPT with the BDK
+// in memory.
+func cardDecryptor(c *config.Config) (carddata.Decryptor, error) {
+	f := carddata.Formats{}
+	if len(c.CardDataDevKey) > 0 {
+		d, err := carddata.NewDev(c.CardDataDevKey)
+		if err != nil {
+			return nil, err
+		}
+		f[carddata.DevFormat] = d
+	}
+	switch {
+	case c.CardDataHSMKeyARN != "":
+		h := carddata.NewAWSPaymentCryptography(c.CardDataHSMKeyARN, c.AWSRegion)
+		f[carddata.FormatDUKPTTDES], f[carddata.FormatDUKPTAES128] = h, h
+	case len(c.CardDataBDK) > 0:
+		f[carddata.FormatDUKPTTDES] = carddata.SoftwareDUKPT{BDK: c.CardDataBDK}
+	}
+	return f, nil
+}
+
+// authors returns the receipts and transparency signers: the signer service when SIGNER_URL is
+// set, otherwise keys in memory (the sandbox). Either is nil when not configured.
+func authors(ctx context.Context, c *config.Config) (receiptsAuthor, transparencyAuthor nostr.Author, err error) {
+	if c.SignerURL != "" {
+		tlsCfg, err := loadTLS(c.SignerTLS, false)
+		if err != nil {
+			return nil, nil, fmt.Errorf("signer tls: %w", err)
+		}
+		r, err := signer.Dial(ctx, c.SignerURL, "receipts", tlsCfg, time.Minute)
+		if err != nil {
+			return nil, nil, err
+		}
+		t, err := signer.Dial(ctx, c.SignerURL, "transparency", tlsCfg, time.Minute)
+		if err != nil {
+			return nil, nil, err
+		}
+		return r, t, nil
+	}
+	if len(c.ReceiptsSecret) == 32 {
+		k, err := nostr.KeysFromSecret(c.ReceiptsSecret)
+		if err != nil {
+			return nil, nil, err
+		}
+		receiptsAuthor = k
+	}
+	if len(c.TransparencySecret) == 32 {
+		k, err := nostr.KeysFromSecret(c.TransparencySecret)
+		if err != nil {
+			return nil, nil, err
+		}
+		transparencyAuthor = k
+	}
+	return receiptsAuthor, transparencyAuthor, nil
+}
+
 func serve(ctx context.Context) error {
 	c, err := config.Load()
 	if err != nil {
@@ -266,10 +359,11 @@ func serve(ctx context.Context) error {
 	for _, p := range pools {
 		go p.Run(ctx)
 	}
-	kek, err := vault.NewLocalKEK("local-dev", c.VaultKEK)
+	kek, err := vault.FromSettings(c.KEKProvider, c.KEKKeyID, c.VaultKEK, c.AWSRegion)
 	if err != nil {
 		return err
 	}
+	log.Info("vault KEK", "kek", kek.ID())
 	v, err := vault.New(pool, kek, c.VaultFingerprintKey)
 	if err != nil {
 		return err
@@ -277,7 +371,7 @@ func serve(ctx context.Context) error {
 	sw := authswitch.New(routes, authswitch.NewPgStore(pool), v, authswitch.Config{CardPresentTimeout: c.CardPresentTimeout, Logger: log})
 	go sw.RunReversals(ctx, time.Second)
 
-	dec, err := carddata.NewDev(c.CardDataDevKey)
+	dec, err := cardDecryptor(c)
 	if err != nil {
 		return err
 	}
@@ -285,19 +379,166 @@ func serve(ctx context.Context) error {
 	if deps.Pix, deps.Payout, err = pixClients(c); err != nil {
 		return err
 	}
-	if len(c.ReceiptsSecret) == 32 {
-		k, err := nostr.KeysFromSecret(c.ReceiptsSecret)
-		if err != nil {
-			return err
-		}
-		deps.Receipts = &receipts.Issuer{Author: k, ClaimBase: c.ClaimBase}
+	receiptsAuthor, transparencyAuthor, err := authors(ctx, c)
+	if err != nil {
+		return err
+	}
+	if receiptsAuthor != nil {
+		deps.Receipts = &receipts.Issuer{Author: receiptsAuthor, ClaimBase: c.ClaimBase}
 		if len(c.Relays) > 0 {
 			deps.Publisher = &receipts.Publisher{Relays: c.Relays}
 		}
-		npub, _ := nostr.EncodeNpub(k.PubHex)
-		log.Info("receipts signer", "npub", npub)
+		npub, _ := nostr.EncodeNpub(receiptsAuthor.Public())
+		log.Info("receipts signer", "npub", npub, "remote", c.SignerURL != "")
 	}
-	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount}, deps)
+	if deps.Attestor, err = attestor(ctx, c); err != nil {
+		return err
+	}
+	if deps.TerminalCA, err = terminalCA(ctx, c); err != nil {
+		return err
+	}
+	switch {
+	case c.RegistrarURL != "":
+		deps.Registrar = &registrar.Client{BaseURL: c.RegistrarURL}
+	case c.Env == config.Sandbox:
+		deps.Registrar = registrar.NewMemory() // the sandbox's own registrar: advances still register first
+	}
+	if deps.Exchanges, err = exchanges(c); err != nil {
+		return err
+	}
+	switch {
+	case c.FXProvider == "wise":
+		deps.FX = &fx.Wise{BaseURL: c.WiseURL, Token: c.WiseToken, ProfileID: c.WiseProfile}
+	case c.FXProvider == "sandbox" || (c.FXProvider == "" && c.Env == config.Sandbox):
+		deps.FX = fx.NewMemory()
+	}
+	switch {
+	case c.BrokerURL != "":
+		cl := &brokerage.Client{BaseURL: c.BrokerURL, Token: c.BrokerToken, BrokerName: c.BrokerName}
+		if c.BrapiToken != "" {
+			cl.Quotes = &brokerage.Brapi{Token: c.BrapiToken}
+		}
+		deps.Broker = cl
+	case c.Env == config.Sandbox:
+		deps.Broker = brokerage.NewMemory()
+	}
+	// Sanctions screening: merchants' names at KYB, and with crypto, addresses, senders and
+	// travel-rule names.
+	if deps.Exchanges != nil || c.KYBRegistry != "" || len(c.SanctionsLists) > 0 {
+		var set screening.Set
+		if len(c.SanctionsLists) > 0 {
+			l := &screening.List{Sources: c.SanctionsLists}
+			if err := l.Load(ctx); err != nil {
+				// Withdrawals are refused (fail closed) until a refresh succeeds.
+				log.Error("sanctions lists not loaded", "err", err)
+			} else {
+				log.Info("sanctions lists loaded", "addresses", l.Size(), "names", l.HasNames())
+				if !l.HasNames() && c.Env == config.Production {
+					log.Error("no sanctions list holds names: travel-rule names go unscreened; add OFAC's SDN.CSV to SANCTIONS_LISTS")
+				}
+			}
+			go l.Refresh(ctx, 6*time.Hour, log.Error)
+			set = append(set, l)
+		}
+		if c.ScreeningURL != "" {
+			set = append(set, &screening.Service{URL: c.ScreeningURL, Token: c.ScreeningToken})
+		}
+		if len(set) == 0 && c.Env == config.Sandbox {
+			set = screening.Set{screening.SandboxAddresses, screening.SandboxNames}
+		}
+		if len(set) > 0 {
+			deps.Screener = set
+		}
+	}
+	if c.PlayIntegrity {
+		tokens, err := gcpauth.FromEnvironment(attest.PlayIntegrityScope)
+		if err != nil {
+			return fmt.Errorf("PLAY_INTEGRITY: Google credentials: %w", err)
+		}
+		deps.PlayIntegrity = &attest.PlayIntegrity{PackageName: c.AndroidPackage, SigningDigests: c.AndroidSigningDigests, Strong: c.PlayIntegrityStrong, Tokens: tokens}
+	}
+	if c.AuditExportBucket != "" {
+		deps.Audit = &worm.S3{Bucket: c.AuditExportBucket, Region: c.AWSRegion, Endpoint: c.AuditExportEndpoint, Credentials: awsauth.FromEnvironment()}
+	}
+	if len(c.TSAURLs) > 0 {
+		roots, err := tsaRoots(c.TSARoots)
+		if err != nil {
+			return err
+		}
+		for _, u := range c.TSAURLs {
+			deps.Timestamps = append(deps.Timestamps, &tsa.Client{URL: u, Roots: roots})
+		}
+	}
+	switch c.KYBRegistry {
+	case "brasilapi":
+		deps.KYB = &kyb.BrasilAPI{BaseURL: c.KYBRegistryURL}
+	case "sandbox":
+		deps.KYB = kyb.Sandbox
+	}
+	if deps.Exchanges != nil {
+		// Who sent each deposit, read from each network (docs/09 §6.5).
+		lookups := chain.Router{}
+		for network, urls := range c.SenderLookups {
+			// Several URLs, comma-separated, are independent sources asked together (chain.All).
+			var all chain.All
+			for _, u := range strings.Split(urls, ",") {
+				if u = strings.TrimSpace(u); u == "" {
+					continue
+				}
+				switch network {
+				case "bitcoin":
+					all = append(all, &chain.Esplora{URL: u})
+				case "ethereum", "polygon":
+					all = append(all, &chain.EVM{URL: u})
+				case "tron":
+					all = append(all, &chain.Tron{URL: u, APIKey: c.TronAPIKey})
+				}
+			}
+			if len(all) == 1 {
+				lookups[network] = all[0]
+			} else if len(all) > 1 {
+				lookups[network] = all
+			}
+		}
+		if c.SenderLookupURL != "" {
+			svc := &chain.Service{URL: c.SenderLookupURL, Token: c.SenderLookupToken}
+			for _, network := range []string{"bitcoin", "ethereum", "polygon", "tron", "solana"} {
+				if _, ok := lookups[network]; !ok {
+					lookups[network] = svc
+				}
+			}
+		}
+		if c.Env == config.Sandbox {
+			// The sandbox exchange knows who sent its simulated deposits.
+			for _, v := range deps.Exchanges.Venues {
+				if m, ok := v.(*exchange.Memory); ok {
+					for _, network := range []string{"bitcoin", "ethereum", "polygon", "tron", "solana"} {
+						if _, ok := lookups[network]; !ok {
+							lookups[network] = m
+						}
+					}
+				}
+			}
+		}
+		if len(lookups) > 0 {
+			deps.Senders = lookups
+		}
+		switch {
+		case c.TravelRuleURL != "":
+			deps.TravelRule = &travelrule.Service{URL: c.TravelRuleURL, Token: c.TravelRuleToken}
+		case c.Env == config.Sandbox:
+			deps.TravelRule = travelrule.Sandbox{}
+		}
+	}
+	if transparencyAuthor != nil {
+		deps.Transparency = transparencyAuthor
+		npub, _ := nostr.EncodeNpub(transparencyAuthor.Public())
+		log.Info("transparency signer", "npub", npub, "remote", c.SignerURL != "")
+	}
+	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
+		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview, TravelRuleRetention: c.TravelRuleRetention,
+		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps,
+		RequireKYB: deps.KYB != nil, KYBAutoApprove: c.KYBAutoApprove, AuditExportPrefix: c.AuditExportPrefix}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)
@@ -309,7 +550,16 @@ func serve(ctx context.Context) error {
 		}
 	}
 
-	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy, PublicURL: c.PublicURL}, svc, pool, log)
+	identity := api.NostrIdentity{Relays: c.RelaysPublic}
+	if receiptsAuthor != nil {
+		identity.ReceiptsPub = receiptsAuthor.Public()
+	}
+	if transparencyAuthor != nil {
+		identity.TransparencyPub = transparencyAuthor.Public()
+	}
+	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute,
+		TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret, Nostr: identity, ClientCertHeader: c.ClientCertHeader,
+		DisputeAlertsSecret: c.DisputeAlertsSecret}, svc, pool, log)
 	disp := &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	go disp.Run(ctx, time.Second)
 	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])
@@ -323,6 +573,10 @@ func serve(ctx context.Context) error {
 			return err
 		}
 		servers[0].TLSConfig.RootCAs = nil
+		if c.HTTPRequestClientCerts {
+			// Partners' certificates are checked against their registered thumbprints, not a CA.
+			servers[0].TLSConfig.ClientAuth = tls.RequestClientCert
+		}
 	}
 	if c.TerminalAddr != "" {
 		t, err := loadTLS(c.TerminalTLS, true)
@@ -429,12 +683,196 @@ func settle(ctx context.Context, args []string) error {
 	amount := fs.Int64("amount", 0, "amount received, centavos")
 	actor := fs.String("actor", "", "operator identity, kept in the audit trail")
 	_ = fs.Parse(args)
-	if *tenant == "" || *report == "" || *amount <= 0 || *actor == "" {
-		return errors.New("-tenant, -report, -amount and -actor are required (recon-card is the normal path)")
+	if *tenant == "" || *report == "" || *amount <= 0 {
+		return errors.New("-tenant, -report and -amount are required (recon-card is the normal path)")
 	}
+	who, err := operatorIdentity(ctx, *actor)
+	if err != nil {
+		return err
+	}
+	*actor = who
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
+	})
+}
+
+// tsaRoots is the pool the time-stamping authorities must chain to: TSA_ROOTS, or the
+// system's roots.
+func tsaRoots(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return x509.SystemCertPool()
+	}
+	b, err := os.ReadFile(path) // #nosec G304 G703 -- set by the operator
+	if err != nil {
+		return nil, fmt.Errorf("TSA_ROOTS: %w", err)
+	}
+	p := x509.NewCertPool()
+	if !p.AppendCertsFromPEM(b) {
+		return nil, fmt.Errorf("TSA_ROOTS: no certificates in %s", path)
+	}
+	return p, nil
+}
+
+// terminalCA builds the terminal CA from its certificate and its key: a KMS key in production,
+// a PEM file outside it. nil without TERMINAL_CA_CERT.
+func terminalCA(ctx context.Context, c *config.Config) (*terminalpki.CA, error) {
+	if c.TerminalCACert == "" {
+		return nil, nil
+	}
+	cert, err := terminalpki.LoadCert(c.TerminalCACert)
+	if err != nil {
+		return nil, fmt.Errorf("TERMINAL_CA_CERT: %w", err)
+	}
+	var signer crypto.Signer
+	if c.TerminalCAKMSKeyID != "" {
+		signer, err = terminalpki.NewAWSKMSSigner(ctx, c.TerminalCAKMSKeyID, c.AWSRegion)
+	} else {
+		signer, err = terminalpki.LoadKey(c.TerminalCAKey)
+	}
+	if err != nil {
+		return nil, err
+	}
+	ca, err := terminalpki.New(cert, signer)
+	if err != nil {
+		return nil, err
+	}
+	if c.TerminalTLS != nil && c.TerminalTLS.CA != "" {
+		if err := ca.TrustedBy(c.TerminalTLS.CA); err != nil {
+			return nil, err
+		}
+	}
+	return ca, nil
+}
+
+// attestor builds the device attestation verifier from the configured roots; nil keeps the
+// sandbox behaviour (evidence recorded, not verified).
+// exchanges builds the crypto venues EXCHANGES names; the sandbox runs its own when none is.
+func exchanges(c *config.Config) (*exchange.Router, error) {
+	names := c.Exchanges
+	if len(names) == 0 && c.Env == config.Sandbox {
+		names = []string{"sandbox"}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	r := &exchange.Router{}
+	for _, n := range names {
+		switch n {
+		case "sandbox":
+			r.Venues = append(r.Venues, exchange.NewMemory("simex"))
+		case "binance":
+			r.Venues = append(r.Venues, &exchange.Binance{APIKey: c.BinanceKey, SecretKey: c.BinanceSecret})
+		case "kraken":
+			r.Venues = append(r.Venues, &exchange.Kraken{APIKey: c.KrakenKey, SecretKey: c.KrakenSecret, WithdrawKeys: c.KrakenWithdrawKeys})
+		case "coinbase":
+			k, err := exchange.ParseCoinbaseKey(c.CoinbaseKeyPEM)
+			if err != nil {
+				return nil, err
+			}
+			r.Venues = append(r.Venues, &exchange.Coinbase{KeyName: c.CoinbaseKeyName, Key: k})
+		default:
+			return nil, fmt.Errorf("EXCHANGES: unknown venue %q (binance, kraken, coinbase, sandbox)", n)
+		}
+	}
+	log.Info("crypto venues", "venues", names)
+	return r, nil
+}
+
+func attestor(ctx context.Context, c *config.Config) (payments.Attestor, error) {
+	if c.AppAttestRoots == "" && c.AndroidAttestationRoots == "" {
+		return nil, nil
+	}
+	pool := func(file string) (*x509.CertPool, error) {
+		pem, err := os.ReadFile(file) // #nosec G304 -- a path the operator configures
+		if err != nil {
+			return nil, err
+		}
+		p := x509.NewCertPool()
+		if !p.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("%s holds no PEM certificates", file)
+		}
+		return p, nil
+	}
+	var a payments.VerifyingAttestor
+	if c.AppAttestRoots != "" {
+		roots, err := pool(c.AppAttestRoots)
+		if err != nil {
+			return nil, err
+		}
+		a.AppAttest = &attest.AppAttestConfig{Roots: roots, AppID: c.AppAttestAppID, Production: c.AppAttestProduction}
+	}
+	if c.AndroidAttestationRoots != "" {
+		roots, err := pool(c.AndroidAttestationRoots)
+		if err != nil {
+			return nil, err
+		}
+		a.KeyAttestation = &attest.KeyAttestationConfig{Roots: roots, PackageName: c.AndroidPackage, SigningDigests: c.AndroidSigningDigests}
+		if c.AndroidAttestationStatus != "off" {
+			// Google's certificate status list, refreshed hourly; attestations are refused
+			// while it is missing or older than three days.
+			src := &attest.RevocationSource{Location: c.AndroidAttestationStatus}
+			first, cancel := context.WithTimeout(ctx, 15*time.Second) // never hold the start for long
+			if err := src.Refresh(first); err != nil {
+				log.Error("attestation status list", "location", src.Location, "err", err)
+			}
+			cancel()
+			go func() {
+				t := time.NewTicker(time.Hour)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						if err := src.Refresh(ctx); err != nil {
+							log.Error("attestation status list", "location", src.Location, "err", err)
+						}
+					}
+				}
+			}()
+			a.KeyAttestation.Revocations = src.Current
+		}
+	}
+	log.Info("device attestation", "app_attest", a.AppAttest != nil, "android_key_attestation", a.KeyAttestation != nil,
+		"android_status_list", a.KeyAttestation != nil && a.KeyAttestation.Revocations != nil)
+	return a, nil
+}
+
+// closeDay closes a Brasília business day into statements and a transparency root by hand
+// (the serve process does it every night after StatementHour). Closing a day twice is a no-op.
+func closeDay(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("close-day", flag.ExitOnError)
+	date := fs.String("date", time.Now().In(payments.BRT).AddDate(0, 0, -1).Format("2006-01-02"), "Brasília business day to close")
+	_ = fs.Parse(args)
+	day, err := time.ParseInLocation("2006-01-02", *date, payments.BRT)
+	if err != nil {
+		return err
+	}
+	c, err := config.Read()
+	if err != nil {
+		return err
+	}
+	rcpt, tr, err := authors(ctx, c)
+	if err != nil {
+		return err
+	}
+	if rcpt == nil || tr == nil {
+		return errors.New("close-day signs statements and the root: set SIGNER_URL (with SIGNER_TLS_*), or RECEIPTS_SECRET_HEX and TRANSPARENCY_SECRET_HEX in the sandbox")
+	}
+	padTo, _ := strconv.Atoi(os.Getenv("TRANSPARENCY_PAD_TO"))
+	return withDB(ctx, func(pool *pgxpool.Pool) error {
+		deps := payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log, Transparency: tr,
+			Receipts: &receipts.Issuer{Author: rcpt}}
+		if r := os.Getenv("RELAYS"); r != "" {
+			deps.Publisher = &receipts.Publisher{Relays: strings.Split(r, ",")}
+		}
+		root, err := payments.New(payments.Config{RelayURL: firstOr(strings.Split(os.Getenv("RELAYS"), ","), ""), TransparencyPadTo: padTo}, deps).CloseDay(ctx, day)
+		if err != nil {
+			return err
+		}
+		log.Info("day closed", "date", root.Date, "root", root.Root, "tree_size", root.TreeSize, "root_event", root.Event.ID)
+		return nil
 	})
 }
 

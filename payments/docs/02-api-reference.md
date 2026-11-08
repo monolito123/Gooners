@@ -21,14 +21,14 @@ The PAN never transits `api.` hosts. Hosted fields and SDKs post card data strai
 
 | Client | Mechanism | Standard |
 |--------|-----------|----------|
-| BaaS partner servers | `client_credentials` grant with mTLS client authentication. The access token (5 min) is bound to the certificate thumbprint (`cnf.x5t#S256`). | RFC 8705, aligned with the FAPI 2.0 security profile |
+| BaaS partner servers | An API key with scopes (`Authorization: Bearer sk_test_…` in the sandbox, `sk_live_…` in production), issued by the operator and expiring; or, without a long-lived secret, the `client_credentials` grant with mTLS client authentication, the access token (5 min) bound to the client's certificate ([§3.1](#31-post-oauth2token-partners)) | RFC 6750; RFC 6749 §4.4 with RFC 8705, aligned with the FAPI 2.0 security profile |
 | Merchant apps and the web dashboard | A Nostr HTTP Auth event (NIP-98, kind 27235) signed by an authorized device key is exchanged for a 15-minute session token bound to a DPoP key | NIP-98, RFC 9449 ([03 §4](03-nostr-layer.md#4-merchant-identity-and-authentication)) |
 | Terminals | Device certificate issued after attestation + per-request attestation token | [05 §2.4](05-mobile.md#24-attestation-and-device-integrity) |
 | High-value calls (payouts, bank account changes, API key changes) | Additionally signed with HTTP Message Signatures over method, path, `content-digest` and `idempotency-key` | RFC 9421, RFC 9530 |
 
 ### 1.3 Versioning
 
-Every request sends `Api-Version: 2026-10-01`. Breaking changes ship as a new date. Each version is supported for at least 24 months after its successor ships.
+A request names the contract it was written against in `Api-Version: 2026-10-01`; without it the current version applies, and every response says which version answered it in its own `Api-Version` header. A version the platform does not answer is `400 unsupported_api_version`. Breaking changes ship as a new date. Each version is supported for at least 24 months after its successor ships.
 
 ### 1.4 Idempotency
 
@@ -66,7 +66,8 @@ Errors use Problem Details (RFC 9457) with a stable `code`:
 - **IDs** are prefixed ULIDs (`pi_`, `pm_`, `acc_`, `po_`, `dp_`, `mer_`, `dev_`, `st_`), sortable by creation time.
 - **Times** are RFC 3339 UTC.
 - **Lists** use cursor pagination: `?limit=50&starting_after=pi_…`, returning `{ "data": [...], "has_more": true, "next_cursor": "…" }`.
-- **Rate limits** are sent as `RateLimit-Policy` and `RateLimit` headers. `429` comes with `Retry-After`.
+- **Rate limits** are sent on every authenticated response as `RateLimit-Policy: "per-key";q=<quota>;w=<seconds>` and `RateLimit: "per-key";r=<remaining>;t=<seconds until full>` (draft-ietf-httpapi-ratelimit-headers). `429` comes with `Retry-After`.
+- **Request IDs**: every response carries `Request-Id`, and every error repeats it as `request_id`. Quote it to support.
 
 ---
 
@@ -122,24 +123,42 @@ The edge (Cloudflare API Shield with the platform's own CA) validates the client
 
 ### 3.1 `POST /oauth2/token` (partners)
 
+Partners authenticate with an API key (§1.2), or, without a long-lived secret, with this exchange: the OAuth 2.0 client-credentials grant over mutual TLS (RFC 8705).
+
+The operator registers the client with the SHA-256 thumbprint of the partner's certificate (`platform oauth-client -tenant … -name … -scopes … -cert partner.pem`). The partner then asks for a token over a TLS connection that presents that certificate.
+
+The token is opaque, works for 300 seconds, and carries the scopes granted: all the client's, or the subset asked for in `scope`. It is accepted only on connections presenting the same certificate; any other connection gets `401 token_binding`. Revoking the client (`platform oauth-client-revoke`) ends its tokens at once.
+
 ```http
 POST /oauth2/token HTTP/2
 Host: api.goonerspay.example
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20accounts%3Aread
+grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20payments%3Aread
 ```
 
 ```json
 {
-  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImF0LTIwMjYtMTAifQ.eyJzdWIiOiJjbGlfMDFKQjdZM1EiLCJ0ZW4iOiJ0ZW5fMDFKQjdYIiwic2NvcGUiOiJwYXltZW50czp3cml0ZSBhY2NvdW50czpyZWFkIiwiY25mIjp7Ing1dCNTMjU2IjoiYk9wVnN1c19wUmRSUHVaRUNCbXFaNkJENWh0cEtCUWdBVkdNeUktUnRRayJ9fQ.sig",
+  "access_token": "at_q0ZtW6m3T2bSx4Fv8Hk1LpYd9Rr5Nc7Ue2Ja6Gi0Bo4",
   "token_type": "Bearer",
   "expires_in": 300,
-  "scope": "payments:write accounts:read"
+  "scope": "payments:write payments:read"
 }
 ```
 
-Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`.
+Errors follow RFC 6749 §5.2:
+
+| Status | `error` | When |
+|--------|---------|------|
+| `400` | `unsupported_grant_type` | Any grant but `client_credentials` |
+| `400` | `invalid_scope` | A scope the client may not have |
+| `401` | `invalid_client` | No certificate, an unknown or revoked client, or not its certificate |
+
+When the platform runs behind a TLS-terminating proxy, the proxy passes the client's certificate in a header: `CLIENT_CERT_HEADER` with `TRUST_PROXY`, as URL-encoded PEM.
+
+Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`, `compliance:read`, `compliance:write`, `travel_rule:read`. A key with `*` holds every scope except `compliance:write` and `travel_rule:read`, which the platform grants by name to its compliance officers' keys: releasing or blocking funds a sanctions screening held is its decision, not a partner's, and the names and documents in travel-rule messages are read only by those who need them.
+
+API keys expire: `platform apikey` issues them for a year by default (`-expires`, `0` for a key that lasts until revoked), and a request with an expired key answers `401 key_expired`. Issue the replacement, deploy it, then let the old one lapse or revoke it; `goonerspay_api_keys_expiring_14d` warns two weeks ahead.
 
 ### 3.2 `POST /v1/auth/nostr` (merchant apps)
 
@@ -168,9 +187,11 @@ The body goes on the wire in compact form, and the event's `payload` tag is the 
   "expires_in": 900,
   "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
   "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M",
-  "scopes": ["payments:write", "payments:read", "accounts:read", "payouts:write"]
+  "scopes": ["payments:write", "payments:read", "accounts:read", "settlements:read", "payouts:write"]
 }
 ```
+
+When the platform verifies attestation and the device has not attested yet (a phone the owner added by its npub), the login is refused with `attestation_required`: the app logs in again with its evidence in an `attestation` member next to `dpop_jwk` (App Attest on iOS; the Keystore attestation of the DPoP key, generated with a challenge bound to the device key, on Android). An Android device's sessions are then pinned to its attested DPoP key.
 
 Every later request carries `Authorization: DPoP <session_token>` and a `DPoP` header: a proof JWT (RFC 9449) signed by the key of `dpop_jwk`, for the request's method and URL, with `ath` = SHA-256 of the token and a `jti` used once. The DPoP key is generated in the phone's secure hardware (Android Keystore, Secure Enclave) and never leaves it, so a stolen token is useless on its own. A session can call only the app routes (payment intents, terminal authorizations from its own terminal, its balance and entries, payouts, its devices and enrollment codes), and only for its own merchant. Removing the device from the device list ends its sessions at once.
 
@@ -382,9 +403,9 @@ Sent by the MPoC SDK inside the merchant app to `terminal.goonerspay.example` ov
   },
   "pin": null,
   "device_risk": {
-    "score": 0.04,
-    "model": "fs-device-2026-10-a",
-    "signals": ["apdu_rtt_normal", "integrity_strong", "no_overlay", "location_consistent"]
+    "score": 0.1,
+    "model": "gp-device-1",
+    "signals": ["developer_options"]
   },
   "attestation": {
     "verdict_token": "eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig",
@@ -408,11 +429,15 @@ Sent by the MPoC SDK inside the merchant app to `terminal.goonerspay.example` ov
     "nostr_event_id": "ff03851857ec49e831e63ce49a5b0ccb445983b0353c74e2a9a0f1df7ec68ee2",
     "claim_qr": "https://r.goonerspay.example/c#k=ada9e69e2445b65e0739afcfe36455f0f2157c9c6edf9fbd3250f48f5408d163"
   },
-  "settlement": { "mode": "instant", "estimated_available_at": "2026-10-29T17:42:20Z" }
+  "settlement": { "mode": "instant", "merchant_discount": 414, "advance_fee": 0, "net_available": 12576, "settles_on": "2026-11-28" }
 }
 ```
 
 `status` is `approved`, `declined` (with `decline_code`), `pin_required` (re-present with PIN on glass), or `timeout` (the platform has already queued a reversal; the app asks for another tap).
+
+**App Attest assertion.** An iPhone attested with App Attest sends `App-Attest-Assertion`, the assertion its attested Secure Enclave key makes over SHA-256 of the exact request body, with a counter that only goes up. Without it, from another key, over another body, or with a counter already used, the request gets `403` (`assertion-invalid`) before anything reaches the card network. Android needs no assertion: its sessions are pinned to the hardware key it attested, which signs every DPoP proof.
+
+**Fraud shield** ([07 §3](07-enhancements.md#3-autonomous-fraud-shield)). Before the issuer sees a tap, the platform scores it from its own history and weighs `device_risk`, the phone's score from model `gp-device-1` with at most five signal codes ([07 §3.9](07-enhancements.md#39-what-the-reference-implementation-builds)); unknown codes are dropped and the score is recomputed from the codes. The decision can be `declined` with `decline_code: "risk_declined"` (nothing reached the issuer), `pin_required` with `decline_code: "authentication_required"` (the card needs its PIN), or `approved` with `settlement.held: true`: the sale stands, but its money waits for a review (§5.1) instead of being released or advanced. A frozen terminal answers `409` until its review is resolved.
 
 ### 4.6 Capture, cancel, refund
 
@@ -526,11 +551,50 @@ The CVC is used for one verification and never stored (PCI DSS v4.0.1 requiremen
 
 The amount is taken from the merchant when the chargeback arrives, because the scheme debits the acquirer at once. If the available balance is short, the difference is booked as owed by the merchant (`ledger.owed_by_merchant`) and recovered from its next credits. While a dispute is open, refunds on the payment are refused with `409`: the cardholder already has the money back. `GET /v1/disputes` filters by `status` and `merchant_id`. A dispute still in `evidence_required` at `evidence_due_at` is accepted automatically, after a `dispute.evidence_due_soon` warning 48 hours before. Operations files representments with the sponsor and imports the outcomes ([operations runbook §4.6](../integration/operations-runbook.md#46-chargebacks)).
 
+### 5.0a Pre-dispute alerts
+
+Before filing a chargeback, many issuers warn the acquirer: Mastercard's **Ethoca** alerts, and Visa's **Verifi** CDRN and RDR. Refunding the sale then ends the dispute. There is no chargeback, no chargeback fee, and no count against the merchant in the schemes' monitoring programs (VAMP, ECM).
+
+The alerts provider's adapter posts each alert, signed, to `POST /v1/dispute-alerts/inbound`. The platform finds the sale by its RRN and authorization code and refunds what is still refundable, up to the alert's amount. It answers the provider with the outcome:
+
+- `refunded`;
+- `already_refunded`;
+- `in_dispute` (a chargeback came first);
+- `not_found`;
+- `refund_failed` (the merchant's available balance cannot cover the refund, as for any refund; the chargeback then follows its course).
+
+The tenant receives `dispute.alert`, and `GET /v1/dispute-alerts` lists them. An alert delivered twice answers the first result.
+
+### 5.1 Fraud shield reviews
+
+A sale the fraud shield approved but held, and a terminal it froze, open a review and send `risk.review_opened`. `GET /v1/risk/reviews?status=open` lists them oldest first (scope `risk:read`); each shows both halves of the decision, never the raw device observations:
+
+```json
+{
+  "id": "rsk_01M67JBQ41BTCSJYAW2DYFM1TB",
+  "object": "risk_review",
+  "status": "open",
+  "action": "allow_hold",
+  "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "terminal_id": "TP000418",
+  "payment_intent_id": "pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0",
+  "amount": 150000,
+  "outcome": "approved",
+  "device": { "level": "low", "score": 0, "model": "gp-device-1", "signals": [] },
+  "server": { "level": "medium", "score": 0.3, "signals": ["new_merchant_large_amount"] },
+  "created_at": "2026-10-29T17:42:08Z"
+}
+```
+
+`POST /v1/risk/reviews/{id}/resolve` with `{"resolution": "release", "note": "…"}` (scope `risk:write`) lets the held money settle on its schedule and a terminal frozen by the review sell again; `"fraud"` keeps the money held for the chargeback and revokes a frozen terminal. A refund or chargeback of a held sale releases its hold: the loss is then charged to the merchant, and the money settles on its schedule. A note is required, the call is audited and sends `risk.review_resolved`. `GET /v1/accounts/{id}/balance` shows held money apart from `pending`, as `held`.
+
 ---
 
 ## 6. Accounts, sub-ledgers and transfers
 
 ### 6.1 `POST /v1/accounts`
+
+Not built. Every merchant has its account from creation (`account_id`, [§8.1](#81-post-v1merchants-onboarding)), and transfers and payouts move money between those accounts. A marketplace's own account is the merchant it creates for itself. A separate sub-ledger, whose holders are not merchants, would need its own KYB and payout rules. The planned shape:
 
 ```json
 {
@@ -584,7 +648,13 @@ Returns immutable ledger postings: `{ "id", "journal_id", "direction": "credit",
 
 ### 6.4 Split payments
 
-Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) are applied atomically at capture in one journal. The `bears_fees: true` recipient pays the MDR. The sum of splits must equal `amount`, or the request fails with `422 split_mismatch`. Refunds and chargebacks reverse splits pro rata unless the intent sets `split_reversal: "primary_only"`.
+Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) divide its amount among accounts of the tenant, on card and Pix payments.
+
+**Rules.** At most ten splits, adding up to `amount`, or the request fails with `422 split_mismatch`. Each is an active merchant's account, none twice. Exactly one has `bears_fees: true`, and it pays the MDR (or the Pix fee). Its amount must cover the highest fee the merchant's plan can charge on the sale.
+
+**At capture.** The split is applied in one journal. The merchant of record (the intent's merchant, whose MID the network saw) is credited the sale net of fees, as its signed statement shows, and the same journal moves every other recipient's share to that recipient. Each share then settles under its recipient's own plan: its receivables, its instant settlement and advance fee, its payouts. The authorization's `settlement.splits` lists them.
+
+**Reversals.** Refunds take the shares back pro rata to the splits' amounts, with the fee bearer taking the rounding. With `split_reversal: "primary_only"`, they are charged to the merchant of record alone. Canceling a captured split sale reverses every recipient's share and instant release. Chargebacks and MED returns are charged to the merchant of record, which recovers its partners' part by transfer (§6.5) or under its own terms.
 
 ### 6.5 `POST /v1/transfers`
 
@@ -599,17 +669,22 @@ Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) are applied ato
 
 ```json
 {
-  "id": "tr_01JBK6E5F6G7H8J9K0M1M2N3P4",
+  "id": "tr_3QK8ZWJ5M2T7P4N6R9V1X0B8CD",
   "object": "transfer",
   "status": "posted",
   "amount": 5000,
   "currency": "BRL",
-  "journal_id": "jr_01JBK6E5F6G7H8J9K0M1M2N3P5",
+  "from_account": "acc_01JB9MKTP00000000000000001",
+  "to_account": "acc_01JB9SE77ER000000000000001",
+  "description": "Bônus de frete outubro",
+  "journal_id": "jr_7MZD4W1Q8K3N5T2V6X9B0R4PFH",
   "posted_at": "2026-10-29T18:10:02Z"
 }
 ```
 
-Transfers stay inside one tenant. They are synchronous because they are a single ledger transaction.
+Transfers stay inside one tenant. They are synchronous because they are a single ledger transaction: posted, or refused with `422 insufficient_funds` when the source's available balance is short. Money leaves only an active merchant's account and never arrives at a closed one (`409 merchant_not_active`).
+
+The transfer is identified by the tenant and the `Idempotency-Key`. A retry, even after an error, returns the transfer the first attempt made, never a second one. `GET /v1/transfers/{id}` reads it back, and each posting appears in both accounts' entries (§6.3) with `type: "transfer"`. Sends `transfer.posted`.
 
 ---
 
@@ -701,20 +776,38 @@ Requires an HTTP Message Signature (§1.2).
 {
   "id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P",
   "object": "merchant",
-  "status": "kyb_in_review",
-  "kyb": {
-    "checks": [
-      { "type": "cnpj_registry", "status": "passed" },
-      { "type": "representative_identity", "status": "pending_liveness" },
-      { "type": "sanctions_pep", "status": "passed" },
-      { "type": "mcc_risk", "status": "passed" }
-    ],
-    "next_action": { "type": "liveness", "url": "https://kyb.goonerspay.example/l/4cQ2" }
-  },
+  "account_id": "acc_01JB8Z2K5D6F7G8H9J0K1M2N3P",
+  "legal_name": "Cafe Aurora Ltda",
+  "trade_name": "Café Aurora",
+  "mcc": "5812",
+  "scheme_mid": "01JB8Z2K5D6F7G8",
+  "city": "São Paulo",
   "root_npub": "npub1lzswc94kw43a25ekcwqm2upevrhckduurcdx455zfm7jduw0h7cq5yqyz9",
-  "created_at": "2026-10-29T12:00:00Z"
+  "plan": { "credit_bps": 319, "debit_bps": 137, "installment_bps": 499, "pix_bps": 0, "tier": "B", "instant": true },
+  "status": "active"
 }
 ```
+
+`account_id` is the merchant's ledger account: balances, entries and payouts take it. `plan` sets the merchant's prices; without one the platform's default applies. `root_npub` is optional here: the owner's phone sets it when it enrolls ([§8.2](#82-enrolling-a-phone)). In production a new merchant starts `kyb_in_review` and takes no payments until KYB clears. The sandbox activates it at once, unless `KYB_REGISTRY=sandbox` turns the check on.
+
+Within a minute the platform checks the merchant ([04 §2.5](04-serverless-backend.md#25-workflows)):
+
+- It reads the CNPJ's registration at the Receita Federal.
+- It compares the legal name, the city and the `representatives` with it. Representatives are matched by name and the CPF digits the registry publishes.
+- It screens every name against the sanctions lists.
+
+The outcome appears on the merchant as `kyb`:
+
+```json
+{ "kyb": { "outcome": "review", "checked_at": "2026-11-08T14:03:00Z",
+  "findings": [ { "code": "legal_name_mismatch", "detail": "declared \"Cafe Aurora Comercio\"; the registry has \"CAFE AURORA LTDA\"" } ] } }
+```
+
+- **approved**: the merchant is activated (`merchant.kyb.approved`), at once where the platform approves automatically.
+- **review**: people decide. When there are findings the partner can fix, `merchant.kyb.action_required` carries them.
+- **rejected**: the CNPJ is closed, unfit or unknown. An operator closes the merchant (`merchant.kyb.rejected`).
+
+What sanctions screening found is compliance's and never appears here, so a merchant in `review` may list no findings. `GET /v1/merchants/{id}` reads it back, and `GET /v1/merchants` lists the tenant's merchants, newest first.
 
 ### 8.2 Enrolling a phone
 
@@ -773,7 +866,7 @@ Binds a device key. The request carries a device-authorization event (kind 17710
 
 ### 8.4 `POST /v1/terminals`
 
-Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate. The terminal PKI issues that certificate after attestation, and its key must be the attested hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). The request carries the certificate's SHA-256, and requests on `terminal.goonerspay.example` are then authenticated by that certificate.
+Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate, whose key is the terminal's hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). Requests on `terminal.goonerspay.example` are then authenticated by that certificate. The request carries either the SHA-256 of a certificate an external terminal PKI issued, or the terminal's CSR for the platform's terminal CA to sign (below).
 
 ```json
 { "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M", "type": "mpoc_cots", "certificate_sha256": "d1584e3831c2e9ee819f8f538d2b49bb70875c842070b678a35724243498ec24" }
@@ -783,13 +876,114 @@ Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal'
 { "terminal_id": "TP000418", "object": "terminal", "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "type": "mpoc_cots", "status": "active" }
 ```
 
-Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the terminal PKI runs inside the platform. Until then that variant returns `501`.
+**Certificates from a CSR.** With a terminal CA configured (`TERMINAL_CA_CERT` and its key in AWS KMS), send the terminal's CSR instead of a fingerprint: `"csr"` is a PKCS #10 request for an ECDSA P-256 key the terminal generated in its secure hardware (base64 DER or PEM). The platform signs a client certificate for the new terminal ID (common name the terminal ID, client authentication only, 30 days) and returns it once:
 
-`POST /v1/terminals/{terminal_id}/revoke` with `{ "reason": "device lost" }` revokes a terminal for good: its certificate stops authenticating and its terminal ID takes no further authorizations. The call is recorded in the audit trail and sends `terminal.revoked`.
+```json
+{ "terminal_id": "TP000419", "object": "terminal", "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "type": "smart_pos", "status": "active",
+  "certificate": "-----BEGIN CERTIFICATE-----\nMIIB…\n-----END CERTIFICATE-----\n",
+  "certificate_sha256": "5b7c2f0e9d1a8b3c4e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d",
+  "certificate_expires_at": "2026-12-08T14:02:11Z" }
+```
+
+Only the CSR's key is used: whatever names it asks for, the certificate names the terminal. A certificate belongs to one terminal (`409` for one already registered). Without a terminal CA, a CSR returns `501 terminal_pki_not_enabled` and certificates come from an external terminal PKI, registered by `certificate_sha256`.
+
+**Renewal and phones.** `POST /v1/terminals/{id}/certificate` with `{ "csr": "…" }` issues the next certificate. A terminal calls it over its own mutual-TLS connection once a third of its certificate's life is left. The certificate it replaces keeps working until the terminal first presents the new one, so a lost response never locks it out. The app on a phone calls it with its session for the first certificate of the terminal its device runs; in production, card sales need that certificate. When the phone's device attested with Android key attestation, the terminal key must be attested too: it is generated in the Keystore with the challenge `SHA-256("goonerspay/v1/terminal-key:" + terminal_id)`, and its chain is sent in `key_attestation` (base64 DER, leaf first); otherwise `422`. API keys cannot call it. Every certificate issued sends `terminal.certificate_issued`. A phone's certificate does not replace its device's rules: an iPhone selling with it still signs each authorization with its App Attest key (`App-Attest-Assertion`).
+
+`POST /v1/terminals/{id}/revoke` with `{ "reason": "device lost" }` revokes a terminal for good: its certificate stops authenticating and its terminal ID takes no further authorizations. The call is recorded in the audit trail and sends `terminal.revoked`.
 
 A merchant takes payments and receives payouts only while `active`. Risk can make it `restricted` (new payments and payouts refused with `409 merchant_not_active`, balance held) and lift it again; `closed` is final. The status and its reason are on `GET /v1/merchants/{id}` ([operations runbook §4.2](../integration/operations-runbook.md#42-restricting-and-reactivating-a-merchant)).
 
 ---
+
+### 8.5 `GET /v1/merchants/{id}/summary`
+
+The merchant's day at a glance, in Brasília time (`?date=YYYY-MM-DD`; today by default): what the apps' and the console's home screens show first ([06 §6](06-design-system.md#6-zero-cognitive-friction-dashboard)). An app session reads its own merchant's; a partner key needs `payments:read`. Amounts are centavos.
+
+- `sales`, `gross`, `refunded`, `fees`, `net`, `average_ticket`: the payments captured that day.
+- `by_method`: how customers paid (`credit`, `debit`, `card` when the funding is unknown, `pix`, `crypto`), largest first.
+- `hourly`: the gross captured in each of the 24 hours.
+- `last_week`: the same weekday a week before, up to the same time of day when the date is today, and `change_pct` against it (null when it sold nothing). Its `hourly` is that whole day by hour, for the comparison line in the charts: what the rest of today looked like a week ago.
+- `waiting`: charges shown and not yet paid (a Pix QR, a crypto transfer, a payment held for compliance).
+- `recent`: the day's eight latest payments, newest first, whatever their outcome.
+
+```json
+{
+  "object": "day_summary",
+  "merchant_id": "mer_01M69K0V3GC8TSECSX0HV48PR3",
+  "date": "2026-11-06",
+  "sales": 2,
+  "gross": 12000,
+  "refunded": 0,
+  "fees": 383,
+  "net": 11617,
+  "average_ticket": 6000,
+  "by_method": [{ "method": "credit", "sales": 2, "gross": 12000 }],
+  "hourly": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000, 10000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "last_week": {
+    "date": "2026-10-30", "sales": 1, "gross": 8000, "change_pct": 50,
+    "hourly": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8000, 0, 0, 0, 0, 0, 3500, 0, 0, 0, 0, 0, 0]
+  },
+  "waiting": { "count": 1, "amount": 5000 },
+  "recent": [
+    { "id": "pi_01M69K1F0J7Q3ZB7Y2N8K4R5TW", "amount": 5000, "method": "crypto", "status": "requires_action", "created_at": "2026-11-06T14:21:09Z" },
+    { "id": "pi_01M69K0Z8S5D2C1X4V6B3N7M9Q", "amount": 2000, "method": "credit", "status": "captured", "card": "visa •••• 1111", "created_at": "2026-11-06T14:20:51Z" }
+  ]
+}
+```
+
+### 8.6 `GET /v1/merchants/{id}/summary/period`
+
+Sales by day from one Brasília day to another (`?from=&to=`, both included, at most 92 days; the last 30 days ending today by default), against the period just before, as long. When the period ends today the previous one ends at the same time of day. What the apps' and the console's 7- and 30-day charts show; the same access as §8.5.
+
+```json
+{
+  "object": "period_summary",
+  "merchant_id": "mer_01M69K0V3GC8TSECSX0HV48PR3",
+  "from": "2026-10-31",
+  "to": "2026-11-06",
+  "days": 7,
+  "sales": 41,
+  "gross": 512340,
+  "refunded": 2000,
+  "fees": 14120,
+  "net": 496220,
+  "average_ticket": 12496,
+  "by_method": [
+    { "method": "credit", "sales": 22, "gross": 301200 },
+    { "method": "pix", "sales": 15, "gross": 161140 },
+    { "method": "debit", "sales": 4, "gross": 50000 }
+  ],
+  "daily": [
+    { "date": "2026-10-31", "sales": 8, "gross": 102000 },
+    { "date": "2026-11-01", "sales": 3, "gross": 40100 },
+    { "date": "2026-11-02", "sales": 5, "gross": 61500 },
+    { "date": "2026-11-03", "sales": 6, "gross": 70240 },
+    { "date": "2026-11-04", "sales": 7, "gross": 88500 },
+    { "date": "2026-11-05", "sales": 7, "gross": 92000 },
+    { "date": "2026-11-06", "sales": 5, "gross": 58000 }
+  ],
+  "previous": {
+    "from": "2026-10-24",
+    "to": "2026-10-30",
+    "sales": 36,
+    "gross": 455800,
+    "change_pct": 12.4,
+    "daily": [96000, 51000, 58300, 61000, 70500, 69000, 50000]
+  }
+}
+```
+
+### 8.7 Lists
+
+Every list answers `{ "object": "list", "data": [...], "has_more": true, "next_cursor": "…" }`, newest first; pass `next_cursor` back as `starting_after` for the next page (`limit` up to 100, 20 by default).
+
+| List | Filters |
+|------|---------|
+| `GET /v1/payment-intents` | `merchant_id` (an app session sees its own merchant's only), `status`, `method` (`credit`, `debit`, `prepaid`, `card`, `pix`, `crypto`), `from` and `to` (Brasília days the payment was created) |
+| `GET /v1/merchants` | `status` |
+| `GET /v1/accounts/{id}/entries` | the cursor is the last entry's `id` (`jr_….2`: its journal and place in it) |
+| `GET /v1/webhook-endpoints` | none; never shows secrets. `DELETE /v1/webhook-endpoints/{id}` stops an endpoint for good: it stays listed, `disabled`, with its history |
+| `GET /v1/disputes`, `/v1/risk/reviews`, `/v1/settlements`, `/v1/compliance/cases`, `/v1/compliance/screenings`, `/v1/travel-rule/messages` | as their sections say |
 
 ## 9. Settlements and proofs
 
@@ -817,6 +1011,8 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
 }
 ```
 
+A merchant's day is closed after 01:00 in Brasília: the platform builds every merchant's statement, commits all of them to that day's padded transparency log, signs the day's root (chained to the previous day's) and gift-wraps each statement to the merchant's root key and devices. `GET /v1/settlements?merchant_id=` lists statements newest day first, and `GET /v1/settlements/{id}/statement` returns the signed kind 7713 event itself. A day's root is public: `GET /v1/transparency/{date}` serves it without credentials, so anyone holding a proof can check it.
+
 `GET /v1/settlements/{id}/proofs/{receipt_event_id}` returns the RFC 6962-style inclusion proof of one receipt in the statement, and of the statement in the public transparency root ([03 §6](03-nostr-layer.md#6-verifiable-settlement-transparency-log)):
 
 ```json
@@ -828,7 +1024,8 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
     "audit_path": [
       "308c2b57d5ff75c8bf1849d919e89ba1a46f7132d3c243a0c12d1f7db3cbbd82",
       "01ed95bad1f07050998fd6ea8d45305e67c432ff94d9903de11f9db7679aa681"
-    ]
+    ],
+    "root": "463dc56ba1bc78981866a4d2547a795344fd12098e0183df733f040034fa3b7f"
   },
   "transparency_inclusion": {
     "leaf_index": 6,
@@ -837,7 +1034,8 @@ A merchant takes payments and receives payouts only while `active`. Risk can mak
       "05a70f10e2a8fc6603244b649ed4214cc67323627cfb38a33ec92f24afc067fc",
       "3d43f25db17bbdffff91fc6933da03edb86e89dc5a7ddaea3d29c40daf2ec330",
       "b03715f2093cc2a4ecec42a18e7e15dbbbe21949878595988274dc429800d022"
-    ]
+    ],
+    "root": "dd0bc1db86a3358f397bc33ab9506387e1c65ed8240063cc361b2fb6bd203dd8"
   }
 }
 ```
@@ -877,6 +1075,17 @@ This is a real signature. The test vector below lets integrators check their ver
 
 Receivers must reject timestamps more than 5 minutes old, compare signatures in constant time, and accept any of several space-separated signatures during secret rotation. Partners who prefer asymmetric verification can choose `v1a` (Ed25519) signatures per endpoint.
 
+`POST /v1/webhook-endpoints/{id}/rotate-secret` (scope `webhooks:write`) issues a new secret, returned once. The old one keeps signing beside it for `overlap_hours` (default 24, at most 168), so every delivery in that window carries both signatures and the receiver can switch whenever its deploy lands; a leaked secret is rotated with `"overlap_hours": 0`:
+
+```json
+{
+  "id": "we_01M69K0V3GC8TSECSX0HV48PR3",
+  "object": "webhook_secret",
+  "secret": "whsec_X8b2kq0VbDqzJmC5R0Q4mYwTn1pYw0eA",
+  "previous_secret_expires_at": "2026-11-01T19:02:11Z"
+}
+```
+
 ### 10.2 Semantics
 
 - **At least once.** Receivers deduplicate on `webhook-id`.
@@ -896,16 +1105,369 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `payout.paid` / `.failed` / `.returned` | Payout outcome |
 | `settlement.published` | Daily statement signed and published to Nostr |
 | `payment_method.updated` | Network token lifecycle update (new expiry, reissued card) |
-| `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding |
+| `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding: the merchant cleared KYB, was refused, or is in review with findings the partner can fix (`findings` as in the merchant's `kyb`) |
 | `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
-| `terminal.revoked` | A terminal was revoked (lost device, merchant closed) |
+| `terminal.revoked` | A terminal was revoked (lost device, merchant closed, fraud confirmed) |
+| `transfer.posted` | A transfer between two of the tenant's accounts was posted |
+| `dispute.alert` | A pre-dispute alert arrived and was answered (§5.0a): the outcome and, when refunded, the refund |
+| `terminal.certificate_issued` | The terminal CA signed a terminal's certificate (registration, a phone's first certificate, renewal); carries its SHA-256 and expiry, so an unexpected one can be spotted |
+| `terminal.frozen` | The fraud shield froze a terminal pending a review (§5.1) |
+| `risk.review_opened` / `.review_resolved` | A sale was held or a terminal frozen; a review released it or confirmed fraud (§5.1) |
 | `payment_intent.med_returned` | A Pix was returned to the payer under the MED; the merchant was debited |
 | `device.revoked` | A device key was removed from the authorization list |
 | `account.reserve.changed` | Risk changed the merchant's reserve |
+| `payment_intent.processing` | A crypto payment arrived and is held while compliance checks who sent it (`reason: "under_review"`); it ends `captured` or `canceled` (§11.6) |
+| `compliance.address_refused` | Sanctions screening refused a withdrawal address |
+| `compliance.case_opened` / `.case_decided` | A deposit was held or a travel-rule review opened; compliance released, blocked or closed it (§11.6) |
+| `compliance.party_refused` | A withdrawal was refused because its beneficiary or receiving provider is named on a sanctions list |
 
 ---
 
-## 11. ISO 8583 mapping summary
+## 11. Crypto, accounts abroad and B3
+
+What each operation means for the money, the venues and the rules is in [docs/09](09-digital-assets-international-b3.md). Every route below takes `merchant_id` with a partner key; an app session always acts for its own merchant. Decimal amounts of an asset are strings, never floats; reais stay integer centavos.
+
+### 11.1 A payment in crypto
+
+A payment intent with `channel: "crypto"` is confirmed with the asset and network the customer will use. The answer asks for an exact amount: each pending charge to an address asks for a different one, which is how the deposit is matched. When the transfer arrives the platform sells it for reais at once and credits the merchant in reais, less the crypto fee (1.5% by default).
+
+`POST /v1/payment-intents/{id}/confirm`
+
+```json
+{
+  "payment_method_type": "crypto",
+  "asset": "USDT",
+  "network": "tron"
+}
+```
+
+```json
+{
+  "id": "pi_01M685GPCKTEVA6GPB1DEGGA23",
+  "object": "payment_intent",
+  "status": "requires_action",
+  "amount": 900000,
+  "amount_captured": 0,
+  "amount_refunded": 0,
+  "currency": "BRL",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "channel": "crypto",
+  "capture_method": "automatic",
+  "installments": {
+    "count": 1,
+    "type": "none"
+  },
+  "latest_attempt": {
+    "asset": "USDT",
+    "network": "tron",
+    "status": "pending",
+    "type": "crypto"
+  },
+  "next_action": {
+    "address": "T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM",
+    "amount": "1678.398739",
+    "amount_units": 1678398739,
+    "asset": "USDT",
+    "expires_at": "2026-10-31T05:19:31Z",
+    "network": "tron",
+    "price": "5.3622540000",
+    "type": "crypto_transfer",
+    "uri": "T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM"
+  },
+  "receipt": null,
+  "created_at": "2026-10-31T05:04:31Z",
+  "updated_at": "2026-10-31T05:04:31Z"
+}
+```
+
+A transfer on another network, or of another amount, is not matched; the charge expires after 15 minutes and is canceled. In the sandbox, `POST /v1/sandbox/crypto/payments/{id}` makes the customer's transfer arrive; `{"from": "TSanctionedTestAddressForSandbox12"}` makes it come from the sandbox's sanctioned wallet.
+
+Before a deposit settles, the platform reads who sent it on the chain and screens every sender ([09 §6.5](09-digital-assets-international-b3.md#65-screening-who-sends-each-deposit)). A sender on a sanctions list, or one that cannot be screened, holds the payment: the intent goes to `processing` (`latest_attempt.status: "held"`) until compliance releases it (`captured`) or blocks it (`canceled`). The reason is never shown to the merchant.
+
+The confirmation may carry who the customer says they are, when the checkout asks (a CPF, as for an invoice): it is recorded as the originator of the deposit for the travel rule. It must identify the payer beyond a name (a document, an address or a date and place of birth):
+
+```json
+{
+  "payment_method_type": "crypto",
+  "asset": "USDT",
+  "network": "tron",
+  "payer": { "type": "natural", "name": "Ana Souza", "document": "52998224725", "country": "BR" }
+}
+```
+
+### 11.2 Markets, holdings and conversions
+
+`GET /v1/crypto/markets` gives the best price to sell (`bid`) and to buy (`ask`) each asset in reais across the connected exchanges, and where. `GET /v1/holdings` lists what a merchant holds besides reais, valued at the best price to sell now:
+
+```json
+{
+  "data": [
+    {
+      "asset": "BTC",
+      "kind": "crypto",
+      "units": 99303,
+      "amount": "0.00099303",
+      "value_brl": 34686
+    }
+  ],
+  "object": "list"
+}
+```
+
+A conversion is quoted first and executed only on request, within 30 seconds. A buy names the reais to spend (`brl_amount`); a sale names the amount of the asset (`amount`). Foreign currency (USD, EUR, GBP) converts the same way and shows the IOF in `tax`.
+
+`POST /v1/conversions`
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "side": "buy",
+  "asset": "BTC",
+  "brl_amount": 35000
+}
+```
+
+```json
+{
+  "id": "cv_01M685GPDX3HSKP4NDQRDVQ8S7",
+  "object": "conversion",
+  "kind": "crypto",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "side": "buy",
+  "asset": "BTC",
+  "asset_units": 99303,
+  "amount": "0.00099303",
+  "brl_units": 35000,
+  "fee": 525,
+  "tax": 0,
+  "total": 35525,
+  "price": "352453.5000000000",
+  "venue": "simex",
+  "status": "quoted",
+  "expires_at": "2026-10-31T05:05:01Z"
+}
+```
+
+`POST /v1/conversions/{id}/execute` executes it (idempotently). It is refused with `410` after the quote expires and with `422` when the market moved more than 1% against the quote or a sale is larger than the holding; nothing is charged then.
+
+### 11.3 `POST /v1/crypto/withdrawals`
+
+Sends crypto the merchant holds to an outside address. The address is checked against the network's format and **screened against sanctions lists before anything moves** ([09 §6.1](09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)): a listed address is refused with `403 address_refused`, and a screening that cannot be completed with `503`; nothing is sent either way, and every screening is recorded. The network fee is taken from the holding. `destination_type` says whether the coins go to a wallet no provider keeps (`wallet`, the default) or to an account at another provider (`exchange`); the DeCripto reports them apart. Sending is final, so it needs `payouts:write` like a Pix payout.
+
+Every withdrawal carries the **travel rule** ([09 §6.6](09-digital-assets-international-b3.md#66-the-travel-rule)): the originator (the merchant) and the beneficiary in IVMS101.2023. `beneficiary` names who owns the destination; without it, the merchant itself. To another provider, `beneficiary_vasp` is required and the receiving provider must accept the data before anything moves: a refusal answers `422 travel_rule_rejected` with its reason, no answer `503`. To a self-hosted wallet the request is the merchant's declaration of the owner. A document that is not a CPF or a CNPJ needs `document_type` (an IVMS101 national identifier type) and, for a company, `registration_authority`.
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "asset": "BTC",
+  "network": "bitcoin",
+  "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+  "amount": "0.0001",
+  "destination_type": "exchange",
+  "beneficiary": { "type": "natural", "name": "João Pereira", "document": "12345678909", "country": "BR" },
+  "beneficiary_vasp": { "name": "Exchange Exemplo S.A.", "lei": "506700GE1G29325QX363", "country": "BR" }
+}
+```
+
+```json
+{
+  "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+  "amount": "0.00010000",
+  "asset": "BTC",
+  "id": "cw_01M685GPECPEX6HF42YPAE277C",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "network": "bitcoin",
+  "network_fee_units": 10000,
+  "object": "crypto_withdrawal",
+  "status": "sent",
+  "venue": "simex",
+  "destination_type": "exchange",
+  "value_brl": 3493,
+  "travel_rule": { "id": "tr_01M685GPEE7Q5X5Z0R8B2Q4T0N", "status": "accepted", "reference": "trp-7f3a" }
+}
+```
+
+### 11.4 Accounts abroad
+
+`GET /v1/international/accounts` gives the merchant's USD, EUR and GBP balances and the bank details a payer abroad uses. The `reference` names the merchant and must be on the payment; credits without it go to manual review.
+
+```json
+{
+  "currency": "USD",
+  "units": 11994,
+  "amount": "119.94",
+  "receive": {
+    "currency": "USD",
+    "holder": "goonerspay (sandbox)",
+    "bank": "Sandbox Bank NA",
+    "account_number": "8310004421",
+    "routing_number": "026009593",
+    "reference": "GP4B7F1E67FD"
+  }
+}
+```
+
+`POST /v1/international/payouts` pays a beneficiary abroad from a foreign balance. The fee is in the same currency (USD 5.00, EUR 4.00, GBP 4.00 by default); a failed transfer is reversed in full.
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "currency": "USD",
+  "amount": "50.00",
+  "reference": "Invoice 7",
+  "beneficiary": {
+    "name": "Acme Inc",
+    "type": "business",
+    "country": "US",
+    "routing_number": "026009593",
+    "account_number": "12345678"
+  }
+}
+```
+
+```json
+{
+  "id": "ip_01M685GPF5QNXJP7R068J42NN9",
+  "object": "international_payout",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "currency": "USD",
+  "units": 5000,
+  "amount": "50.00",
+  "fee": "5.00",
+  "beneficiary": {
+    "name": "Acme Inc",
+    "type": "business",
+    "country": "US",
+    "account_number": "12345678",
+    "routing_number": "026009593"
+  },
+  "reference": "Invoice 7",
+  "status": "sent"
+}
+```
+
+### 11.5 B3
+
+`PUT /v1/investments/profile` records the answers to the suitability questions (CVM Resolution 30); the profile follows from them. Without a profile an order is `404`; a conservative profile cannot buy variable income (`409`).
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "answers": {
+    "horizon": 2,
+    "tolerance": 2,
+    "experience": 1
+  }
+}
+```
+
+`GET /v1/investments/quotes/{ticker}`:
+
+```json
+{
+  "ticker": "PETR4",
+  "name": "PETROBRAS PN",
+  "kind": "share",
+  "lot": 100,
+  "last": "38.50",
+  "change": "0.00",
+  "at": "2026-10-31T04:51:31.835828424Z",
+  "market_open": true
+}
+```
+
+`POST /v1/investments/orders` sends the order through the broker, in standard lots of 100 and the fractional market for the rest (two legs for 150 shares). A buy is paid from the wallet now; a sale's proceeds arrive at settlement, two trading days later.
+
+```json
+{
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "ticker": "PETR4",
+  "side": "buy",
+  "quantity": 150
+}
+```
+
+```json
+{
+  "id": "inv_01M685GPFF0FWD00DYZNPZ1KE4",
+  "object": "investment_order",
+  "merchant_id": "mer_01M684RWYMZP1JMTS610WQYS3V",
+  "ticker": "PETR4",
+  "side": "buy",
+  "quantity": 150,
+  "price": "38.5000",
+  "gross": 577500,
+  "fees": 174,
+  "total": 577674,
+  "status": "executed",
+  "trade_date": "2026-10-31",
+  "settles_on": "2026-11-04",
+  "legs": [
+    "brk_01M685GPFFAAG84VTBVNKGB2AM",
+    "brk_01M685GPFFF99JZ252M733QHTD"
+  ]
+}
+```
+
+`GET /v1/investments/positions` returns the positions, each valued at the last price (`result` = `value` − `cost`, in centavos), and the recent orders.
+
+### 11.6 Compliance and the travel rule
+
+Held deposits and travel-rule reviews are cases ([09 §6.7](09-digital-assets-international-b3.md#67-compliance-cases)). `GET /v1/compliance/cases?status=open|released|blocked|closed|all` lists them newest first (scope `compliance:read`):
+
+```json
+{
+  "id": "cc_01M68ZT7GTR3WAHDDZF05WFGNW",
+  "object": "compliance_case",
+  "kind": "deposit_screening",
+  "reason": "sanctions_hit",
+  "subject": "deposit:simex/dep_01M68ZT7GS3WQ6PJ2Y7R9C1KQB",
+  "merchant_id": "mer_01M68ZT2DMNAK5SQ7RNAG7T6HF",
+  "payment_intent_id": "pi_01M68ZT7EARV2P539BX2SP25AP",
+  "holds_funds": true,
+  "asset": "USDT",
+  "units": 14919173,
+  "amount": "14.919173",
+  "status": "open",
+  "detail": { "network": "tron", "txid": "2465…1ba", "senders": ["TSanctionedTestAddressForSandbox12"], "matches": ["static: sandbox test list"] },
+  "decided_at": null,
+  "created_at": "2026-10-31T12:44:07Z"
+}
+```
+
+`POST /v1/compliance/cases/{id}/decision` (scope `compliance:write`, granted by name, never through `*`) takes `{"action": "release" | "block" | "close", "note": "…"}`; the note is required and kept with who decided. A case holding funds is released (the payment settles) or blocked (the coins stay frozen, the payment is canceled); a review is closed. A case already decided answers `409`.
+
+`GET /v1/compliance/screenings?purpose=withdrawal|deposit_sender&result=clear|hit|error` lists every address screening. `GET /v1/travel-rule/messages?direction=outbound|inbound` lists every travel-rule message with the counterparty and the outcome (`accepted`, `rejected`, `unreachable`, `self_declared`, `received`, `matched`, `refused`), without the payload; `GET /v1/travel-rule/messages/{id}` adds the IVMS101 payload and needs `travel_rule:read`. Payloads are stored sealed under the vault's KEK and redacted after the record-keeping period (`redacted_at`).
+
+`POST /v1/travel-rule/inbound` is for the travel-rule adapter, not partners: it posts what other providers send, signed with the shared secret (`webhook-id`, `webhook-timestamp`, `webhook-signature`, as in §10.1), and receives the platform's answer for the sender:
+
+```json
+{
+  "reference": "trp-91c2",
+  "asset": "USDT",
+  "network": "tron",
+  "address": "T9eB2x7zfSotcLRNtYGTzR1uj5PLxVSXJM",
+  "amount": "27.966350",
+  "txid": "91078c1e…767c",
+  "originator_vasp": { "name": "Outra Exchange S.A.", "lei": "506700GE1G29325QX363" },
+  "ivms101": {
+    "originator": { "originatorPerson": [ { "naturalPerson": {
+      "name": { "nameIdentifier": [ { "primaryIdentifier": "Souza", "secondaryIdentifier": "Ana", "naturalPersonNameIdentifierType": "LEGL" } ] },
+      "customerIdentification": "cust-778" }, "accountNumber": [ "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy" ] } ] },
+    "beneficiary": { "beneficiaryPerson": [ { "legalPerson": {
+      "name": { "nameIdentifier": [ { "legalPersonName": "Mercado Bom Preço Ltda", "legalPersonNameIdentifierType": "LEGL" } ] } } } ] },
+    "payloadMetadata": { "payloadVersion": "101.2023" }
+  }
+}
+```
+
+```json
+{ "status": "accepted", "reference": "tr_01M68ZT4S222Y4KJ3X047N8T99", "reason": "" }
+```
+
+An invalid payload or an address that is not the platform's answers `{"status": "rejected", "reason": "…"}`; a bad signature `401`.
+
+## 12. ISO 8583 mapping summary
 
 | API field | ISO 8583 | Notes |
 |-----------|----------|-------|
@@ -923,34 +1485,64 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 
 ---
 
-## 12. Endpoint index
+## 13. Endpoint index
 
 | Method | Path | Host | Scope | Idempotent | Notes |
 |--------|------|------|-------|-----------|-------|
-| POST | `/oauth2/token` | api | — | — | mTLS client auth |
+| POST | `/oauth2/token` | api | the client's certificate (mTLS) | — | Client credentials; a 5-minute token bound to the certificate |
 | POST | `/v1/auth/nostr` | api | — | — | NIP-98 + DPoP |
 | POST | `/v1/payment-intents` | api | `payments:write` | Key | |
+| GET | `/v1/payment-intents` | api | `payments:read` or the merchant's session | Yes | Filters: merchant, status, method, dates ([§8.7](#87-lists)) |
 | GET | `/v1/payment-intents/{id}` | api | `payments:read` | Yes | |
-| POST | `/v1/payment-intents/{id}/confirm` | api | `payments:write` | Key | 3DS, Pix |
+| POST | `/v1/payment-intents/{id}/confirm` | api | `payments:write` | Key | 3DS, Pix, crypto |
 | POST | `/v1/payment-intents/{id}/capture` | api | `payments:write` | Key | |
 | POST | `/v1/payment-intents/{id}/cancel` | api | `payments:write` | Key | Reversal |
 | POST | `/v1/terminal/authorizations` | terminal | terminal cert | STAN | CDE |
-| POST | `/v1/refunds` | api | `refunds:write` | Key | |
+| POST | `/v1/refunds` | api | `refunds:write` or an app session | Key | App sessions refund their own merchant's sales |
 | GET | `/v1/refunds/{id}` | api | `payments:read` | Yes | |
-| POST | `/v1/payment-methods` | vault | publishable key / mTLS | Key | CDE |
-| DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Deletes network tokens too |
+| POST | `/v1/payment-methods` | vault | publishable key / mTLS | Key | Planned (CDE) |
+| DELETE | `/v1/payment-methods/{id}` | vault | `payments:write` | Yes | Planned; deletes network tokens too |
 | GET | `/v1/disputes` · `/v1/disputes/{id}` | api | `disputes:write` | Yes | |
 | POST | `/v1/disputes/{id}/evidence` · `/accept` | api | `disputes:write` | Key | |
-| POST | `/v1/accounts` | api | `accounts:write` | Key | |
+| GET | `/v1/risk/reviews` · `/{id}` | api | `risk:read` | Yes | Held sales and frozen terminals |
+| POST | `/v1/risk/reviews/{id}/resolve` | api | `risk:write` | Key | Audited |
+| POST | `/v1/accounts` | api | `accounts:write` | Key | Planned |
 | GET | `/v1/accounts/{id}/balance` · `/entries` | api | `accounts:read` | Yes | |
 | POST | `/v1/transfers` | api | `accounts:write` | Key | |
+| GET | `/v1/transfers/{id}` | api | `accounts:read` | Yes | |
 | POST | `/v1/payouts/quotes` | api | `payouts:write` | Key | |
 | POST | `/v1/payouts` | api | `payouts:write` | Key | RFC 9421 signature |
-| POST | `/v1/merchants` | api | `merchants:write` | Key | |
+| POST · GET | `/v1/merchants` | api | `merchants:write` | Key · Yes | Create; list, newest first |
+| GET | `/v1/merchants/{id}` | api | `merchants:write` or the merchant's session | Yes | |
 | POST | `/v1/merchants/{id}/devices` | api | `merchants:write` or the owner's session | Key | Root-signed kind 17710 |
 | POST | `/v1/merchants/{id}/enrollment-codes` | api | `merchants:write` or the owner's session | Key | Single use, 15 minutes |
 | GET · POST | `/v1/enrollment` | api | enrollment code | — | The phone enrolls itself |
+| GET | `/v1/merchants/{id}/summary` | api | `payments:read` or the merchant's session | Yes | The day at a glance |
+| GET | `/v1/merchants/{id}/summary/period` | api | `payments:read` or the merchant's session | Yes | By day, against the period before |
 | POST | `/v1/terminals` | api | `merchants:write` | Key | Issues the mTLS certificate |
-| POST | `/v1/terminals/{terminal_id}/revoke` | api | `merchants:write` | Key | Audited |
-| GET | `/v1/settlements/{id}` · `/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | |
-| POST | `/v1/webhook-endpoints` · `/{id}/replay` | api | `webhooks:write` | Key | |
+| POST | `/v1/terminals/{id}/revoke` | api | `merchants:write` | Key | Audited |
+| GET | `/v1/settlements` · `/{id}` · `/{id}/statement` · `/{id}/proofs/{receipt_event_id}` | api | `settlements:read` | Yes | App sessions see their own merchant |
+| GET | `/v1/transparency/{date}` | api | none (public) | Yes | The day's kind 7715 root |
+| GET | `/.well-known/nostr.json` | api | none (public, any origin) | Yes | NIP-05: the receipts and transparency keys and the relays; the receipt claim page (`/c`) checks receipts against it |
+| POST · GET | `/v1/terminal/journal` | api | app session | Yes | The device's kind 7714 journal; answers `missing` ranges and forks |
+| GET | `/v1/payment-intents/{id}/journal` | api | `payments:read` | Yes | The devices' signed entries about a payment |
+| POST | `/v1/webhook-endpoints` · `/{id}/replay` · `/{id}/rotate-secret` | api | `webhooks:write` | Key | Rotation keeps the old secret signing for an overlap |
+| GET · DELETE | `/v1/webhook-endpoints` · `/{id}` | api | `webhooks:write` | Yes | List and read (never secrets); DELETE stops an endpoint for good, audited |
+| GET | `/v1/crypto/markets` | api | `assets:read` | Yes | Best bid and ask across the exchanges |
+| GET | `/v1/holdings` | api | `assets:read` | Yes | Crypto and foreign balances, valued in reais |
+| POST | `/v1/conversions` | api | `assets:write` | Key | A 30-second quote |
+| GET · POST | `/v1/conversions/{id}` · `/{id}/execute` | api | `assets:read` · `assets:write` | Yes | Execute is idempotent |
+| POST | `/v1/crypto/withdrawals` | api | `payouts:write` | Key | Final once sent; screening and the travel rule first |
+| GET | `/v1/compliance/cases` · `/{id}` | api | `compliance:read` | Yes | Held deposits and travel-rule reviews |
+| POST | `/v1/compliance/cases/{id}/decision` | api | `compliance:write` | Key | Release, block or close, with a note |
+| GET | `/v1/compliance/screenings` | api | `compliance:read` | Yes | Every withdrawal address and deposit sender screened |
+| GET | `/v1/travel-rule/messages` | api | `compliance:read` | Yes | Travel-rule messages sent and received, without payloads |
+| GET | `/v1/travel-rule/messages/{id}` | api | `travel_rule:read` | Yes | With the IVMS101 payload (names and documents) |
+| POST | `/v1/travel-rule/inbound` | api | the adapter's signature | Reference | Messages from other providers |
+| GET | `/v1/international/accounts` | api | `assets:read` | Yes | Balances and details to receive from abroad |
+| POST | `/v1/international/payouts` | api | `payouts:write` | Key | Reversed in full if the transfer fails |
+| GET | `/v1/investments/quotes/{ticker}` | api | `assets:read` | Yes | Shares, units and BDRs |
+| GET · PUT | `/v1/investments/profile` | api | `assets:read` · `assets:write` | Yes | Suitability (CVM Resolution 30) |
+| POST | `/v1/investments/orders` | api | `assets:write` | Key | Through the broker; D+2 |
+| GET | `/v1/investments/positions` | api | `assets:read` | Yes | |
+| POST | `/v1/sandbox/pix/payments/{id}` · `/v1/sandbox/crypto/payments/{id}` · `/v1/sandbox/international/credits` | sandbox | `payments:write` | — | Sandbox only: the customer pays the Pix charge, the crypto transfer arrives, a credit comes from abroad |
