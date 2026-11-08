@@ -1,0 +1,9 @@
+# go build ./cmd/<name> writes the binary here under the command's name.
+/platform
+/signer
+/relaysim
+/schemesim
+/pixsim
+/devpki
+/tapsim
+/smoke
