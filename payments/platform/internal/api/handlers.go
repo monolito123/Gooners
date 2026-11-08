@@ -348,14 +348,8 @@ func (s *Server) createIntent(w http.ResponseWriter, r *http.Request) {
 			Nostr         *bool  `json:"nostr"`
 			RecipientNpub string `json:"recipient_npub"`
 		} `json:"receipt"`
-		Splits []any `json:"splits"`
 	}
 	if !decode(w, r, &in) {
-		return
-	}
-	if len(in.Splits) > 0 {
-		problem(w, r, http.StatusUnprocessableEntity, "splits-not-supported", "Split payments are not supported in this release",
-			"see payments/platform/README.md, implemented subset")
 		return
 	}
 	in.IntentInput.StatementDescriptor = in.StatementDescriptor
@@ -594,6 +588,41 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, b)
+}
+
+// createTransfer serves POST /v1/transfers (docs/02 §6.5).
+func (s *Server) createTransfer(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		FromAccount string `json:"from_account"`
+		ToAccount   string `json:"to_account"`
+		Amount      int64  `json:"amount"`
+		Currency    string `json:"currency"`
+		Description string `json:"description"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Currency != "" && in.Currency != "BRL" {
+		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "transfers move reais between accounts (currency BRL)")
+		return
+	}
+	p := from(r.Context())
+	t, err := s.svc.CreateTransfer(r.Context(), p.tenantID, payments.TransferInput{FromAccount: in.FromAccount, ToAccount: in.ToAccount, Amount: in.Amount,
+		Description: in.Description}, r.Header.Get("Idempotency-Key"), p.actor())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (s *Server) getTransfer(w http.ResponseWriter, r *http.Request) {
+	t, err := s.svc.GetTransfer(r.Context(), from(r.Context()).tenantID, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 func (s *Server) entries(w http.ResponseWriter, r *http.Request) {

@@ -179,6 +179,8 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/refunds/{id}", "payments:read", false, s.getRefund)
 	route("GET /v1/accounts/{id}/balance", "accounts:read", false, s.balance)
 	route("GET /v1/accounts/{id}/entries", "accounts:read", false, s.entries)
+	route("POST /v1/transfers", "accounts:write", true, s.createTransfer)
+	route("GET /v1/transfers/{id}", "accounts:read", false, s.getTransfer)
 	route("POST /v1/payouts/quotes", "payouts:write", true, s.quote)
 	route("POST /v1/payouts", "payouts:write", true, s.payout)
 	route("GET /v1/disputes", "disputes:write", false, s.listDisputes)
@@ -737,6 +739,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, payments.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
 		problem(w, r, http.StatusNotFound, "not-found", "Not found", err.Error())
+	case errors.Is(err, payments.ErrSplitMismatch):
+		problem(w, r, http.StatusUnprocessableEntity, "split-mismatch", "The splits do not add up to the amount", err.Error())
 	case errors.Is(err, payments.ErrInvalid):
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", err.Error())
 	case errors.Is(err, mobileauth.ErrUnauthorized):

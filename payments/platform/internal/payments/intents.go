@@ -50,6 +50,9 @@ type IntentInput struct {
 	StatementDescriptor string `json:"-"`
 	// ReceiptRecipient is a customer npub: the receipt is also gift-wrapped to it.
 	ReceiptRecipient string `json:"-"`
+	// Splits divide the amount among accounts of the tenant (splits.go).
+	Splits        []Split `json:"splits"`
+	SplitReversal string  `json:"split_reversal"`
 }
 
 // Intent is the API view of a payment intent.
@@ -70,9 +73,12 @@ type Intent struct {
 	LatestAttempt  map[string]any    `json:"latest_attempt"`
 	NextAction     map[string]any    `json:"next_action,omitempty"`
 	Receipt        map[string]any    `json:"receipt"`
+	Splits         []Split           `json:"splits,omitempty"`
+	SplitReversal  string            `json:"split_reversal,omitempty"`
 	CreatedAt      string            `json:"created_at"`
 	UpdatedAt      string            `json:"updated_at"`
 
+	splits                                                []storedSplit
 	tenantID, authID, panToken, txid, e2e, brand, funding string
 	installments                                          int
 	installmentType                                       string
@@ -83,16 +89,16 @@ const intentCols = `id, tenant_id::text, merchant_id, status, amount, amount_cap
 	installments, installment_type, COALESCE(description, ''), COALESCE(metadata, '{}'::jsonb), COALESCE(auth_id, ''), COALESCE(card_brand, ''),
 	COALESCE(card_last4, ''), COALESCE(card_funding, ''), COALESCE(pan_token, ''), COALESCE(pix_txid, ''), COALESCE(pix_e2e, ''),
 	COALESCE(pix_copia_e_cola, ''), COALESCE(decline_code, ''), COALESCE(receipt_event_id, ''), COALESCE(receipt_claim_url, ''), created_at, updated_at,
-	COALESCE(statement_descriptor, ''), COALESCE(receipt_recipient, '')`
+	COALESCE(statement_descriptor, ''), COALESCE(receipt_recipient, ''), COALESCE(splits, 'null'::jsonb), COALESCE(split_reversal, '')`
 
 func scanIntent(row pgx.Row) (*Intent, error) {
 	in := &Intent{Object: "payment_intent", CaptureMethod: "automatic"}
-	var meta []byte
+	var meta, splits []byte
 	var last4, copia, decline, receiptID, claim string
 	var created, updated time.Time
 	err := row.Scan(&in.ID, &in.tenantID, &in.MerchantID, &in.Status, &in.Amount, &in.AmountCaptured, &in.AmountRefunded, &in.Currency, &in.Channel,
 		&in.CaptureMethod, &in.installments, &in.installmentType, &in.Description, &meta, &in.authID, &in.brand, &last4, &in.funding,
-		&in.panToken, &in.txid, &in.e2e, &copia, &decline, &receiptID, &claim, &created, &updated, &in.descriptor, &in.recipient)
+		&in.panToken, &in.txid, &in.e2e, &copia, &decline, &receiptID, &claim, &created, &updated, &in.descriptor, &in.recipient, &splits, &in.SplitReversal)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -100,6 +106,8 @@ func scanIntent(row pgx.Row) (*Intent, error) {
 		return nil, err
 	}
 	_ = json.Unmarshal(meta, &in.Metadata)
+	_ = json.Unmarshal(splits, &in.splits)
+	in.Splits = publicSplits(in.splits)
 	in.Installments = map[string]any{"count": in.installments, "type": in.installmentType}
 	in.CreatedAt, in.UpdatedAt = created.UTC().Format(time.RFC3339), updated.UTC().Format(time.RFC3339)
 	if in.brand != "" || decline != "" {
@@ -176,11 +184,20 @@ func (s *Service) CreateIntent(ctx context.Context, tenantID string, in IntentIn
 		}
 		recipient = h
 	}
+	splits, reversal, err := s.validateSplits(ctx, tenantID, m, in)
+	if err != nil {
+		return nil, err
+	}
+	var splitsJSON []byte
+	if len(splits) > 0 {
+		splitsJSON, _ = json.Marshal(splits)
+	}
 	meta, _ := json.Marshal(in.Metadata)
 	id := ids.New("pi")
-	if _, err := s.pool.Exec(ctx, `INSERT INTO payment_intents (id, tenant_id, merchant_id, status, amount, currency, channel, capture_method, installments, installment_type, description, metadata, statement_descriptor, receipt_recipient)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'automatic', $8, $9, NULLIF($10, ''), $11, NULLIF($12, ''), NULLIF($13, ''))`,
-		id, tenantID, in.MerchantID, StatusRequiresPaymentMethod, in.Amount, in.Currency, in.Channel, in.Installments, in.InstallmentType, in.Description, meta, in.StatementDescriptor, recipient); err != nil {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO payment_intents (id, tenant_id, merchant_id, status, amount, currency, channel, capture_method, installments, installment_type, description, metadata, statement_descriptor, receipt_recipient, splits, split_reversal)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'automatic', $8, $9, NULLIF($10, ''), $11, NULLIF($12, ''), NULLIF($13, ''), $14, NULLIF($15, ''))`,
+		id, tenantID, in.MerchantID, StatusRequiresPaymentMethod, in.Amount, in.Currency, in.Channel, in.Installments, in.InstallmentType, in.Description, meta, in.StatementDescriptor, recipient,
+		splitsJSON, reversal); err != nil {
 		return nil, err
 	}
 	return s.GetIntent(ctx, tenantID, id)
@@ -399,65 +416,119 @@ func (s *Service) AuthorizeTerminal(ctx context.Context, tenantID string, ta Ter
 // instant release, no advance, no settlement (docs/07 §3.6).
 func (s *Service) capture(ctx context.Context, tenantID string, pi *Intent, m *Merchant, brand, funding string, mdr, ic int64, hold bool) (map[string]any, error) {
 	fees := s.cfg.Costs.SchemeFees(pi.Amount)
-	if err := s.post(ctx, tenantID, "capture:"+pi.ID, "card_capture", pi.ID,
-		ledger.CardCapture(brand, m.ID, ledger.CardCaptureAmounts{Gross: pi.Amount, MDR: mdr, Interchange: ic, SchemeFees: fees})); err != nil {
+	// The sale's net goes to the merchant of record; in the same journal, the other split
+	// recipients' shares move to them (splits.go).
+	others, kept := splitShares(m.ID, pi.splits, pi.Amount, mdr)
+	ps := ledger.CardCapture(brand, m.ID, ledger.CardCaptureAmounts{Gross: pi.Amount, MDR: mdr, Interchange: ic, SchemeFees: fees})
+	ps = append(ps, splitPostings(ledger.MerchantPayable, m.ID, others)...)
+	if err := s.post(ctx, tenantID, "capture:"+pi.ID, "card_capture", pi.ID, ps); err != nil {
 		return nil, err
 	}
-	payable := pi.Amount - mdr
 	dates := pricing.SettlementDates(s.cfg.Now(), funding, pi.installments)
-	parts := pricing.Split(payable, len(dates))
-	annual, eligible := s.cfg.Costs.AnnualRate(m.Plan.Tier)
-	instant := m.Plan.Instant && eligible && !hold
-	arr := arrangement(brand, funding)
-	recIDs := make([]int64, len(dates))
-	for i, d := range dates {
-		if err := s.pool.QueryRow(ctx, `INSERT INTO receivables (tenant_id, merchant_id, payment_intent_id, brand, arrangement, settles_on, amount, status, held)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8) RETURNING id`, tenantID, m.ID, pi.ID, brand, arr, d, parts[i], hold).Scan(&recIDs[i]); err != nil {
+	instant, feeTotal := false, int64(0)
+	if kept > 0 {
+		var err error
+		if instant, feeTotal, err = s.settleShare(ctx, tenantID, pi, m, kept, brand, funding, dates, hold, ""); err != nil {
 			return nil, err
 		}
 	}
-	// Instant settlement advances the receivables: their assignment to the platform is
-	// registered first. Without it the sale settles on schedule (docs/07 §1.6).
-	if instant && s.registrar != nil {
-		// The card authorization is waiting: a slow registrar costs the merchant the instant
-		// release, never the sale.
-		rctx, cancel := context.WithTimeout(ctx, registrarBudget)
-		lines, err := s.receivableLines(rctx, tenantID, recIDs)
-		if err == nil {
-			err = s.commitAdvance(rctx, tenantID, m.ID, "capture:"+pi.ID, "instant_release", pi.ID, lines)
-		}
-		cancel()
+	var splitOut []map[string]any
+	for _, o := range others {
+		r, err := s.GetMerchant(ctx, tenantID, o.merchant)
 		if err != nil {
-			s.log.Warn("instant settlement not registered; the sale settles on schedule", "payment_intent", pi.ID, "err", err)
-			instant = false
+			return nil, err
 		}
-	}
-	var feeTotal int64
-	if instant {
-		for i, d := range dates {
-			fee := pricing.AdvanceFee(parts[i], annual, pricing.BusinessDaysBetween(s.cfg.Now(), d))
-			if err := s.post(ctx, tenantID, fmt.Sprintf("release:%s:%d", pi.ID, i), "instant_release", pi.ID, releaseInstant(m.ID, parts[i], fee)); err != nil {
-				return nil, err
-			}
-			if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $2 WHERE id = $1`, recIDs[i], fee); err != nil {
-				return nil, err
-			}
-			feeTotal += fee
+		inst, fee, err := s.settleShare(ctx, tenantID, pi, r, o.amount, brand, funding, dates, hold, ":"+r.ID)
+		if err != nil {
+			return nil, err
 		}
+		splitOut = append(splitOut, map[string]any{"account_id": r.AccountID, "amount": o.amount, "mode": settlementModeName(inst), "advance_fee": fee})
 	}
 	if _, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = amount, fee = $4, settlement_mode = $5, captured_at = $6, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2`, tenantID, pi.ID, StatusCaptured, mdr, settlementMode(instant, len(dates)), s.cfg.Now()); err != nil {
 		return nil, err
 	}
-	mode := "standard"
-	if instant {
-		mode = "instant"
+	out := map[string]any{"mode": settlementModeName(instant), "merchant_discount": mdr, "advance_fee": feeTotal, "net_available": kept - feeTotal, "settles_on": dates[len(dates)-1].Format("2006-01-02")}
+	if len(splitOut) > 0 {
+		out["splits"] = splitOut
 	}
-	out := map[string]any{"mode": mode, "merchant_discount": mdr, "advance_fee": feeTotal, "net_available": payable - feeTotal, "settles_on": dates[len(dates)-1].Format("2006-01-02")}
 	if hold {
 		out["held"] = true // shown to the merchant: the money waits for a review
 	}
 	return out, nil
+}
+
+func settlementModeName(instant bool) string {
+	if instant {
+		return "instant"
+	}
+	return "standard"
+}
+
+// settleShare books one merchant's part of a captured sale: its receivables by settlement date
+// and, when its own plan settles instantly, their advance (registered first, docs/07 §1.6). A
+// held sale's receivables wait for its risk review (docs/07 §3.6). suffix tells the merchant
+// of record's keys ("") from a split recipient's.
+func (s *Service) settleShare(ctx context.Context, tenantID string, pi *Intent, m *Merchant, payable int64, brand, funding string, dates []time.Time, hold bool, suffix string) (bool, int64, error) {
+	parts := pricing.Split(payable, len(dates))
+	annual, eligible := s.cfg.Costs.AnnualRate(m.Plan.Tier)
+	instant := m.Plan.Instant && eligible && !hold
+	arr := arrangement(brand, funding)
+	type rec struct {
+		id   int64
+		i    int
+		date time.Time
+	}
+	var recs []rec
+	for i, d := range dates {
+		if parts[i] == 0 {
+			continue // a share too small for every installment to carry a centavo
+		}
+		var id int64
+		if err := s.pool.QueryRow(ctx, `INSERT INTO receivables (tenant_id, merchant_id, payment_intent_id, brand, arrangement, settles_on, amount, status, held)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8) RETURNING id`, tenantID, m.ID, pi.ID, brand, arr, d, parts[i], hold).Scan(&id); err != nil {
+			return false, 0, err
+		}
+		recs = append(recs, rec{id, i, d})
+	}
+	// Instant settlement advances the receivables: their assignment to the platform is
+	// registered first. Without it the share settles on schedule.
+	if instant && s.registrar != nil {
+		// The card authorization is waiting: a slow registrar costs the merchant the instant
+		// release, never the sale.
+		rctx, cancel := context.WithTimeout(ctx, registrarBudget)
+		recIDs := make([]int64, len(recs))
+		for k, r := range recs {
+			recIDs[k] = r.id
+		}
+		lines, err := s.receivableLines(rctx, tenantID, recIDs)
+		if err == nil {
+			err = s.commitAdvance(rctx, tenantID, m.ID, "capture:"+pi.ID+suffix, "instant_release", pi.ID, lines)
+		}
+		cancel()
+		if err != nil {
+			s.log.Warn("instant settlement not registered; the share settles on schedule", "payment_intent", pi.ID, "merchant", m.ID, "err", err)
+			instant = false
+		}
+	}
+	var feeTotal int64
+	if instant {
+		for _, r := range recs {
+			fee := pricing.AdvanceFee(parts[r.i], annual, pricing.BusinessDaysBetween(s.cfg.Now(), r.date))
+			key := fmt.Sprintf("release:%s:%d", pi.ID, r.i)
+			if suffix != "" {
+				key = fmt.Sprintf("release:%s%s:%d", pi.ID, suffix, r.i)
+			}
+			if err := s.post(ctx, tenantID, key, "instant_release", pi.ID, releaseInstant(m.ID, parts[r.i], fee)); err != nil {
+				return false, 0, err
+			}
+			if _, err := s.pool.Exec(ctx, `UPDATE receivables SET status = 'advanced', advance_fee = $2 WHERE id = $1`, r.id, fee); err != nil {
+				return false, 0, err
+			}
+			feeTotal += fee
+		}
+	}
+	return instant, feeTotal, nil
 }
 
 func (s *Service) issueReceipt(ctx context.Context, tenantID string, pi *Intent, m *Merchant, method, auth map[string]any, journal string) map[string]any {
@@ -599,7 +670,16 @@ func (s *Service) OnPix(ctx context.Context, hint apipix.Pix) error {
 		return err
 	}
 	fee := pricing.PixFee(m.Plan, amount)
-	if err := s.post(ctx, tenantID, "pix:"+p.EndToEndID, "pix_received", pi.ID, pixReceived(m.ID, amount, fee)); err != nil {
+	ps := pixReceived(m.ID, amount, fee)
+	if len(pi.splits) > 0 {
+		if amount == pi.Amount {
+			others, _ := splitShares(m.ID, pi.splits, amount, fee)
+			ps = append(ps, splitPostings(ledger.MerchantWallet, m.ID, others)...)
+		} else {
+			s.log.Error("a split Pix paid another amount: the merchant of record keeps it all", "payment_intent", pi.ID, "paid", amount, "expected", pi.Amount)
+		}
+	}
+	if err := s.post(ctx, tenantID, "pix:"+p.EndToEndID, "pix_received", pi.ID, ps); err != nil {
 		return err
 	}
 	tag, err := s.pool.Exec(ctx, `UPDATE payment_intents SET status = $3, amount_captured = $4, pix_e2e = $5, fee = $7, settlement_mode = 'instant', captured_at = $8, updated_at = now()
@@ -751,19 +831,20 @@ func (s *Service) Cancel(ctx context.Context, tenantID, id string) (*Intent, err
 }
 
 func (s *Service) reverseCaptureJournals(ctx context.Context, tenantID string, pi *Intent, m *Merchant) error {
-	rows, err := s.pool.Query(ctx, `SELECT id, amount, status, advance_fee FROM receivables WHERE tenant_id = $1 AND payment_intent_id = $2 ORDER BY id`, tenantID, pi.ID)
+	rows, err := s.pool.Query(ctx, `SELECT id, merchant_id, amount, status, advance_fee FROM receivables WHERE tenant_id = $1 AND payment_intent_id = $2 ORDER BY id`, tenantID, pi.ID)
 	if err != nil {
 		return err
 	}
 	type rcv struct {
 		id          int64
+		merchant    string
 		amount, fee int64
 		status      string
 	}
 	var rs []rcv
 	for rows.Next() {
 		var r rcv
-		if err := rows.Scan(&r.id, &r.amount, &r.status, &r.fee); err != nil {
+		if err := rows.Scan(&r.id, &r.merchant, &r.amount, &r.status, &r.fee); err != nil {
 			rows.Close()
 			return err
 		}
@@ -777,14 +858,16 @@ func (s *Service) reverseCaptureJournals(ctx context.Context, tenantID string, p
 	for _, r := range rs {
 		switch r.status {
 		case "advanced":
-			ps = append(ps, ledger.Reverse(releaseInstant(m.ID, r.amount, r.fee))...)
+			ps = append(ps, ledger.Reverse(releaseInstant(r.merchant, r.amount, r.fee))...)
 		case "released":
-			ps = append(ps, ledger.Reverse(releaseScheduled(m.ID, r.amount))...)
+			ps = append(ps, ledger.Reverse(releaseScheduled(r.merchant, r.amount))...)
 		}
 	}
 	mdr := pricing.MDR(m.Plan, pi.Amount, pi.funding, pi.installments)
-	ps = append(ps, ledger.Reverse(ledger.CardCapture(pi.brand, m.ID, ledger.CardCaptureAmounts{
-		Gross: pi.Amount, MDR: mdr, Interchange: s.cfg.Costs.Interchange(pi.Amount, pi.funding), SchemeFees: s.cfg.Costs.SchemeFees(pi.Amount)}))...)
+	others, _ := splitShares(m.ID, pi.splits, pi.Amount, mdr)
+	capture := ledger.CardCapture(pi.brand, m.ID, ledger.CardCaptureAmounts{
+		Gross: pi.Amount, MDR: mdr, Interchange: s.cfg.Costs.Interchange(pi.Amount, pi.funding), SchemeFees: s.cfg.Costs.SchemeFees(pi.Amount)})
+	ps = append(ps, ledger.Reverse(append(capture, splitPostings(ledger.MerchantPayable, m.ID, others)...))...)
 	if err := s.post(ctx, tenantID, "cancel:"+pi.ID, "card_capture_reversal", pi.ID, ps); err != nil {
 		return err
 	}
@@ -794,8 +877,10 @@ func (s *Service) reverseCaptureJournals(ctx context.Context, tenantID string, p
 	if s.registrar != nil {
 		// The platform no longer finances the reversed sale: free its assignment at the
 		// registrar. The unit's lower total is registered by the next SyncReceivableUnits.
-		if err := s.registrar.CancelEffect(ctx, "capture:"+pi.ID); err != nil {
-			s.log.Error("cancel the registrar effect of a reversed sale", "payment_intent", pi.ID, "err", err)
+		for _, key := range append([]string{"capture:" + pi.ID}, splitKeys(pi.ID, others)...) {
+			if err := s.registrar.CancelEffect(ctx, key); err != nil {
+				s.log.Error("cancel the registrar effect of a reversed sale", "payment_intent", pi.ID, "key", key, "err", err)
+			}
 		}
 	}
 	return nil
@@ -859,7 +944,9 @@ func (s *Service) CreateRefund(ctx context.Context, tenantID, piID string, amoun
 	if pi.txid != "" {
 		ref.Method, ref.Status = "pix_return", "pending"
 		devID := strings.ToLower(ref.ID[3:]) // 26 alphanumerics
-		if err := s.post(ctx, tenantID, "refund:"+ref.ID, "pix_refund_send", ref.ID, ledger.PixRefundSend(pi.MerchantID, amount)); err != nil {
+		shares := reversalShares(pi.MerchantID, pi.splits, pi.SplitReversal, pi.Amount, amount)
+		ps := append(walletDebits(shares), ledger.Posting{Account: ledger.AccPixInTransit, Direction: ledger.Credit, Amount: amount})
+		if err := s.post(ctx, tenantID, "refund:"+ref.ID, "pix_refund_send", ref.ID, ps); err != nil {
 			unreserve()
 			return nil, err
 		}
@@ -913,7 +1000,7 @@ func (s *Service) refundCard(ctx context.Context, tenantID string, pi *Intent, r
 	if !res.Approved {
 		return fmt.Errorf("%w: refund authorization %s (%s)", ErrDeclined, res.ResponseCode, res.Decline.Code)
 	}
-	if err := s.post(ctx, tenantID, "refund:"+ref.ID, "refund", ref.ID, cardRefund(pi.brand, pi.MerchantID, ref.Amount)); err != nil {
+	if err := s.post(ctx, tenantID, "refund:"+ref.ID, "refund", ref.ID, cardRefund(pi.brand, reversalShares(pi.MerchantID, pi.splits, pi.SplitReversal, pi.Amount, ref.Amount), ref.Amount)); err != nil {
 		return err
 	}
 	ref.Status = "succeeded"

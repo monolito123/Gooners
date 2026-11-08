@@ -1474,6 +1474,76 @@
             },
             "description": "Immutable ledger postings for the account"
           }
+        },
+        {
+          "name": "Move available money between two merchants' accounts of one tenant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transfers"
+              ]
+            },
+            "description": "Move available money between two merchants' accounts of one tenant\n\nOne ledger journal: the amount leaves from_account's available balance and arrives in\nto_account's, or nothing happens (422 insufficient_funds). Money leaves only an active\nmerchant's account (409 merchant_not_active otherwise) and never arrives at a closed\none. The transfer is identified by the tenant and the Idempotency-Key: a retry, even\nafter an error, returns the transfer the first attempt made, never a second one. Sends\ntransfer.posted.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_account\": \"acc_01JB9MKTP00000000000000001\",\n  \"to_account\": \"acc_01JB9SE77ER000000000000001\",\n  \"amount\": 5000,\n  \"description\": \"Bônus de frete outubro\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Read a transfer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transfers/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transfers",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Read a transfer"
+          }
         }
       ]
     },

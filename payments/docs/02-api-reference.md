@@ -580,6 +580,8 @@ A sale the fraud shield approved but held, and a terminal it froze, open a revie
 
 ### 6.1 `POST /v1/accounts`
 
+Not built. Every merchant has its account from creation (`account_id`, [§8.1](#81-post-v1merchants-onboarding)), and transfers and payouts move money between those accounts. A marketplace's own account is the merchant it creates for itself. A separate sub-ledger, whose holders are not merchants, would need its own KYB and payout rules. The planned shape:
+
 ```json
 {
   "holder": { "type": "sub_merchant", "id": "mer_01JB9SE77ER000000000000001" },
@@ -632,7 +634,13 @@ Returns immutable ledger postings: `{ "id", "journal_id", "direction": "credit",
 
 ### 6.4 Split payments
 
-Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) are applied atomically at capture in one journal. The `bears_fees: true` recipient pays the MDR. The sum of splits must equal `amount`, or the request fails with `422 split_mismatch`. Refunds and chargebacks reverse splits pro rata unless the intent sets `split_reversal: "primary_only"`.
+Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) divide its amount among accounts of the tenant, on card and Pix payments.
+
+**Rules.** At most ten splits, adding up to `amount`, or the request fails with `422 split_mismatch`. Each is an active merchant's account, none twice. Exactly one has `bears_fees: true`, and it pays the MDR (or the Pix fee). Its amount must cover the highest fee the merchant's plan can charge on the sale.
+
+**At capture.** The split is applied in one journal. The merchant of record (the intent's merchant, whose MID the network saw) is credited the sale net of fees, as its signed statement shows, and the same journal moves every other recipient's share to that recipient. Each share then settles under its recipient's own plan: its receivables, its instant settlement and advance fee, its payouts. The authorization's `settlement.splits` lists them.
+
+**Reversals.** Refunds take the shares back pro rata to the splits' amounts, with the fee bearer taking the rounding. With `split_reversal: "primary_only"`, they are charged to the merchant of record alone. Canceling a captured split sale reverses every recipient's share and instant release. Chargebacks and MED returns are charged to the merchant of record, which recovers its partners' part by transfer (§6.5) or under its own terms.
 
 ### 6.5 `POST /v1/transfers`
 
@@ -647,17 +655,22 @@ Splits on a payment intent ([§4.2](#42-post-v1payment-intents)) are applied ato
 
 ```json
 {
-  "id": "tr_01JBK6E5F6G7H8J9K0M1M2N3P4",
+  "id": "tr_3QK8ZWJ5M2T7P4N6R9V1X0B8CD",
   "object": "transfer",
   "status": "posted",
   "amount": 5000,
   "currency": "BRL",
-  "journal_id": "jr_01JBK6E5F6G7H8J9K0M1M2N3P5",
+  "from_account": "acc_01JB9MKTP00000000000000001",
+  "to_account": "acc_01JB9SE77ER000000000000001",
+  "description": "Bônus de frete outubro",
+  "journal_id": "jr_7MZD4W1Q8K3N5T2V6X9B0R4PFH",
   "posted_at": "2026-10-29T18:10:02Z"
 }
 ```
 
-Transfers stay inside one tenant. They are synchronous because they are a single ledger transaction.
+Transfers stay inside one tenant. They are synchronous because they are a single ledger transaction: posted, or refused with `422 insufficient_funds` when the source's available balance is short. Money leaves only an active merchant's account and never arrives at a closed one (`409 merchant_not_active`).
+
+The transfer is identified by the tenant and the `Idempotency-Key`. A retry, even after an error, returns the transfer the first attempt made, never a second one. `GET /v1/transfers/{id}` reads it back, and each posting appears in both accounts' entries (§6.3) with `type: "transfer"`. Sends `transfer.posted`.
 
 ---
 
@@ -1081,6 +1094,7 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding: the merchant cleared KYB, was refused, or is in review with findings the partner can fix (`findings` as in the merchant's `kyb`) |
 | `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
 | `terminal.revoked` | A terminal was revoked (lost device, merchant closed, fraud confirmed) |
+| `transfer.posted` | A transfer between two of the tenant's accounts was posted |
 | `terminal.certificate_issued` | The terminal CA signed a terminal's certificate (registration, a phone's first certificate, renewal); carries its SHA-256 and expiry, so an unexpected one can be spotted |
 | `terminal.frozen` | The fraud shield froze a terminal pending a review (§5.1) |
 | `risk.review_opened` / `.review_resolved` | A sale was held or a terminal frozen; a review released it or confirmed fraud (§5.1) |
@@ -1479,7 +1493,8 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 | POST | `/v1/risk/reviews/{id}/resolve` | api | `risk:write` | Key | Audited |
 | POST | `/v1/accounts` | api | `accounts:write` | Key | Planned |
 | GET | `/v1/accounts/{id}/balance` · `/entries` | api | `accounts:read` | Yes | |
-| POST | `/v1/transfers` | api | `accounts:write` | Key | Planned |
+| POST | `/v1/transfers` | api | `accounts:write` | Key | |
+| GET | `/v1/transfers/{id}` | api | `accounts:read` | Yes | |
 | POST | `/v1/payouts/quotes` | api | `payouts:write` | Key | |
 | POST | `/v1/payouts` | api | `payouts:write` | Key | RFC 9421 signature |
 | POST · GET | `/v1/merchants` | api | `merchants:write` | Key · Yes | Create; list, newest first |

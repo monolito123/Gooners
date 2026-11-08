@@ -952,10 +952,16 @@ paths:
 
   /v1/transfers:
     post:
-      x-goonerspay-availability: planned
       tags: [accounts]
       operationId: createTransfer
-      summary: "Planned: Move funds between accounts of one tenant"
+      summary: Move available money between two merchants' accounts of one tenant
+      description: |
+        One ledger journal: the amount leaves from_account's available balance and arrives in
+        to_account's, or nothing happens (422 insufficient_funds). Money leaves only an active
+        merchant's account (409 merchant_not_active otherwise) and never arrives at a closed
+        one. The transfer is identified by the tenant and the Idempotency-Key: a retry, even
+        after an error, returns the transfer the first attempt made, never a second one. Sends
+        transfer.posted.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -973,6 +979,8 @@ paths:
                   $ref: "#/components/schemas/Id"
                 amount:
                   $ref: "#/components/schemas/MinorUnits"
+                currency:
+                  const: BRL
                 description:
                   type: string
                   maxLength: 140
@@ -983,7 +991,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Transfer"
-        "422":
+        "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/transfers/{id}:
+    get:
+      tags: [accounts]
+      operationId: getTransfer
+      summary: Read a transfer
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Id"
+      responses:
+        "200":
+          description: The transfer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transfer"
+        "4XX":
           $ref: "#/components/responses/Problem"
         default:
           $ref: "#/components/responses/Problem"
@@ -2855,12 +2887,19 @@ components:
                   pattern: "^[0-9]{11}([0-9]{3})?$"
         splits:
           type: array
+          description: |
+            Divide the amount among accounts of the tenant (docs/02 §6.4): up to 10, adding up
+            to amount (422 split_mismatch otherwise), each an active merchant's account, exactly
+            one with bears_fees, whose amount must cover the highest fee the merchant's plan can
+            charge on the sale. Card and Pix payments.
+          maxItems: 10
           items:
             $ref: "#/components/schemas/Split"
         split_reversal:
           type: string
           enum: [pro_rata, primary_only]
           default: pro_rata
+          description: How refunds take the shares back. Chargebacks and MED returns are charged to the merchant of record.
         receipt:
           type: object
           properties:
@@ -3080,6 +3119,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Split"
+        split_reversal:
+          type: string
+          enum: [pro_rata, primary_only]
         next_action:
           $ref: "#/components/schemas/NextAction"
         latest_attempt:
@@ -3228,6 +3270,25 @@ components:
               description: The fraud shield holds the sale until a review releases it (docs/07 §3.6); no instant release.
             estimated_available_at:
               $ref: "#/components/schemas/Timestamp"
+            splits:
+              type: array
+              description: |
+                A split sale's other recipients (docs/02 §6.4): each one's share, net of the fees
+                when it bears them, and how it settles under its own plan. The fields above are
+                the merchant of record's own part.
+              items:
+                type: object
+                required: [account_id, amount, mode]
+                properties:
+                  account_id:
+                    $ref: "#/components/schemas/Id"
+                  amount:
+                    type: integer
+                  mode:
+                    type: string
+                    enum: [instant, standard]
+                  advance_fee:
+                    type: integer
 
     RiskReview:
       type: object
@@ -3559,19 +3620,24 @@ components:
 
     Transfer:
       type: object
-      required: [id, object, status, amount, currency, journal_id]
+      required: [id, object, status, amount, currency, from_account, to_account, journal_id, posted_at]
       properties:
         id:
           $ref: "#/components/schemas/Id"
         object:
           const: transfer
         status:
-          type: string
-          enum: [posted, rejected]
+          const: posted
         amount:
           $ref: "#/components/schemas/MinorUnits"
         currency:
           $ref: "#/components/schemas/Currency"
+        from_account:
+          $ref: "#/components/schemas/Id"
+        to_account:
+          $ref: "#/components/schemas/Id"
+        description:
+          type: string
         journal_id:
           $ref: "#/components/schemas/Id"
         posted_at:

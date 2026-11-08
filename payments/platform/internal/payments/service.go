@@ -493,8 +493,11 @@ func outflowConfirmed(n int64) []ledger.Posting {
 	return []ledger.Posting{{Account: ledger.AccPixInTransit, Direction: ledger.Debit, Amount: n}, {Account: ledger.AccSafeguardingReserve, Direction: ledger.Credit, Amount: n}}
 }
 
-func cardRefund(brand, m string, n int64) []ledger.Posting {
-	return append(ledger.CardRefund(brand, m, n), ledger.SafeguardRelease(n)...)
+// cardRefund debits the shares of a refund of n from their merchants' wallets (one share, the
+// merchant's, without splits) and owes n to the scheme.
+func cardRefund(brand string, shares []share, n int64) []ledger.Posting {
+	ps := append(walletDebits(shares), ledger.Posting{Account: ledger.SchemePayable(brand), Direction: ledger.Credit, Amount: n})
+	return append(ps, ledger.SafeguardRelease(n)...)
 }
 
 func (s *Service) post(ctx context.Context, tenantID, key, typ, ref string, ps []ledger.Posting) error {
