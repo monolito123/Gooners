@@ -78,6 +78,7 @@ type stack struct {
 
 	receiptsKey, transparencyKey nostr.Keys
 	relay                        *relay.Relay // the sandbox relay receipts are published to
+	handler                      http.Handler // the API, to serve it again over TLS
 	relayURL                     string
 }
 
@@ -196,7 +197,8 @@ func newStack(t *testing.T, opts ...any) *stack {
 	st.travelSecret = webhooks.NewSecret()
 	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret,
 		Nostr: api.NostrIdentity{ReceiptsPub: signer.PubHex, TransparencyPub: st.transparencyKey.PubHex, Relays: []string{st.relayURL}}}, svc, pool, log)
-	apiServer := httptest.NewServer(srv.Handler())
+	st.handler = srv.Handler()
+	apiServer := httptest.NewServer(st.handler)
 	t.Cleanup(apiServer.Close)
 	st.api = apiServer.URL
 	if st.key, err = api.NewAPIKey(ctx, pool, tenant, "e2e", []string{"*"}, false); err != nil {

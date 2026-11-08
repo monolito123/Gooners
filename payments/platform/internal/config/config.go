@@ -93,7 +93,13 @@ type Config struct {
 	CardDataHSMKeyARN                string
 	SignerURL                        string
 	SignerTLS                        *TLSFiles
-	TransparencyPadTo                int // log padding granularity; 0 = 4096
+
+	// Partner tokens (docs/02 §3.1): the public TLS listener asks clients for a certificate
+	// (HTTP_TLS_CLIENT_CERTS=request) so certificate-bound tokens can be issued and checked;
+	// behind a TLS-terminating proxy, ClientCertHeader carries it (with TRUST_PROXY).
+	HTTPRequestClientCerts bool
+	ClientCertHeader       string
+	TransparencyPadTo      int // log padding granularity; 0 = 4096
 
 	// Device attestation (docs/05 §2.4, §3.6). Configuring either set of roots turns on strict
 	// attestation: devices must prove they are the genuine app on genuine hardware.
@@ -240,6 +246,7 @@ func Read() (*Config, error) {
 	}
 	c.CardDataHSMKeyARN = os.Getenv("CARDDATA_HSM_KEY_ARN")
 	c.SignerURL, c.SignerTLS = os.Getenv("SIGNER_URL"), tlsEnv("SIGNER_TLS")
+	c.HTTPRequestClientCerts, c.ClientCertHeader = os.Getenv("HTTP_TLS_CLIENT_CERTS") == "request", os.Getenv("CLIENT_CERT_HEADER")
 	if v := os.Getenv("TRANSPARENCY_PAD_TO"); v != "" {
 		if c.TransparencyPadTo, err = strconv.Atoi(v); err != nil || c.TransparencyPadTo < 1 {
 			return nil, fmt.Errorf("config: TRANSPARENCY_PAD_TO must be a positive number of leaves")

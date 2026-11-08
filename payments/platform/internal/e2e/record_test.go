@@ -19,13 +19,22 @@ func init() {
 	if file == "" {
 		return
 	}
-	http.DefaultClient.Transport = &recorder{base: http.DefaultTransport, file: file}
+	http.DefaultClient.Transport = &recorder{base: http.DefaultTransport, file: file, mu: &sync.Mutex{}}
+}
+
+// recording wraps a test's own transport (a TLS client with a certificate) in the recorder
+// when the suite records.
+func recording(base http.RoundTripper) http.RoundTripper {
+	if r, ok := http.DefaultClient.Transport.(*recorder); ok {
+		return &recorder{base: base, file: r.file, mu: r.mu}
+	}
+	return base
 }
 
 type recorder struct {
 	base http.RoundTripper
 	file string
-	mu   sync.Mutex
+	mu   *sync.Mutex
 }
 
 func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -40,7 +49,7 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body = io.NopCloser(bytes.NewReader(b))
 	}
 	resp, err := r.base.RoundTrip(req)
-	if err != nil || !(strings.HasPrefix(req.URL.Path, "/v1/") || strings.HasPrefix(req.URL.Path, "/.well-known/")) {
+	if err != nil || !(strings.HasPrefix(req.URL.Path, "/v1/") || strings.HasPrefix(req.URL.Path, "/.well-known/") || strings.HasPrefix(req.URL.Path, "/oauth2/")) {
 		return resp, err
 	}
 	raw, err := io.ReadAll(resp.Body)

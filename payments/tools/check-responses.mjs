@@ -74,10 +74,14 @@ for (const r of lines) {
     const rb = deref(op.requestBody);
     const media = rb.content?.[(r.request_type || 'application/json').split(';')[0].trim()] ?? rb.content?.['application/json'];
     let sent;
-    try {
-      sent = JSON.parse(r.request);
-    } catch {
-      sent = undefined;
+    if ((r.request_type || '').startsWith('application/x-www-form-urlencoded')) {
+      sent = Object.fromEntries(new URLSearchParams(r.request));
+    } else {
+      try {
+        sent = JSON.parse(r.request);
+      } catch {
+        sent = undefined;
+      }
     }
     if (media?.schema && sent !== undefined) {
       const v = validatorFor(`${r.method} ${tpl.t} request`, media.schema);

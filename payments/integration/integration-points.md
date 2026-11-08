@@ -46,7 +46,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 19 | Receipt claim page and NIP-05 file | Opening the receipt QR | Built (served by the platform at `/c` and `/.well-known/nostr.json`) | Required |
 | 20 | Timestamp anchoring (ICP-Brasil TSA, OpenTimestamps) | Dating the daily roots independently | Missing | Optional |
 | 21 | Partners' webhook endpoints | Event delivery | Built | Per partner |
-| 22 | Partner token service (`/oauth2/token`, mTLS) | Bound partner tokens | Missing (API keys today) | Planned |
+| 22 | Partner token service (`/oauth2/token`, mTLS) | Certificate-bound partner tokens | Built | Optional (API keys remain) |
 | 23 | Prometheus and alerting | The runbook's alerts | Built (metrics) | Operationally required |
 | 24 | Operator identity (SSO) | Who ran each operator command | Missing | Required by the runbook |
 | 25 | KYB/KYC provider | Clearing merchants before they sell | Missing (operators decide) | Required by regulation |
@@ -254,7 +254,7 @@ What remains: route a public host to the platform and set `RECEIPT_CLAIM_BASE` t
 
 **21. Partner webhooks.** Partners register endpoints (`POST /v1/webhook-endpoints`). Outside the sandbox they must be `https` on a public address. Delivery is signed, retried for 72 hours, and follows no redirects. The platform needs outbound internet access for it.
 
-**22. Partner authentication.** API keys work today: scoped, expiring, issued with `platform apikey`. Tokens from `/oauth2/token`, bound to a client certificate (RFC 8705), are planned and marked so in the contract. [The integration guide](../docs/10-integration-guide.md) is the partners' side of everything here.
+**22. Partner authentication.** API keys: scoped, expiring, issued with `platform apikey`. Or certificate-bound tokens: the operator registers the partner's certificate (`platform oauth-client`), and `POST /oauth2/token` issues five-minute tokens accepted only with that certificate (RFC 8705). On the public listener set `HTTP_TLS_CLIENT_CERTS=request`; behind a TLS-terminating proxy, `CLIENT_CERT_HEADER` with `TRUST_PROXY`. [The integration guide](../docs/10-integration-guide.md) is the partners' side of everything here.
 
 ## 8. Operations
 
@@ -340,6 +340,6 @@ The code to write, smallest first. Contracts and certifications run alongside ([
 4. **The card readers:** the MPoC SDK adapter on Android (#15), Tap to Pay or a BLE reader on iPhone (#16).
 5. **The sponsor's dialect file** (#4) and the converter for its report and chargeback files (#5).
 6. **Operator SSO in front of the commands** (#24), and a KYB provider if operators should not clear merchants by hand (#25).
-7. **Later:** Play Integrity (#14), timestamp anchoring (#20), the partner token service (#22).
+7. **Later:** Play Integrity (#14), timestamp anchoring (#20). ~~The partner token service (#22)~~: built.
 
 `platform integrations -strict` passing in the production environment is the sign that everything the settings can show is in place; production's startup check enforces the same list.

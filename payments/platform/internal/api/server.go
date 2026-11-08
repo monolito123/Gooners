@@ -52,6 +52,9 @@ type Config struct {
 	// Nostr is what /.well-known/nostr.json publishes (NIP-05) and the receipt claim page
 	// reads: the keys that sign receipts and roots, and the relays that carry receipts.
 	Nostr NostrIdentity
+	// ClientCertHeader names the header a trusted TLS-terminating proxy puts the client's
+	// certificate in (URL-encoded PEM), for certificate-bound partner tokens behind the edge.
+	ClientCertHeader string
 }
 
 // NostrIdentity names the platform's Nostr keys and relays.
@@ -147,6 +150,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	open := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, instrument(pattern, h)) }
 	open("GET /.well-known/nostr.json", s.nip05)
+	open("POST /oauth2/token", s.token)
 	open("POST /v1/auth/nostr", s.loginNostr)
 	open("GET /v1/enrollment", s.getEnrollment)
 	open("POST /v1/enrollment", s.enroll)
@@ -527,22 +531,33 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			unauthorized("unauthorized", "Missing API key", "send Authorization: Bearer <key>")
 			return
 		}
-		var tenant string
-		var scopes []string
-		var expired bool
-		err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes, COALESCE(expires_at <= now(), false) FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`,
-			hashKey(key)).Scan(&tenant, &scopes, &expired)
-		if err != nil {
-			unauthorized("unauthorized", "Invalid API key", "")
-			return
-		}
-		if expired {
-			unauthorized("key-expired", "The API key expired", "issue a new key and retire this one")
-			return
-		}
-		p := principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}
-		for _, sc := range scopes {
-			p.scopes[sc] = true
+		var p principal
+		if strings.HasPrefix(key, "at_") {
+			// A partner's certificate-bound access token (POST /oauth2/token).
+			tp, code, err := s.tokenPrincipal(r, key)
+			if err != nil {
+				unauthorized(code, "Invalid access token", err.Error())
+				return
+			}
+			p = tp
+		} else {
+			var tenant string
+			var scopes []string
+			var expired bool
+			err := s.pool.QueryRow(r.Context(), `SELECT tenant_id::text, scopes, COALESCE(expires_at <= now(), false) FROM api_clients WHERE key_hash = $1 AND revoked_at IS NULL`,
+				hashKey(key)).Scan(&tenant, &scopes, &expired)
+			if err != nil {
+				unauthorized("unauthorized", "Invalid API key", "")
+				return
+			}
+			if expired {
+				unauthorized("key-expired", "The API key expired", "issue a new key and retire this one")
+				return
+			}
+			p = principal{tenantID: tenant, scopes: map[string]bool{}, keyID: payments.APIKeyID(hashKey(key))}
+			for _, sc := range scopes {
+				p.scopes[sc] = true
+			}
 		}
 		if scope == "terminal" {
 			// Without a certificate, terminals may use an API key only in the sandbox.

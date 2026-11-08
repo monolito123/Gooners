@@ -57,11 +57,13 @@ tags:
 paths:
   /oauth2/token:
     post:
-      x-goonerspay-availability: planned
       tags: [auth]
       operationId: issueToken
-      summary: "Planned: Issue an mTLS-bound access token (client credentials)"
-      security: []
+      summary: Issue a certificate-bound access token (client credentials)
+      description: |-
+        OAuth 2.0 client credentials (RFC 6749 §4.4) with mutual-TLS client authentication (RFC 8705): the connection presents the client's certificate, whose SHA-256 thumbprint the operator registered (platform oauth-client). The access token is opaque, works for 300 seconds, carries the scopes granted (all the client's, or those asked for in scope), and is accepted only on connections presenting the same certificate (401 token_binding otherwise).
+      security:
+        - partnerCertificate: []
       requestBody:
         required: true
         content:
@@ -85,9 +87,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/AccessToken"
         "400":
-          $ref: "#/components/responses/Problem"
+          description: invalid_request, unsupported_grant_type or invalid_scope (RFC 6749 §5.2)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
         "401":
-          $ref: "#/components/responses/Problem"
+          description: invalid_client — no certificate, an unknown or revoked client, or not its certificate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
         default:
           $ref: "#/components/responses/Problem"
 
@@ -2437,8 +2447,8 @@ components:
       bearerFormat: API key (sk_test_… in the sandbox, sk_live_… in production)
       description: |
         A partner API key with scopes, issued by the operator (platform apikey). Keys expire
-        (401 key_expired); see 02 §3.1. This is how partners authenticate today; the
-        certificate-bound OAuth token below is the planned production edge.
+        (401 key_expired); see 02 §3.1. The certificate-bound access token (mtlsBoundToken) is
+        the alternative without a long-lived secret.
     dpopSession:
       type: http
       scheme: dpop
@@ -2448,8 +2458,11 @@ components:
     mtlsBoundToken:
       type: http
       scheme: bearer
-      bearerFormat: JWT (RFC 8705 certificate-bound)
-      description: OAuth 2.0 access token bound to the TLS client certificate (cnf.x5t#S256).
+      bearerFormat: at_… (opaque, RFC 8705 certificate-bound)
+      description: An access token from POST /oauth2/token, accepted only on connections presenting the certificate it was issued to.
+    partnerCertificate:
+      type: mutualTLS
+      description: The partner client's TLS certificate, registered by its SHA-256 thumbprint (x5t#S256).
     nostrHttpAuth:
       type: http
       scheme: nostr
@@ -2614,6 +2627,16 @@ components:
         expires_in:
           type: integer
         scope:
+          type: string
+
+    OAuthError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_client, invalid_grant, unauthorized_client, unsupported_grant_type, invalid_scope]
+        error_description:
           type: string
 
     Session:

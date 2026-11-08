@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/monolito123/Gooners/payments/platform/internal/api"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,24 +23,27 @@ import (
 
 // opsCommands are the operator commands (see the package comment and the runbook).
 var opsCommands = map[string]func(context.Context, []string) error{
-	"merchant-status":   merchantStatus,
-	"terminal-revoke":   terminalRevoke,
-	"apikey-list":       apikeyList,
-	"apikey-revoke":     apikeyRevoke,
-	"disputes-import":   disputesImport,
-	"disputes-list":     disputesList,
-	"write-off":         writeOff,
-	"recon-card":        reconCard,
-	"recon-pix":         reconPix,
-	"recon-exceptions":  reconExceptions,
-	"recon-resolve":     reconResolve,
-	"recon-allocate":    reconAllocate,
-	"recon-custody":     reconCustody,
-	"decripto":          deCripto,
-	"decripto-filed":    deCriptoFiled,
-	"compliance-cases":  complianceCases,
-	"audit-verify":      auditVerify,
-	"compliance-decide": complianceDecide,
+	"merchant-status":     merchantStatus,
+	"terminal-revoke":     terminalRevoke,
+	"apikey-list":         apikeyList,
+	"apikey-revoke":       apikeyRevoke,
+	"oauth-client":        oauthClient,
+	"oauth-client-list":   oauthClientList,
+	"oauth-client-revoke": oauthClientRevoke,
+	"disputes-import":     disputesImport,
+	"disputes-list":       disputesList,
+	"write-off":           writeOff,
+	"recon-card":          reconCard,
+	"recon-pix":           reconPix,
+	"recon-exceptions":    reconExceptions,
+	"recon-resolve":       reconResolve,
+	"recon-allocate":      reconAllocate,
+	"recon-custody":       reconCustody,
+	"decripto":            deCripto,
+	"decripto-filed":      deCriptoFiled,
+	"compliance-cases":    complianceCases,
+	"audit-verify":        auditVerify,
+	"compliance-decide":   complianceDecide,
 }
 
 type opsFlags struct {
@@ -155,6 +162,76 @@ func apikeyRevoke(ctx context.Context, args []string) error {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error { return svc.RevokeAPIKey(ctx, *o.tenant, id, *o.reason, *o.actor) })
+}
+
+// oauthClient registers a partner's OAuth client for POST /oauth2/token: the certificate files
+// give the thumbprints its TLS connections must present (RFC 8705).
+func oauthClient(ctx context.Context, args []string) error {
+	var name, scopes, certs string
+	o, err := newOps("oauth-client", args, func(fs *flag.FlagSet) {
+		fs.StringVar(&name, "name", "", "the partner's name for this client")
+		fs.StringVar(&scopes, "scopes", "", "comma-separated scopes")
+		fs.StringVar(&certs, "cert", "", "the client's certificate (PEM), comma-separated for several")
+	})
+	if err != nil {
+		return err
+	}
+	if *o.actor == "" {
+		return errors.New("-actor is required")
+	}
+	var thumbprints []string
+	for _, f := range strings.Split(certs, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		b, err := os.ReadFile(f) // #nosec G304 -- operator command, file named on its command line
+		if err != nil {
+			return err
+		}
+		blk, _ := pem.Decode(b)
+		if blk == nil || blk.Type != "CERTIFICATE" {
+			return fmt.Errorf("%s: no PEM certificate", f)
+		}
+		if _, err := x509.ParseCertificate(blk.Bytes); err != nil {
+			return fmt.Errorf("%s: %w", f, err)
+		}
+		thumbprints = append(thumbprints, api.Thumbprint(blk.Bytes))
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		c, err := svc.RegisterOAuthClient(ctx, *o.tenant, name, strings.Split(scopes, ","), thumbprints, *o.actor)
+		if err != nil {
+			return err
+		}
+		return printJSON(c)
+	})
+}
+
+func oauthClientList(ctx context.Context, args []string) error {
+	o, err := newOps("oauth-client-list", args, nil)
+	if err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		cs, err := svc.ListOAuthClients(ctx, *o.tenant)
+		if err != nil {
+			return err
+		}
+		return printJSON(cs)
+	})
+}
+
+func oauthClientRevoke(ctx context.Context, args []string) error {
+	var id string
+	o, err := newOps("oauth-client-revoke", args, func(fs *flag.FlagSet) { fs.StringVar(&id, "id", "", "client ID (cli_…)") })
+	if err != nil {
+		return err
+	}
+	if err := o.requireActor(); err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		return svc.RevokeOAuthClient(ctx, *o.tenant, id, *o.reason, *o.actor)
+	})
 }
 
 func disputesImport(ctx context.Context, args []string) error {

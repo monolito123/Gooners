@@ -21,7 +21,7 @@ The PAN never transits `api.` hosts. Hosted fields and SDKs post card data strai
 
 | Client | Mechanism | Standard |
 |--------|-----------|----------|
-| BaaS partner servers | Today: an API key with scopes (`Authorization: Bearer sk_test_…` in the sandbox, `sk_live_…` in production), issued by the operator and expiring ([§3.1](#31-post-oauth2token-partners)). Planned production edge: `client_credentials` grant with mTLS client authentication, the access token (5 min) bound to the certificate thumbprint (`cnf.x5t#S256`) | RFC 6750; planned RFC 8705, aligned with the FAPI 2.0 security profile |
+| BaaS partner servers | An API key with scopes (`Authorization: Bearer sk_test_…` in the sandbox, `sk_live_…` in production), issued by the operator and expiring; or, without a long-lived secret, the `client_credentials` grant with mTLS client authentication, the access token (5 min) bound to the client's certificate ([§3.1](#31-post-oauth2token-partners)) | RFC 6750; RFC 6749 §4.4 with RFC 8705, aligned with the FAPI 2.0 security profile |
 | Merchant apps and the web dashboard | A Nostr HTTP Auth event (NIP-98, kind 27235) signed by an authorized device key is exchanged for a 15-minute session token bound to a DPoP key | NIP-98, RFC 9449 ([03 §4](03-nostr-layer.md#4-merchant-identity-and-authentication)) |
 | Terminals | Device certificate issued after attestation + per-request attestation token | [05 §2.4](05-mobile.md#24-attestation-and-device-integrity) |
 | High-value calls (payouts, bank account changes, API key changes) | Additionally signed with HTTP Message Signatures over method, path, `content-digest` and `idempotency-key` | RFC 9421, RFC 9530 |
@@ -123,24 +123,38 @@ The edge (Cloudflare API Shield with the platform's own CA) validates the client
 
 ### 3.1 `POST /oauth2/token` (partners)
 
-Planned: the platform authenticates partners with API keys today (§1.2); this exchange is the production edge's, and the contract marks it `x-goonerspay-availability: planned` like every operation not served yet (card tokenization, sub-ledger accounts and transfers).
+Partners authenticate with an API key (§1.2), or, without a long-lived secret, with this exchange: the OAuth 2.0 client-credentials grant over mutual TLS (RFC 8705).
+
+The operator registers the client with the SHA-256 thumbprint of the partner's certificate (`platform oauth-client -tenant … -name … -scopes … -cert partner.pem`). The partner then asks for a token over a TLS connection that presents that certificate.
+
+The token is opaque, works for 300 seconds, and carries the scopes granted: all the client's, or the subset asked for in `scope`. It is accepted only on connections presenting the same certificate; any other connection gets `401 token_binding`. Revoking the client (`platform oauth-client-revoke`) ends its tokens at once.
 
 ```http
 POST /oauth2/token HTTP/2
 Host: api.goonerspay.example
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20accounts%3Aread
+grant_type=client_credentials&client_id=cli_01JB7Y3Q&scope=payments%3Awrite%20payments%3Aread
 ```
 
 ```json
 {
-  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImF0LTIwMjYtMTAifQ.eyJzdWIiOiJjbGlfMDFKQjdZM1EiLCJ0ZW4iOiJ0ZW5fMDFKQjdYIiwic2NvcGUiOiJwYXltZW50czp3cml0ZSBhY2NvdW50czpyZWFkIiwiY25mIjp7Ing1dCNTMjU2IjoiYk9wVnN1c19wUmRSUHVaRUNCbXFaNkJENWh0cEtCUWdBVkdNeUktUnRRayJ9fQ.sig",
+  "access_token": "at_q0ZtW6m3T2bSx4Fv8Hk1LpYd9Rr5Nc7Ue2Ja6Gi0Bo4",
   "token_type": "Bearer",
   "expires_in": 300,
-  "scope": "payments:write accounts:read"
+  "scope": "payments:write payments:read"
 }
 ```
+
+Errors follow RFC 6749 §5.2:
+
+| Status | `error` | When |
+|--------|---------|------|
+| `400` | `unsupported_grant_type` | Any grant but `client_credentials` |
+| `400` | `invalid_scope` | A scope the client may not have |
+| `401` | `invalid_client` | No certificate, an unknown or revoked client, or not its certificate |
+
+When the platform runs behind a TLS-terminating proxy, the proxy passes the client's certificate in a header: `CLIENT_CERT_HEADER` with `TRUST_PROXY`, as URL-encoded PEM.
 
 Scopes: `payments:read`, `payments:write`, `refunds:write`, `disputes:write`, `accounts:read`, `accounts:write`, `payouts:write`, `merchants:write`, `webhooks:write`, `settlements:read`, `risk:read`, `risk:write`, `assets:read`, `assets:write`, `compliance:read`, `compliance:write`, `travel_rule:read`. A key with `*` holds every scope except `compliance:write` and `travel_rule:read`, which the platform grants by name to its compliance officers' keys: releasing or blocking funds a sanctions screening held is its decision, not a partner's, and the names and documents in travel-rule messages are read only by those who need them.
 
@@ -1415,7 +1429,7 @@ An invalid payload or an address that is not the platform's answers `{"status": 
 
 | Method | Path | Host | Scope | Idempotent | Notes |
 |--------|------|------|-------|-----------|-------|
-| POST | `/oauth2/token` | api | — | — | Planned: mTLS client auth; API keys today |
+| POST | `/oauth2/token` | api | the client's certificate (mTLS) | — | Client credentials; a 5-minute token bound to the certificate |
 | POST | `/v1/auth/nostr` | api | — | — | NIP-98 + DPoP |
 | POST | `/v1/payment-intents` | api | `payments:write` | Key | |
 | GET | `/v1/payment-intents` | api | `payments:read` or the merchant's session | Yes | Filters: merchant, status, method, dates ([§8.7](#87-lists)) |

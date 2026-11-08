@@ -30,6 +30,29 @@
       "description": "Token and session issuance",
       "item": [
         {
+          "name": "Issue a certificate-bound access token (client credentials)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oauth2/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth2",
+                "token"
+              ]
+            },
+            "description": "Issue a certificate-bound access token (client credentials)\n\nOAuth 2.0 client credentials (RFC 6749 §4.4) with mutual-TLS client authentication (RFC 8705): the connection presents the client's certificate, whose SHA-256 thumbprint the operator registered (platform oauth-client). The access token is opaque, works for 300 seconds, carries the scopes granted (all the client's, or those asked for in scope), and is accepted only on connections presenting the same certificate (401 token_binding otherwise)."
+          }
+        },
+        {
           "name": "Exchange a NIP-98 event for a DPoP-bound session",
           "request": {
             "method": "POST",

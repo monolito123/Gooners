@@ -101,6 +101,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `VAULT_FINGERPRINT_KEY_HEX` | The HMAC key of card fingerprints (from the secret manager) |
 | `CARDDATA_HSM_KEY_ARN` | Readers' DUKPT card data decrypted in AWS Payment Cryptography (production) |
 | `CARDDATA_DEV_KEY_HEX`, `CARDDATA_BDK_HEX` | The phones' development format and TDES DUKPT with the BDK in memory: **sandbox and certification only** |
+| `HTTP_TLS_CLIENT_CERTS`, `CLIENT_CERT_HEADER` | `request`: the public TLS listener asks for client certificates, so partners can get certificate-bound tokens (`POST /oauth2/token`); behind a TLS-terminating proxy (`TRUST_PROXY`), the header carrying the client's certificate as URL-encoded PEM |
 | `SIGNER_URL`, `SIGNER_TLS_CERT/KEY/CA` | The signer service that holds the receipts and transparency keys (production); without it, `RECEIPTS_SECRET_HEX` and `TRANSPARENCY_SECRET_HEX` in memory (sandbox) |
 | `RECEIPTS_SECRET_HEX`, `RELAYS`, `RELAYS_PUBLIC`, `RECEIPT_CLAIM_BASE` | Receipt signing key (the signer in production), the relays receipts are published to (and, when different, the addresses browsers use), and the claim page's address: `https://<host>/c`, served by the platform with `/.well-known/nostr.json` ([03 §3.2](../docs/03-nostr-layer.md#32-claim-by-qr)) |
 | `TRANSPARENCY_SECRET_HEX`, `TRANSPARENCY_PAD_TO` | Signs the daily public roots (enclave in production); log padding (default 4096 leaves). With the receipts key, turns on daily statements |
@@ -191,6 +192,7 @@ Operators run the platform with subcommands of the same binary, in the same envi
 | `recon-custody` | Each exchange's balances against the ledger's custody, now (the job runs it every night) |
 | `decripto`, `decripto-filed` | Write a month's DeCripto for filing; record the Coleta Nacional's receipt |
 | `audit-verify` | Walk the audit trail's hash chain and compare it with the heads published in the transparency roots; exit 1 when it was altered |
+| `oauth-client`, `oauth-client-list`, `oauth-client-revoke` | Partners' OAuth clients for certificate-bound tokens (`POST /oauth2/token`): registered by their certificates' thumbprints, revoked with their live tokens; audited |
 | `integrations` | Which external APIs are live, simulated or off, and what production still needs; `-strict` exits 1 while one it requires is not live ([integration kit](../integration/README.md#which-connections-are-live)) |
 | `compliance-cases`, `compliance-decide` | List held deposits and travel-rule reviews; release, block or close one with a note ([runbook §4.12](../integration/operations-runbook.md#412-a-held-crypto-deposit)) |
 
