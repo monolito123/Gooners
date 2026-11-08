@@ -41,7 +41,7 @@ Go 1.26 implementation of the specification in [`../docs`](../docs). It contains
 | `internal/console` | The web console at `/console/`: every API function in the browser, statements checked client-side; static, embedded, strict CSP | below |
 | `internal/schemesim`, `internal/pixsim` | Simulators of the card host (network + issuer) and of a Pix PSP | below |
 
-Binaries (`cmd/`): `platform` (serve, migrate, apikey, integrations, verify-ledger, release-due, settle, and the operator commands below), `signer` (holds the receipts and transparency keys and signs for the platform over mutual TLS, [integration/hsm.md](../integration/hsm.md)), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator; `-bdk` sends a certified reader's DUKPT format), `smoke` (runs all of them together) and `conformance` (writes the merchant apps' test vectors, [`../mobile/conformance/vectors.json`](../mobile/conformance/vectors.json)).
+Binaries (`cmd/`): `platform` (serve, migrate, apikey, integrations, verify-ledger, release-due, settle, and the operator commands below), `signer` (holds the receipts and transparency keys and signs for the platform over mutual TLS, [integration/hsm.md](../integration/hsm.md)), `relaysim` (the sandbox's Nostr relay: gift wraps read only by their NIP-42-authenticated recipient), `schemesim`, `pixsim`, `devpki`, `tapsim` (terminal emulator; `-bdk` sends a certified reader's DUKPT format), `smoke` (runs all of them together) and `conformance` (writes the merchant apps' test vectors, [`../mobile/conformance/vectors.json`](../mobile/conformance/vectors.json)).
 
 ## Quick start
 
@@ -102,7 +102,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `CARDDATA_HSM_KEY_ARN` | Readers' DUKPT card data decrypted in AWS Payment Cryptography (production) |
 | `CARDDATA_DEV_KEY_HEX`, `CARDDATA_BDK_HEX` | The phones' development format and TDES DUKPT with the BDK in memory: **sandbox and certification only** |
 | `SIGNER_URL`, `SIGNER_TLS_CERT/KEY/CA` | The signer service that holds the receipts and transparency keys (production); without it, `RECEIPTS_SECRET_HEX` and `TRANSPARENCY_SECRET_HEX` in memory (sandbox) |
-| `RECEIPTS_SECRET_HEX`, `RELAYS`, `RECEIPT_CLAIM_BASE` | Receipt signing key (enclave in production), relays, claim page; production needs relays and the hosted claim page, not the `goonerspay.example` placeholder ([integration points §6](../integration/integration-points.md#6-receipts-and-transparency)) |
+| `RECEIPTS_SECRET_HEX`, `RELAYS`, `RELAYS_PUBLIC`, `RECEIPT_CLAIM_BASE` | Receipt signing key (the signer in production), the relays receipts are published to (and, when different, the addresses browsers use), and the claim page's address: `https://<host>/c`, served by the platform with `/.well-known/nostr.json` ([03 §3.2](../docs/03-nostr-layer.md#32-claim-by-qr)) |
 | `TRANSPARENCY_SECRET_HEX`, `TRANSPARENCY_PAD_TO` | Signs the daily public roots (enclave in production); log padding (default 4096 leaves). With the receipts key, turns on daily statements |
 | `APPATTEST_ROOT_CA`, `APPATTEST_APP_ID`, `APPATTEST_ENVIRONMENT` | Apple App Attestation Root CA (PEM file), `TEAMID.bundle`, `production` or development |
 | `ANDROID_ATTESTATION_STATUS` | Google's attestation certificate status list (default its URL; a file or a mirror also work), refreshed hourly; attestations are refused while it is missing or older than three days. `off` skips it, outside production only |

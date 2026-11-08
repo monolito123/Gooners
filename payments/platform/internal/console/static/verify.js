@@ -73,17 +73,26 @@ async function taggedHash(tag, ...msgs) {
   return sha256(concat(t, t, ...msgs));
 }
 
+/** BIP-340's lift_x: the point with this x and an even y, or null. */
+function liftX(x) {
+  if (x >= P) return null;
+  const c = mod(x ** 3n + 7n);
+  let y = pow(c, (P + 1n) / 4n);
+  if ((y * y) % P !== c) return null;
+  return [x, y & 1n ? P - y : y];
+}
+
+/** The curve arithmetic, for the receipt claim page's signing and key agreement. */
+export const secp256k1 = { P, N, G, mod, add, mul, num, bytes32, taggedHash, liftX };
+
 /** BIP-340 Schnorr verification: pubkey and msg 32 bytes, sig 64 bytes, all hex. */
 export async function schnorrVerify(sigHex, msgHex, pubHex) {
   try {
     const [sig, msg, pub] = [unhex(sigHex), unhex(msgHex), unhex(pubHex)];
     if (sig.length !== 64 || msg.length !== 32 || pub.length !== 32) return false;
-    const x = num(pub);
-    if (x >= P) return false;
-    const c = mod(x ** 3n + 7n);
-    let y = pow(c, (P + 1n) / 4n);
-    if ((y * y) % P !== c) return false;
-    if (y & 1n) y = P - y;
+    const point = liftX(num(pub));
+    if (!point) return false;
+    const [x, y] = point;
     const r = num(sig.slice(0, 32));
     const s = num(sig.slice(32));
     if (r >= P || s >= N) return false;

@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/coder/websocket"
+	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 	"io"
 	"net"
 	"net/http"
@@ -80,6 +82,54 @@ func waitTCP(addr string) {
 	fail("nothing listening on %s", addr)
 }
 
+// claimReceipt does what the claim page does: authenticate to the relay as the claim key,
+// wait for the gift wrap to it, and open it.
+func claimReceipt(relayURL, claimHex string) (*nostr.Event, error) {
+	claim, err := nostr.KeysFromHex(claimHex)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, relayURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	send := func(v ...any) error { b, _ := json.Marshal(v); return ws.Write(ctx, websocket.MessageText, b) }
+	for {
+		_, b, err := ws.Read(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var f []json.RawMessage
+		if json.Unmarshal(b, &f) != nil || len(f) < 2 {
+			continue
+		}
+		var typ string
+		_ = json.Unmarshal(f[0], &typ)
+		switch typ {
+		case "AUTH":
+			var challenge string
+			_ = json.Unmarshal(f[1], &challenge)
+			auth := &nostr.Event{Kind: 22242, CreatedAt: time.Now().Unix(), Tags: [][]string{{"relay", relayURL}, {"challenge", challenge}}}
+			if err := auth.Sign(claim, nil); err != nil {
+				return nil, err
+			}
+			_ = send("AUTH", auth)
+		case "OK":
+			_ = send("REQ", "claim", map[string]any{"kinds": []int{1059}, "#p": []string{claim.PubHex}})
+		case "EVENT":
+			var wrap nostr.Event
+			if len(f) < 3 || json.Unmarshal(f[2], &wrap) != nil {
+				continue
+			}
+			inner, _, err := nostr.Unwrap(&wrap, claim)
+			return inner, err
+		}
+	}
+}
+
 func hexKey() string { b := make([]byte, 32); _, _ = rand.Read(b); return hex.EncodeToString(b) }
 
 func main() {
@@ -92,7 +142,7 @@ func main() {
 	dir, _ := os.MkdirTemp("", "smoke-")
 	defer os.RemoveAll(dir)
 	bin, pki = dir, filepath.Join(dir, "pki")
-	for _, c := range []string{"platform", "schemesim", "pixsim", "devpki", "tapsim", "signer"} {
+	for _, c := range []string{"platform", "schemesim", "pixsim", "devpki", "tapsim", "signer", "relaysim"} {
 		run("go", "build", "-o", filepath.Join(bin, c), "./cmd/"+c)
 	}
 	run(filepath.Join(bin, "devpki"), "-out", pki)
@@ -124,6 +174,10 @@ func main() {
 	procs = append(procs, start([]string{"VAULT_KEK_HEX=" + kekHex, "SIGNER_KEYS_FILE=" + keysFile, "SIGNER_ADDR=" + signerAddr,
 		"SIGNER_TLS_CERT=" + p("signer-server.pem"), "SIGNER_TLS_KEY=" + p("signer-server.key"), "SIGNER_CLIENT_CA=" + p("ca.pem")}, "signer", "serve"))
 	waitTCP(signerAddr)
+	// The sandbox relay: receipts are published to it, and the claim page reads them from it.
+	relayAddr := freePort()
+	procs = append(procs, start(nil, "relaysim", "-listen", relayAddr))
+	waitTCP(relayAddr)
 
 	routes := filepath.Join(dir, "routes.json")
 	_ = os.WriteFile(routes, []byte(fmt.Sprintf(`[{"name":"sponsor","dialect":"generic-1987-ascii","addrs":[%q],"acquirer_id":"12345678","approval_prior":0.9}]`, schemeAddr)), 0o644)
@@ -132,6 +186,7 @@ func main() {
 	env := []string{
 		"PLATFORM_ENV=sandbox", "DATABASE_URL=" + dsn, "HTTP_ADDR=" + apiAddr, "ROUTES_FILE=" + routes, "CARD_PRESENT_TIMEOUT=2s",
 		"VAULT_KEK_HEX=" + kekHex, "VAULT_FINGERPRINT_KEY_HEX=" + hexKey(), "CARDDATA_DEV_KEY_HEX=" + devKey, "CARDDATA_BDK_HEX=" + bdk,
+		"RELAYS=ws://" + relayAddr, "RECEIPT_CLAIM_BASE=http://" + apiAddr + "/c",
 		"SIGNER_URL=https://" + signerAddr, "SIGNER_TLS_CA=" + p("ca.pem"), "SIGNER_TLS_CERT=" + p("platform-client.pem"), "SIGNER_TLS_KEY=" + p("platform-client.key"),
 		"PIX_BASE_URL=https://" + pixAddr + "/api/v2", "PIX_TOKEN_URL=https://" + pixAddr + "/oauth/token", "PIX_CLIENT_ID=platform",
 		"PIX_CLIENT_SECRET=dev-secret", "PIX_KEY=12345678000195", "PIX_TLS_CA=" + p("ca.pem"), "PIX_TLS_CERT=" + p("platform-client.pem"),
@@ -223,6 +278,35 @@ func main() {
 		fail("DUKPT tap without a receipt from the signer: %v", reader)
 	}
 	ok("tap R$ 31,50 from a reader's DUKPT data approved; its receipt signed by the signer process")
+
+	// The customer's receipt QR: the claim page, the NIP-05 file naming the signer's key, and
+	// the gift wrap read from the relay as the claim key (what the page does in the browser).
+	rc := reader["receipt"].(map[string]any)
+	claimURL := rc["claim_qr"].(string)
+	if !strings.HasPrefix(claimURL, api+"/c#k=") {
+		fail("claim URL %s", claimURL)
+	}
+	if resp, err := http.Get(api + "/c"); err != nil || resp.StatusCode != 200 {
+		fail("claim page: %v %v", err, resp)
+	}
+	var nip05 struct {
+		Names  map[string]string   `json:"names"`
+		Relays map[string][]string `json:"relays"`
+	}
+	if resp, err := http.Get(api + "/.well-known/nostr.json?name=receipts"); err != nil {
+		fail("nip-05: %v", err)
+	} else {
+		_ = json.NewDecoder(resp.Body).Decode(&nip05)
+		resp.Body.Close()
+	}
+	receipt, err := claimReceipt("ws://"+relayAddr, strings.SplitN(claimURL, "#k=", 2)[1])
+	if err != nil {
+		fail("claim the receipt: %v", err)
+	}
+	if receipt.ID != rc["nostr_event_id"] || receipt.PubKey != nip05.Names["receipts"] || len(nip05.Relays[receipt.PubKey]) == 0 {
+		fail("claimed receipt %s by %s; NIP-05 %v", receipt.ID, receipt.PubKey, nip05)
+	}
+	ok("the receipt QR opens: the claim key read the wrap from the relay (NIP-42), signed by receipts@ as NIP-05 names it")
 
 	pi := call("POST", "/v1/payment-intents", map[string]any{"merchant_id": m["id"], "amount": 2390, "channel": "pix"}, 201)
 	conf := call("POST", "/v1/payment-intents/"+pi["id"].(string)+"/confirm", map[string]any{"payment_method_type": "pix"}, 200)

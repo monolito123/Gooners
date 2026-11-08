@@ -49,6 +49,15 @@ type Config struct {
 	// TravelRuleSecret ("whsec_…") verifies the messages the travel-rule adapter posts to
 	// POST /v1/travel-rule/inbound. Empty: the route answers 503.
 	TravelRuleSecret string
+	// Nostr is what /.well-known/nostr.json publishes (NIP-05) and the receipt claim page
+	// reads: the keys that sign receipts and roots, and the relays that carry receipts.
+	Nostr NostrIdentity
+}
+
+// NostrIdentity names the platform's Nostr keys and relays.
+type NostrIdentity struct {
+	ReceiptsPub, TransparencyPub string
+	Relays                       []string
 }
 
 // MaxBody is the largest request body accepted.
@@ -125,6 +134,10 @@ func (s *Server) Handler() http.Handler {
 	// The web console (internal/console): static files on this origin, under their own CSP.
 	mux.Handle("GET /console/", console.Handler())
 	mux.Handle("GET /console", http.RedirectHandler("/console/", http.StatusMovedPermanently))
+	// The receipt claim page and the NIP-05 file it checks the receipts' signer against.
+	claim := console.ClaimHandler(s.cfg.Nostr.Relays)
+	mux.Handle("GET /c", claim)
+	mux.Handle("GET /c/", claim)
 
 	route := func(pattern, scope string, idem bool, h http.HandlerFunc) {
 		if idem {
@@ -133,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(pattern, instrument(pattern, s.authenticate(scope, sessionRoutes[pattern], h)))
 	}
 	open := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, instrument(pattern, h)) }
+	open("GET /.well-known/nostr.json", s.nip05)
 	open("POST /v1/auth/nostr", s.loginNostr)
 	open("GET /v1/enrollment", s.getEnrollment)
 	open("POST /v1/enrollment", s.enroll)
@@ -341,6 +355,27 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 		w.Header().Set("Request-Id", id)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// nip05 serves the platform's NIP-05 names: receipts@ and transparency@ this host, with the
+// relays that carry what they sign. Any page may read it (NIP-05 asks for CORS).
+func (s *Server) nip05(w http.ResponseWriter, r *http.Request) {
+	names, relays := map[string]string{}, map[string][]string{}
+	for name, pub := range map[string]string{"receipts": s.cfg.Nostr.ReceiptsPub, "transparency": s.cfg.Nostr.TransparencyPub} {
+		if pub == "" {
+			continue
+		}
+		if want := r.URL.Query().Get("name"); want != "" && want != name {
+			continue
+		}
+		names[name] = pub
+		if len(s.cfg.Nostr.Relays) > 0 {
+			relays[pub] = s.cfg.Nostr.Relays
+		}
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "max-age=300")
+	writeJSON(w, http.StatusOK, map[string]any{"names": names, "relays": relays})
 }
 
 // secureHeaders marks every response as non-cacheable, non-sniffable JSON that no page may

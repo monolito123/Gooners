@@ -42,8 +42,8 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 15 | Android card reading (licensed MPoC SDK) | Tap on Android | Interface | Required for cards on Android |
 | 16 | iPhone card reading (Tap to Pay on iPhone, or a BLE PCI PTS reader) | Tap on iPhone | Interface | Required for cards on iPhone |
 | 17 | App release settings (API URL, pins, platform keys) and the stores | Shipping the apps | Built | Required |
-| 18 | Nostr relays | Customer receipts, merchant copies, the public root | Built (client) | Required |
-| 19 | Receipt claim page and NIP-05 file | Opening the receipt QR | Missing | Required |
+| 18 | Nostr relays | Customer receipts, merchant copies, the public root | Built (client, and `relaysim` for the sandbox); production relays to run or contract | Required |
+| 19 | Receipt claim page and NIP-05 file | Opening the receipt QR | Built (served by the platform at `/c` and `/.well-known/nostr.json`) | Required |
 | 20 | Timestamp anchoring (ICP-Brasil TSA, OpenTimestamps) | Dating the daily roots independently | Missing | Optional |
 | 21 | Partners' webhook endpoints | Event delivery | Built | Per partner |
 | 22 | Partner token service (`/oauth2/token`, mTLS) | Bound partner tokens | Missing (API keys today) | Planned |
@@ -237,16 +237,16 @@ Run them yourself or contract them, at least two.
 
 Without relays the customer's receipt QR leads nowhere, so production requires them.
 
-**19. Receipt claim page.** Every sale shows `RECEIPT_CLAIM_BASE#k=<claim key>`. The page at that address is specified in [03 §3.2](../docs/03-nostr-layer.md#32-claim-by-qr) but not built. It is a static page that:
+**19. Receipt claim page.** Built. Every sale shows `RECEIPT_CLAIM_BASE#k=<claim key>`, and the platform serves the page at `/c`. The page:
 
-- authenticates to a relay as the claim key and fetches the wrap;
-- unwraps it (NIP-44 v2, NIP-59) and verifies both signatures;
-- checks the signer against the platform's NIP-05 file;
-- renders the receipt.
+- reads `/.well-known/nostr.json` (NIP-05) on the same host;
+- authenticates to a relay as the claim key and opens the wrap and the seal;
+- checks every signature against `receipts@<host>`;
+- renders the receipt, printable and downloadable.
 
-The platform does not serve that NIP-05 file yet. It is `https://<domain>/.well-known/nostr.json`, naming the receipts key that `serve` logs at start.
+See [03 §3.2](../docs/03-nostr-layer.md#32-claim-by-qr).
 
-The default `RECEIPT_CLAIM_BASE` is a placeholder on `goonerspay.example`. Production refuses it until the page is hosted and the setting points at it.
+What remains: route a public host to the platform and set `RECEIPT_CLAIM_BASE` to `https://<host>/c`. Production refuses the `goonerspay.example` placeholder. When the platform publishes to relays through private addresses, `RELAYS_PUBLIC` lists the addresses customers' browsers use.
 
 **20. Anchoring the daily roots.** The roots are signed, chained and published today. RFC 3161 timestamps from an ICP-Brasil authority, and OpenTimestamps, are specified in [03 §6.6](../docs/03-nostr-layer.md#66-anchoring) and not built.
 
@@ -335,7 +335,7 @@ The code to write, smallest first. Contracts and certifications run alongside ([
    - registrar (#8);
    - with crypto: travel-rule network (#29), and the screening and analytics providers if used (#27, #28);
    - with B3: broker (#32).
-2. **The receipt claim page and the NIP-05 file** (#19), with two relays (#18).
+2. ~~The receipt claim page and the NIP-05 file~~ (#19): built. What remains is two production relays (#18) and the public host for `/c`.
 3. ~~The three key adapters~~ (#9–#11): built. What remains is the payment HSM's key ceremony with the reader vendors and deploying the signer.
 4. **The card readers:** the MPoC SDK adapter on Android (#15), Tap to Pay or a BLE reader on iPhone (#16).
 5. **The sponsor's dialect file** (#4) and the converter for its report and chargeback files (#5).

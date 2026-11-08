@@ -1405,6 +1405,45 @@ paths:
         default:
           $ref: "#/components/responses/Problem"
 
+  /.well-known/nostr.json:
+    get:
+      tags: [settlements]
+      operationId: getNostrNames
+      summary: The platform's Nostr names (NIP-05)
+      description: |-
+        The keys that sign receipts (receipts@ this host) and the daily roots (transparency@), with the relays that carry receipts. The receipt claim page checks a receipt's signer against it (docs/03 §3.2). Public, and readable from any origin as NIP-05 requires.
+      security: []
+      parameters:
+        - name: name
+          in: query
+          required: false
+          description: One name only
+          schema:
+            type: string
+            enum: [receipts, transparency]
+      responses:
+        "200":
+          description: The names and their relays
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [names, relays]
+                properties:
+                  names:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      pattern: "^[0-9a-f]{64}$"
+                  relays:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+                        pattern: "^wss?://"
+        default:
+          $ref: "#/components/responses/Problem"
   /v1/transparency/{date}:
     get:
       tags: [settlements]

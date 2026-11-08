@@ -506,7 +506,15 @@ func serve(ctx context.Context) error {
 		}
 	}
 
-	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute, TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret}, svc, pool, log)
+	identity := api.NostrIdentity{Relays: c.RelaysPublic}
+	if receiptsAuthor != nil {
+		identity.ReceiptsPub = receiptsAuthor.Public()
+	}
+	if transparencyAuthor != nil {
+		identity.TransparencyPub = transparencyAuthor.Public()
+	}
+	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute,
+		TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret, Nostr: identity}, svc, pool, log)
 	disp := &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	go disp.Run(ctx, time.Second)
 	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])

@@ -573,6 +573,38 @@ if (existsSync(consoleVerify)) {
   check(verified.every(Boolean), `the console's BIP-340 code verifies all ${events.length} example events`);
 }
 
+// ---------------------------------------------------------------- 6e. Receipt claim page
+// The page a receipt's QR opens (platform/internal/console/static/claim/nostr.js) signs the
+// relay's NIP-42 challenge and opens the gift wrap with its own BIP-340, NIP-44 v2 and NIP-59
+// code; it is held here to the signed example and to nostr-tools.
+const claimCrypto = join(root, 'platform', 'internal', 'console', 'static', 'claim', 'nostr.js');
+if (existsSync(claimCrypto)) {
+  section('6e. Receipt claim page (browser code, run in Node)');
+  const cn = await import(claimCrypto);
+  const pure = await import('nostr-tools/pure');
+  const nt44 = await import('nostr-tools/nip44');
+  const ex = examples['1059-receipt-giftwrap.json'];
+  const k = ex.claim_url.split('#k=')[1];
+  const opened = await cn.unwrapReceipt(ex.wrap, k, K['platform-receipts']).catch((e) => ({ error: e.message }));
+  check(!opened.error && opened.seal.id === ex.seal.id && opened.receipt.kind === 7711 && opened.receipt.pubkey === K['platform-receipts'],
+    'the claim page opens the example gift wrap with its claim key: wrap, seal and receipt signatures, signed by the receipts key' + (opened.error ? ': ' + opened.error : ''));
+  const refused = async (wrap, signer) => cn.unwrapReceipt(wrap, k, signer).then(() => false, () => true);
+  check(await refused({ ...ex.wrap, content: ex.wrap.content.slice(0, 40) + (ex.wrap.content[40] === 'A' ? 'B' : 'A') + ex.wrap.content.slice(41) }, K['platform-receipts']) &&
+    await refused(ex.wrap, K['platform-transparency']), 'it refuses an altered wrap and a receipt sealed by another key');
+  const sk = pure.generateSecretKey();
+  const peer = pure.generateSecretKey();
+  const hexOf = (b) => Buffer.from(b).toString('hex');
+  const ev = await cn.signEvent({ kind: 22242, created_at: 1700000000, tags: [['relay', 'wss://relay.example'], ['challenge', 'c1']], content: '' }, hexOf(sk));
+  check(cn.publicKey(hexOf(sk)) === pure.getPublicKey(sk) && pure.verifyEvent({ ...ev }), "its NIP-42 AUTH event is signed as nostr-tools expects (BIP-340, NIP-01 id)");
+  const ckOurs = await cn.conversationKey(hexOf(sk), pure.getPublicKey(peer));
+  const ckTheirs = nt44.v2.utils.getConversationKey(sk, pure.getPublicKey(peer));
+  let interop = hexOf(ckOurs) === hexOf(ckTheirs);
+  for (const msg of ['a', 'recibo ✓ R$ 12,90', 'x'.repeat(300), 'y'.repeat(65535)]) {
+    interop &&= (await cn.nip44Decrypt(nt44.v2.encrypt(msg, ckTheirs), ckOurs)) === msg && nt44.v2.decrypt(await cn.nip44Encrypt(msg, ckOurs), ckTheirs) === msg;
+  }
+  check(interop, 'its NIP-44 v2 conversation keys and encryption interoperate with nostr-tools both ways (1 to 65,535 bytes)');
+}
+
 // ---------------------------------------------------------------- 7. External tools
 if (!fast) {
   section('7. OpenAPI lint, Mermaid rendering, ledger SQL');

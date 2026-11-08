@@ -147,9 +147,12 @@ type Config struct {
 	// PlatformLEI is the platform's Legal Entity Identifier, when it has one.
 	PlatformLEI string
 	// RiskMode is how the fraud shield acts (docs/07 §3): enforce, shadow or off.
-	RiskMode  string
-	Relays    []string
-	ClaimBase string
+	RiskMode string
+	Relays   []string
+	// RelaysPublic are the relay addresses customers' browsers use (NIP-05, the claim page),
+	// when the platform publishes through private ones; the same as Relays by default.
+	RelaysPublic []string
+	ClaimBase    string
 
 	BootstrapTenant  string
 	BootstrapCapital int64
@@ -329,6 +332,10 @@ func Read() (*Config, error) {
 	}
 	if r := os.Getenv("RELAYS"); r != "" {
 		c.Relays = strings.Split(r, ",")
+	}
+	c.RelaysPublic = c.Relays
+	if r := os.Getenv("RELAYS_PUBLIC"); r != "" {
+		c.RelaysPublic = strings.Split(r, ",")
 	}
 	for name, dst := range map[string]*float64{"RATE_LIMIT_PER_SECOND": &c.RatePerSecond, "RATE_LIMIT_BURST": &c.RateBurst, "AUTH_FAILURES_PER_MINUTE": &c.AuthFailuresPerMinute} {
 		if v := os.Getenv(name); v != "" {

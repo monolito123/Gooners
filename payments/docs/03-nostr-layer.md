@@ -105,6 +105,17 @@ The customer does not need an app, an account, a phone number or an e-mail addre
 4. When the customer's client authenticates to the relay as `P_k` (NIP-42), the relay records that the receipt was **claimed**. This is useful evidence in "not recognized" disputes ([01 §7.2](01-acquiring-engine.md#72-automated-evidence)). The claim page discloses this.
 5. Unclaimed claim wraps expire from relays after 90 days (NIP-40 `expiration` on the wrap). The merchant's copy and the archive keep the receipt.
 
+**As built.** The platform serves the claim page at `/c`, so `RECEIPT_CLAIM_BASE` is `https://<host>/c` for a host routed to it.
+
+- **Discovery.** The page reads `/.well-known/nostr.json` (NIP-05) on the same host. It names the receipts key (`receipts@<host>`) and the relays (`RELAYS_PUBLIC`, by default `RELAYS`).
+- **Opening the receipt.** It answers the relay's NIP-42 challenge with the claim key, then opens the wrap and the seal with NIP-44 v2. It checks the wrap's, the seal's and the receipt's signatures, and that the receipts key signed them.
+- **Showing it.** It shows the receipt in Portuguese, with "imprimir ou salvar em PDF" and the signed receipt as a download.
+- **Security.** Its policy allows scripts and connections only to its own origin and the named relays. The key never leaves the fragment.
+- **Tests.**
+  - Its crypto (`static/claim/nostr.js`) is held to the example below and to nostr-tools by `npm run check`.
+  - `TestReceiptClaim` and the smoke test claim a real sale's receipt through a relay.
+- **Sandbox relay.** `relaysim` (`internal/relay`) is a relay with these rules: anyone publishes, gift wraps are read only by their authenticated recipient, and claims are logged.
+
 ### 3.3 Example receipt (kind 7711, inner event)
 
 ```json

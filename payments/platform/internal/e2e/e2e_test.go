@@ -35,6 +35,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/pixsim"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
+	"github.com/monolito123/Gooners/payments/platform/internal/relay"
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/schemesim"
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
@@ -76,6 +77,8 @@ type stack struct {
 	compKey      string // see complianceKey
 
 	receiptsKey, transparencyKey nostr.Keys
+	relay                        *relay.Relay // the sandbox relay receipts are published to
+	relayURL                     string
 }
 
 // syncBuffer collects logs from concurrent goroutines.
@@ -158,6 +161,11 @@ func newStack(t *testing.T, opts ...any) *stack {
 		Exchanges: &exchange.Router{Venues: []exchange.Exchange{exchange.NewMemory("simex")}}, FX: fx.NewMemory(), Broker: brokerage.NewMemory(),
 		Screener: screening.Set{screening.SandboxAddresses, screening.SandboxNames}, TravelRule: travelrule.Sandbox{},
 	}
+	st.relay = &relay.Relay{}
+	relaySrv := httptest.NewServer(st.relay)
+	t.Cleanup(relaySrv.Close)
+	st.relayURL = "ws" + strings.TrimPrefix(relaySrv.URL, "http")
+	deps.Publisher = &receipts.Publisher{Relays: []string{st.relayURL}}
 	cfg := payments.Config{Env: "sandbox", AcquirerID: "12345678", PixKey: platformPixKey, RelayURL: "wss://relay.goonerspay.example", TransparencyPadTo: 8}
 	for _, o := range opts {
 		switch o := o.(type) {
@@ -186,7 +194,8 @@ func newStack(t *testing.T, opts ...any) *stack {
 		t.Fatal(err)
 	}
 	st.travelSecret = webhooks.NewSecret()
-	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret}, svc, pool, log)
+	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret,
+		Nostr: api.NostrIdentity{ReceiptsPub: signer.PubHex, TransparencyPub: st.transparencyKey.PubHex, Relays: []string{st.relayURL}}}, svc, pool, log)
 	apiServer := httptest.NewServer(srv.Handler())
 	t.Cleanup(apiServer.Close)
 	st.api = apiServer.URL

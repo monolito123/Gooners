@@ -40,7 +40,7 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body = io.NopCloser(bytes.NewReader(b))
 	}
 	resp, err := r.base.RoundTrip(req)
-	if err != nil || !strings.HasPrefix(req.URL.Path, "/v1/") {
+	if err != nil || !(strings.HasPrefix(req.URL.Path, "/v1/") || strings.HasPrefix(req.URL.Path, "/.well-known/")) {
 		return resp, err
 	}
 	raw, err := io.ReadAll(resp.Body)

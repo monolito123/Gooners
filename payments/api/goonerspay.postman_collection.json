@@ -1572,6 +1572,40 @@
           }
         },
         {
+          "name": "The platform's Nostr names (NIP-05)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/nostr.json",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "nostr.json"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "",
+                  "disabled": true,
+                  "description": "One name only"
+                }
+              ]
+            },
+            "description": "The platform's Nostr names (NIP-05)\n\nThe keys that sign receipts (receipts@ this host) and the daily roots (transparency@), with the relays that carry receipts. The receipt claim page checks a receipt's signer against it (docs/03 §3.2). Public, and readable from any origin as NIP-05 requires.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
           "name": "A day's public settlement transparency root (kind 7715)",
           "request": {
             "method": "GET",
