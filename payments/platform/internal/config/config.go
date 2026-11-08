@@ -57,6 +57,29 @@ type Route struct {
 	EchoSeconds   int       `json:"echo_seconds,omitempty"`
 }
 
+// OperatorSSO is how operators are identified (cmd/platform/operator.go): the identity
+// provider's issuer and the operators' client (OPERATOR_OIDC_CLIENT_SECRET only for providers
+// that want one even for the device grant), and who may operate: e-mail domains, a group.
+type OperatorSSO struct {
+	Issuer, ClientID, ClientSecret string
+	Domains                        []string
+	Group                          string
+	Production                     bool
+}
+
+// ReadOperatorSSO reads the operator identity settings alone: operator commands need no other
+// configuration.
+func ReadOperatorSSO() OperatorSSO {
+	var domains []string
+	for _, d := range strings.Split(os.Getenv("OPERATOR_OIDC_DOMAINS"), ",") {
+		if d = strings.ToLower(strings.TrimSpace(d)); d != "" {
+			domains = append(domains, d)
+		}
+	}
+	return OperatorSSO{Issuer: os.Getenv("OPERATOR_OIDC_ISSUER"), ClientID: os.Getenv("OPERATOR_OIDC_CLIENT_ID"), ClientSecret: os.Getenv("OPERATOR_OIDC_CLIENT_SECRET"),
+		Domains: domains, Group: os.Getenv("OPERATOR_OIDC_GROUP"), Production: os.Getenv("PLATFORM_ENV") == Production}
+}
+
 // Config is the complete configuration.
 type Config struct {
 	Env         string
@@ -149,6 +172,8 @@ type Config struct {
 	// approved; otherwise an operator does, with the result in hand.
 	KYBRegistry, KYBRegistryURL string
 	KYBAutoApprove              bool
+	// Operators are identified through the company's identity provider (OpenID Connect).
+	Operators OperatorSSO
 	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
 	ReportingName, ReportingURL string
 	// SenderLookups find who sent each crypto deposit, per network (docs/09 §6.5): an
@@ -313,6 +338,7 @@ func Read() (*Config, error) {
 	}
 	c.ScreeningURL, c.ScreeningToken = os.Getenv("SCREENING_URL"), os.Getenv("SCREENING_TOKEN")
 	c.KYBRegistry, c.KYBRegistryURL, c.KYBAutoApprove = os.Getenv("KYB_REGISTRY"), os.Getenv("KYB_REGISTRY_URL"), os.Getenv("KYB_AUTO_APPROVE") == "on"
+	c.Operators = ReadOperatorSSO()
 	c.ReportingName, c.ReportingURL = env("REPORTING_NAME", "goonersPAY"), os.Getenv("REPORTING_URL")
 	c.SenderLookups = map[string]string{}
 	for network, k := range map[string]string{"bitcoin": "BITCOIN_ESPLORA_URL", "ethereum": "ETHEREUM_RPC_URL", "polygon": "POLYGON_RPC_URL", "tron": "TRON_API_URL"} {
@@ -464,6 +490,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: KYB_REGISTRY %q: use brasilapi (with KYB_REGISTRY_URL for a self-hosted server) or sandbox", c.KYBRegistry)
 	case c.KYBRegistryURL != "" && !strings.HasPrefix(c.KYBRegistryURL, "https://") && c.Env != Sandbox:
 		return errors.New("config: KYB_REGISTRY_URL must be an https address outside the sandbox")
+	case c.Operators.Issuer != "" && (c.Operators.ClientID == "" || !strings.HasPrefix(c.Operators.Issuer, "https://")):
+		return errors.New("config: operator SSO needs OPERATOR_OIDC_ISSUER (https) and OPERATOR_OIDC_CLIENT_ID")
 	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")
@@ -482,6 +510,10 @@ func (c *Config) Validate() error {
 			return errors.New("config: production signs receipts and roots through the signer service: set SIGNER_URL and SIGNER_TLS_CERT/KEY/CA")
 		case c.TerminalCAKey != "":
 			return errors.New("config: production keeps the terminal CA key in a KMS: set TERMINAL_CA_KMS_KEY_ID and unset TERMINAL_CA_KEY")
+		case c.Operators.Issuer == "":
+			return errors.New("config: production identifies operators through the company's identity provider: set OPERATOR_OIDC_ISSUER, OPERATOR_OIDC_CLIENT_ID and OPERATOR_OIDC_DOMAINS")
+		case len(c.Operators.Domains) == 0 && c.Operators.Group == "":
+			return errors.New("config: OPERATOR_OIDC_DOMAINS or OPERATOR_OIDC_GROUP must limit who operates production; any account the identity provider knows would do otherwise")
 		case c.KYBRegistry != "brasilapi":
 			return errors.New("config: production checks every new merchant's CNPJ at the Receita Federal before it sells: set KYB_REGISTRY=brasilapi (KYB_REGISTRY_URL for a self-hosted minhareceita)")
 		case len(c.SanctionsLists) == 0:

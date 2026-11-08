@@ -196,6 +196,19 @@ func (c *Config) Integrations() []Integration {
 		}
 		add(i)
 	}
+	// Who runs the operator commands, as the company's identity provider says.
+	{
+		o := Integration{Name: "Operator identity (SSO)", For: "naming who ran each operator command in the audit trail", Settings: []string{"OPERATOR_OIDC_ISSUER", "OPERATOR_OIDC_CLIENT_ID", "OPERATOR_OIDC_DOMAINS", "OPERATOR_OIDC_GROUP"}, Production: true}
+		switch {
+		case c.Operators.Issuer != "" && c.Operators.ClientID != "" && (len(c.Operators.Domains) > 0 || c.Operators.Group != ""):
+			o.State, o.Detail = Live, c.Operators.Issuer
+		case c.Operators.Issuer != "":
+			o.State, o.Detail = Partial, "no OPERATOR_OIDC_DOMAINS or OPERATOR_OIDC_GROUP: any account the provider knows could operate"
+		default:
+			o.State, o.Detail = Off, "-actor is taken as typed"
+		}
+		add(o)
+	}
 	// Onboarding: the KYB registry and the sanctions lists every merchant's names meet.
 	{
 		k := Integration{Name: "KYB registry (Receita Federal CNPJ data)", For: "clearing new merchants before they sell", Settings: []string{"KYB_REGISTRY", "KYB_REGISTRY_URL", "KYB_AUTO_APPROVE"}, Production: true}

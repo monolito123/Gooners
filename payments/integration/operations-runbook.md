@@ -6,7 +6,9 @@ This is how goonersPAY is run day to day once merchants are live: what runs by i
 docker compose exec platform platform recon-exceptions -tenant 00000000-0000-4000-8000-000000000001
 ```
 
-Every command that changes access or money needs `-actor` (the operator's SSO identity) and `-reason`. Both go to the `ops_audit` table, together with the partner API calls that change access (for example a terminal revoked through the API is recorded as `api:ak_…`).
+Every command that changes access or money needs `-reason` and records who ran it. Both go to the `ops_audit` table, together with the partner API calls that change access (for example a terminal revoked through the API is recorded as `api:ak_…`).
+
+Who ran it comes from the company's identity provider. Run `platform login` once per session (the provider's device login; the token lasts about an hour), and check it with `platform whoami`. The commands then record your verified e-mail. `-actor`, shown below, is optional, and if given must be that e-mail. Production refuses commands without the login. Outside production, without `OPERATOR_OIDC_ISSUER`, `-actor` is taken as typed.
 
 ## 1. Daily schedule (Brasília time)
 

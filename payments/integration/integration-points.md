@@ -48,7 +48,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 21 | Partners' webhook endpoints | Event delivery | Built | Per partner |
 | 22 | Partner token service (`/oauth2/token`, mTLS) | Certificate-bound partner tokens | Built | Optional (API keys remain) |
 | 23 | Prometheus and alerting | The runbook's alerts | Built (metrics) | Operationally required |
-| 24 | Operator identity (SSO) | Who ran each operator command | Missing | Required by the runbook |
+| 24 | Operator identity (SSO: Google Workspace, Microsoft Entra ID, Okta, Keycloak) | Who ran each operator command | Built (OIDC for the commands); Missing (a back-office UI) | Required |
 | 25 | KYB: CNPJ registry (BrasilAPI or a self-hosted minhareceita); KYC provider for individuals | Clearing merchants before they sell | Built (registry and checks); Missing (CPF identity, liveness, PEP) | Required |
 | 26 | Crypto exchanges (Binance, Kraken, Coinbase) | Crypto payments, conversions, withdrawals | Built | With crypto |
 | 27 | Sanctions lists (OFAC SDN, UN Security Council) and a screening provider | Merchants' names at KYB; with crypto, addresses, senders and names | Built (lists); Contract (provider) | Required |
@@ -263,7 +263,16 @@ What remains: route a public host to the platform and set `RECEIPT_CLAIM_BASE` t
 
 ## 8. Operations
 
-**24. Operator identity.** Every command that changes money or access takes `-actor` and writes it to the hash-chained audit trail. The platform does not verify that identity. Operators must reach the commands only through a bastion or job runner that authenticates them with the company's SSO and passes the authenticated identity as `-actor`. A back-office UI over the same commands, behind SSO, is not built.
+**24. Operator identity.** Built: every command that changes money or access writes who ran it to the hash-chained audit trail, as the company's identity provider says. Set it up like this:
+
+1. Register an OpenID Connect client for the operators at the provider, allowing the device authorization grant.
+2. Set `OPERATOR_OIDC_ISSUER` and `OPERATOR_OIDC_CLIENT_ID`. Set `OPERATOR_OIDC_CLIENT_SECRET` only for Google, whose device clients carry one.
+3. Limit who may operate with `OPERATOR_OIDC_DOMAINS` (`goonerspay.com.br`) and/or `OPERATOR_OIDC_GROUP` (a `groups` claim).
+
+An operator runs `platform login` (the provider's device login), and `platform whoami` shows the identity recorded. Each command verifies the stored ID token: the provider's keys (discovery and JWKS, RS256 or ES256), the client, expiry, and a verified e-mail inside the limits. The e-mail becomes the actor; `-actor` may only repeat it. Automation passes a workload identity token in `OPERATOR_ID_TOKEN`. Production requires all of this, and refuses commands without it. What remains:
+
+- the commands still need database credentials, so reach them through a bastion;
+- a back-office UI over the same commands is not built.
 
 **25. KYB and KYC.** Built:
 

@@ -13,6 +13,8 @@
 // access or money needs -actor, the operator's SSO identity, for the audit trail:
 //
 //	platform merchant-status -tenant UUID -merchant ID -status active|restricted|closed -reason R -actor A
+//	platform login                                               (operator SSO: the identity provider's device login)
+//	platform whoami                                              (the identity operator commands record)
 //	platform kyb -tenant UUID -merchant ID                       (a merchant's full KYB result)
 //	platform kyb-recheck -tenant UUID -merchant ID -reason R -actor A
 //	platform terminal-revoke -tenant UUID -terminal ID -reason R -actor A
@@ -88,7 +90,7 @@ var log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|integrations|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate")
+		fmt.Fprintln(os.Stderr, "usage: platform serve|migrate|apikey|integrations|login|whoami|verify-ledger|release-due|settle|close-day|merchant-status|terminal-revoke|apikey-list|apikey-revoke|oauth-client|kyb|kyb-recheck|disputes-import|disputes-list|write-off|recon-card|recon-pix|recon-exceptions|recon-resolve|recon-allocate|recon-custody|decripto|decripto-filed|compliance-cases|compliance-decide|audit-verify")
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -657,9 +659,14 @@ func settle(ctx context.Context, args []string) error {
 	amount := fs.Int64("amount", 0, "amount received, centavos")
 	actor := fs.String("actor", "", "operator identity, kept in the audit trail")
 	_ = fs.Parse(args)
-	if *tenant == "" || *report == "" || *amount <= 0 || *actor == "" {
-		return errors.New("-tenant, -report, -amount and -actor are required (recon-card is the normal path)")
+	if *tenant == "" || *report == "" || *amount <= 0 {
+		return errors.New("-tenant, -report and -amount are required (recon-card is the normal path)")
 	}
+	who, err := operatorIdentity(ctx, *actor)
+	if err != nil {
+		return err
+	}
+	*actor = who
 	return withDB(ctx, func(pool *pgxpool.Pool) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)

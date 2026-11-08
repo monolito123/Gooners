@@ -46,6 +46,8 @@ var opsCommands = map[string]func(context.Context, []string) error{
 	"compliance-decide":   complianceDecide,
 	"kyb":                 kybShow,
 	"kyb-recheck":         kybRecheck,
+	"login":               login,
+	"whoami":              whoami,
 }
 
 type opsFlags struct {
@@ -56,7 +58,7 @@ type opsFlags struct {
 func newOps(name string, args []string, define func(fs *flag.FlagSet)) (*opsFlags, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	o := &opsFlags{FlagSet: fs, tenant: fs.String("tenant", "", "tenant UUID"), reason: fs.String("reason", "", "why (kept in the audit trail)"),
-		actor: fs.String("actor", "", "operator identity (SSO subject), kept in the audit trail")}
+		actor: fs.String("actor", "", "operator identity: with operator SSO it must be the e-mail you logged in as (platform login); kept in the audit trail")}
 	if define != nil {
 		define(fs)
 	}
@@ -69,10 +71,22 @@ func newOps(name string, args []string, define func(fs *flag.FlagSet)) (*opsFlag
 	return o, nil
 }
 
-func (o *opsFlags) requireActor() error {
-	if *o.reason == "" || *o.actor == "" {
-		return errors.New("-reason and -actor are required")
+// requireActor requires a reason and resolves who runs the command: the operator the
+// identity provider vouches for (operator.go), or, outside production without SSO, -actor.
+func (o *opsFlags) requireActor(ctx context.Context) error {
+	if *o.reason == "" {
+		return errors.New("-reason is required")
 	}
+	return o.resolveActor(ctx)
+}
+
+// resolveActor resolves who runs the command, for commands that need no reason.
+func (o *opsFlags) resolveActor(ctx context.Context) error {
+	who, err := operatorIdentity(ctx, *o.actor)
+	if err != nil {
+		return err
+	}
+	*o.actor = who
 	return nil
 }
 
@@ -110,7 +124,7 @@ func merchantStatus(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
@@ -128,7 +142,7 @@ func terminalRevoke(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
@@ -160,7 +174,7 @@ func apikeyRevoke(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error { return svc.RevokeAPIKey(ctx, *o.tenant, id, *o.reason, *o.actor) })
@@ -178,8 +192,8 @@ func oauthClient(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if *o.actor == "" {
-		return errors.New("-actor is required")
+	if err := o.resolveActor(ctx); err != nil {
+		return err
 	}
 	var thumbprints []string
 	for _, f := range strings.Split(certs, ",") {
@@ -228,7 +242,7 @@ func oauthClientRevoke(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
@@ -290,7 +304,7 @@ func writeOff(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
@@ -391,8 +405,8 @@ func reconResolve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if *o.actor == "" {
-		return errors.New("-actor is required")
+	if err := o.resolveActor(ctx); err != nil {
+		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
 		return svc.ResolveException(ctx, *o.tenant, id, resolution, *o.actor)
@@ -409,7 +423,7 @@ func reconAllocate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
@@ -493,6 +507,11 @@ func deCriptoFiled(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	who, err := operatorIdentity(ctx, *actor)
+	if err != nil {
+		return err
+	}
+	*actor = who
 	m, err := time.Parse("2006-01", *month)
 	if err != nil {
 		return fmt.Errorf("-month: %w", err)
@@ -531,7 +550,7 @@ func complianceDecide(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withPlatform(ctx, func(svc *payments.Service) error {
@@ -590,7 +609,7 @@ func kybRecheck(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.requireActor(); err != nil {
+	if err := o.requireActor(ctx); err != nil {
 		return err
 	}
 	return withService(ctx, func(svc *payments.Service) error {
