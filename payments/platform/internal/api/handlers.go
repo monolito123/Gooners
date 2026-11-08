@@ -3,13 +3,16 @@ package api
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
 	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
@@ -117,23 +120,108 @@ func (s *Server) merchantSummary(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registerTerminal(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		MerchantID      string `json:"merchant_id"`
-		DeviceID        string `json:"device_id"`
-		Type            string `json:"type"`
-		CertFingerprint string `json:"certificate_sha256"`
-		CSR             string `json:"csr"`
+		MerchantID      string   `json:"merchant_id"`
+		DeviceID        string   `json:"device_id"`
+		Type            string   `json:"type"`
+		CertFingerprint string   `json:"certificate_sha256"`
+		CSR             string   `json:"csr"`
+		KeyAttestation  []string `json:"key_attestation"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.CSR != "" && in.CertFingerprint == "" {
-		problem(w, r, http.StatusNotImplemented, "terminal-pki-not-enabled", "Certificate issuance needs the terminal PKI",
-			"issue the terminal certificate after attestation (docs/05 §2.4) and register its SHA-256 as certificate_sha256")
+	tenant := from(r.Context()).tenantID
+	var t *payments.Terminal
+	var err error
+	switch {
+	case in.CSR != "" && in.CertFingerprint != "":
+		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "send a csr for the platform to sign, or the certificate_sha256 of one the terminal PKI issued; not both")
+		return
+	case in.CSR != "" && !s.svc.IssuesTerminalCertificates():
+		s.failCertificate(w, r, payments.ErrNoTerminalCA)
+		return
+	case in.CSR != "":
+		req, ok := certificateRequest(w, r, in.CSR, in.KeyAttestation)
+		if !ok {
+			return
+		}
+		t, err = s.svc.RegisterTerminalCSR(r.Context(), tenant, in.MerchantID, in.Type, req)
+	default:
+		if in.CertFingerprint != "" && !sha256Hex.MatchString(in.CertFingerprint) {
+			problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "certificate_sha256 is the certificate's SHA-256 in lowercase hex")
+			return
+		}
+		t, err = s.svc.RegisterTerminal(r.Context(), tenant, in.MerchantID, in.Type, in.CertFingerprint)
+	}
+	if err != nil {
+		s.failCertificate(w, r, err)
 		return
 	}
-	t, err := s.svc.RegisterTerminal(r.Context(), from(r.Context()).tenantID, in.MerchantID, in.Type, in.CertFingerprint)
+	writeJSON(w, http.StatusCreated, t)
+}
+
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// certificateRequest reads a terminal's CSR and its key attestation chain.
+func certificateRequest(w http.ResponseWriter, r *http.Request, csr string, attestation []string) (payments.TerminalCertificateRequest, bool) {
+	req, err := terminalpki.ParseCSR(csr)
 	if err != nil {
-		s.fail(w, r, err)
+		problem(w, r, http.StatusUnprocessableEntity, "invalid-csr", "The CSR cannot be signed", err.Error())
+		return payments.TerminalCertificateRequest{}, false
+	}
+	chain := make([][]byte, 0, len(attestation))
+	for _, c := range attestation {
+		der, err := base64.StdEncoding.DecodeString(c)
+		if err != nil {
+			problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", "key_attestation holds base64 DER certificates, leaf first")
+			return payments.TerminalCertificateRequest{}, false
+		}
+		chain = append(chain, der)
+	}
+	return payments.TerminalCertificateRequest{CSR: req, KeyAttestation: chain}, true
+}
+
+// failCertificate answers a CSR on a platform without a terminal CA with 501, the contract's
+// answer since terminals could first be registered; other errors as usual.
+func (s *Server) failCertificate(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, payments.ErrNoTerminalCA) {
+		problem(w, r, http.StatusNotImplemented, "terminal-pki-not-enabled", "Certificate issuance needs the terminal PKI", err.Error())
+		return
+	}
+	s.fail(w, r, err)
+}
+
+// certifyTerminal serves POST /v1/terminals/{id}/certificate: a terminal renews its certificate
+// over its mutual-TLS connection, or the app on a phone asks for the first certificate of the
+// terminal its device runs (docs/05 §2.4).
+func (s *Server) certifyTerminal(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CSR            string   `json:"csr"`
+		KeyAttestation []string `json:"key_attestation"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	p, id := from(r.Context()), r.PathValue("id")
+	if (p.terminal != "" && p.terminal != id) || (p.sessionID != "" && p.deviceTerminal != id) {
+		problem(w, r, http.StatusForbidden, "forbidden", "Not this terminal", "a terminal renews only its own certificate, and an app only its device's terminal's")
+		return
+	}
+	if !s.svc.IssuesTerminalCertificates() {
+		s.failCertificate(w, r, payments.ErrNoTerminalCA)
+		return
+	}
+	req, ok := certificateRequest(w, r, in.CSR, in.KeyAttestation)
+	if !ok {
+		return
+	}
+	presented := ""
+	if p.terminal != "" {
+		presented = CertFingerprint(r.TLS.PeerCertificates[0].Raw)
+	}
+	t, err := s.svc.CertifyTerminal(r.Context(), p.tenantID, id, req, presented)
+	if err != nil {
+		s.failCertificate(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, t)
@@ -426,7 +514,9 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 	if !s.ownIntent(w, r, in.PaymentIntentID) {
 		return
 	}
-	if p.sessionID != "" {
+	if p.deviceID != "" {
+		// A phone, by its session or by its terminal's certificate: an iPhone signs each sale
+		// with its App Attest key either way.
 		assertion, err := base64.StdEncoding.DecodeString(r.Header.Get("App-Attest-Assertion"))
 		if err != nil {
 			problem(w, r, http.StatusBadRequest, "bad-assertion", "App-Attest-Assertion must be base64", "")

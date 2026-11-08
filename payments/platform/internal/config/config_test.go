@@ -65,7 +65,11 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 		{"development card decryptor", func(c *Config) { c.CardDataDevKey = nil }},
 		{"CARDDATA_HSM_KEY_ARN", func(c *Config) { c.CardDataHSMKeyARN = "arn:aws:payment-cryptography:sa-east-1:111122223333:key/bdk" }},
 		{"receipts key", func(c *Config) { c.ReceiptsSecret = nil }},
-		{"SIGNER_URL", productionSigner},
+		{"SIGNER_URL", func(c *Config) {
+			productionSigner(c)
+			c.TerminalCACert, c.TerminalCAKey = "terminal-ca.pem", "terminal-ca.key"
+		}},
+		{"TERMINAL_CA_KMS_KEY_ID", func(c *Config) { c.TerminalCAKey, c.TerminalCAKMSKeyID = "", "alias/goonerspay-terminal-ca" }},
 		{"registers receivables", func(c *Config) {
 			c.RegistrarURL, c.PlatformDocument = "https://registrar-adapter.internal", "99999999000191"
 		}},
@@ -270,6 +274,28 @@ func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
 		}
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: production starts without it", name)
+		}
+	}
+}
+
+// The terminal CA: its certificate and exactly one key, a KMS key needing its region.
+func TestTerminalCASettings(t *testing.T) {
+	for _, tc := range []struct {
+		cert, key, kms, region, want string
+	}{
+		{"", "", "", "", ""},
+		{"ca.pem", "ca.key", "", "", ""},
+		{"ca.pem", "", "alias/terminal-ca", "sa-east-1", ""},
+		{"", "ca.key", "", "", "TERMINAL_CA_CERT"},
+		{"ca.pem", "", "", "", "set one"},
+		{"ca.pem", "ca.key", "alias/terminal-ca", "sa-east-1", "set one"},
+		{"ca.pem", "", "alias/terminal-ca", "", "AWS_REGION"},
+	} {
+		c := base()
+		c.TerminalCACert, c.TerminalCAKey, c.TerminalCAKMSKeyID, c.AWSRegion = tc.cert, tc.key, tc.kms, tc.region
+		err := c.Validate()
+		if (tc.want == "" && err != nil) || (tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want))) {
+			t.Errorf("%+v: %v", tc, err)
 		}
 	}
 }

@@ -94,6 +94,13 @@ type Config struct {
 	SignerURL                        string
 	SignerTLS                        *TLSFiles
 
+	// Terminal CA (docs/05 §2.4): signs terminals' client certificates from their CSRs.
+	// TerminalCACert is its certificate (also in TERMINAL_TLS_CA, so the terminal listener
+	// accepts what it signs); its key is a PEM file outside production (TerminalCAKey) or an
+	// AWS KMS ECC_NIST_P256 signing key (TerminalCAKMSKeyID). Unset: an external terminal PKI
+	// issues certificates and terminals are registered by their SHA-256.
+	TerminalCACert, TerminalCAKey, TerminalCAKMSKeyID string
+
 	// Partner tokens (docs/02 §3.1): the public TLS listener asks clients for a certificate
 	// (HTTP_TLS_CLIENT_CERTS=request) so certificate-bound tokens can be issued and checked;
 	// behind a TLS-terminating proxy, ClientCertHeader carries it (with TRUST_PROXY).
@@ -246,6 +253,7 @@ func Read() (*Config, error) {
 	}
 	c.CardDataHSMKeyARN = os.Getenv("CARDDATA_HSM_KEY_ARN")
 	c.SignerURL, c.SignerTLS = os.Getenv("SIGNER_URL"), tlsEnv("SIGNER_TLS")
+	c.TerminalCACert, c.TerminalCAKey, c.TerminalCAKMSKeyID = os.Getenv("TERMINAL_CA_CERT"), os.Getenv("TERMINAL_CA_KEY"), os.Getenv("TERMINAL_CA_KMS_KEY_ID")
 	c.HTTPRequestClientCerts, c.ClientCertHeader = os.Getenv("HTTP_TLS_CLIENT_CERTS") == "request", os.Getenv("CLIENT_CERT_HEADER")
 	if v := os.Getenv("TRANSPARENCY_PAD_TO"); v != "" {
 		if c.TransparencyPadTo, err = strconv.Atoi(v); err != nil || c.TransparencyPadTo < 1 {
@@ -437,6 +445,12 @@ func (c *Config) Validate() error {
 		return errors.New("config: the signer is reached over mutual TLS: SIGNER_URL (https) and SIGNER_TLS_CERT/KEY/CA")
 	case c.SignerURL != "" && (len(c.ReceiptsSecret) > 0 || len(c.TransparencySecret) > 0):
 		return errors.New("config: with SIGNER_URL the receipts and transparency keys live in the signer: unset RECEIPTS_SECRET_HEX and TRANSPARENCY_SECRET_HEX")
+	case (c.TerminalCAKey != "" || c.TerminalCAKMSKeyID != "") && c.TerminalCACert == "":
+		return errors.New("config: the terminal CA needs its certificate: set TERMINAL_CA_CERT")
+	case c.TerminalCACert != "" && (c.TerminalCAKey == "") == (c.TerminalCAKMSKeyID == ""):
+		return errors.New("config: the terminal CA's key is either a PEM file (TERMINAL_CA_KEY) or a KMS key (TERMINAL_CA_KMS_KEY_ID): set one")
+	case c.TerminalCAKMSKeyID != "" && c.AWSRegion == "":
+		return errors.New("config: TERMINAL_CA_KMS_KEY_ID needs AWS_REGION")
 	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")
@@ -453,6 +467,8 @@ func (c *Config) Validate() error {
 			return errors.New("config: production cannot hold the receipts key or the transparency key in process memory: use the signer service (SIGNER_URL)")
 		case c.SignerURL == "":
 			return errors.New("config: production signs receipts and roots through the signer service: set SIGNER_URL and SIGNER_TLS_CERT/KEY/CA")
+		case c.TerminalCAKey != "":
+			return errors.New("config: production keeps the terminal CA key in a KMS: set TERMINAL_CA_KMS_KEY_ID and unset TERMINAL_CA_KEY")
 		case c.RegistrarURL == "" || c.PlatformDocument == "":
 			return errors.New("config: production registers receivables before any advance: set REGISTRAR_URL and PLATFORM_DOCUMENT")
 		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":

@@ -14,15 +14,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
-	"github.com/coder/websocket"
-	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 	"io"
 	"net"
 	"net/http"
@@ -34,7 +37,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/monolito123/Gooners/payments/platform/internal/transparency"
+	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
 
 var bin, pki string
@@ -148,7 +154,7 @@ func main() {
 	run(filepath.Join(bin, "devpki"), "-out", pki)
 	p := func(f string) string { return filepath.Join(pki, f) }
 
-	schemeAddr, pixAddr, apiAddr, hookAddr, metricsAddr := freePort(), freePort(), freePort(), freePort(), freePort()
+	schemeAddr, pixAddr, apiAddr, hookAddr, metricsAddr, terminalAddr := freePort(), freePort(), freePort(), freePort(), freePort(), freePort()
 	var procs []*exec.Cmd
 	defer func() {
 		for _, c := range procs {
@@ -195,6 +201,9 @@ func main() {
 		"PIX_WEBHOOK_TLS_KEY=" + p("platform-server.key"), "PIX_WEBHOOK_PUBLIC_URL=https://" + hookAddr,
 		"BOOTSTRAP_TENANT=" + tenant, "BOOTSTRAP_CAPITAL=100000000", "METRICS_ADDR=" + metricsAddr,
 		"PLATFORM_DOCUMENT=22222222000191", "REPORTING_URL=https://goonerspay.example",
+		// The terminal host and the terminal CA that signs terminals' CSRs.
+		"TERMINAL_ADDR=" + terminalAddr, "TERMINAL_TLS_CERT=" + p("platform-server.pem"), "TERMINAL_TLS_KEY=" + p("platform-server.key"),
+		"TERMINAL_TLS_CA=" + p("terminal-ca.pem"), "TERMINAL_CA_CERT=" + p("terminal-ca.pem"), "TERMINAL_CA_KEY=" + p("terminal-ca.key"),
 	}
 	procs = append(procs, start(env, "platform", "serve"))
 	waitTCP(apiAddr)
@@ -278,6 +287,29 @@ func main() {
 		fail("DUKPT tap without a receipt from the signer: %v", reader)
 	}
 	ok("tap R$ 31,50 from a reader's DUKPT data approved; its receipt signed by the signer process")
+
+	// A smart POS registered by its CSR: the terminal CA signs its certificate, and it sells on
+	// the terminal host over mutual TLS with it, without an API key.
+	waitTCP(terminalAddr)
+	posKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "smart-pos"}}, posKey)
+	pos := call("POST", "/v1/terminals", map[string]any{"merchant_id": m["id"], "type": "smart_pos", "csr": base64.StdEncoding.EncodeToString(csr)}, 201)
+	posKeyDER, _ := x509.MarshalECPrivateKey(posKey)
+	posCert, posKeyFile := filepath.Join(dir, "pos.pem"), filepath.Join(dir, "pos.key")
+	_ = os.WriteFile(posCert, []byte(pos["certificate"].(string)), 0o600)
+	_ = os.WriteFile(posKeyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: posKeyDER}), 0o600)
+	out, err = exec.Command(filepath.Join(bin, "tapsim"), "-api", api, "-key", key, "-merchant", m["id"].(string), "-terminal", pos["terminal_id"].(string),
+		"-amount", "2200", "-dev-key", devKey, "-pan", "4000000000000002", "-terminal-url", "https://"+terminalAddr,
+		"-cert", posCert, "-cert-key", posKeyFile, "-ca", p("ca.pem")).Output()
+	if err != nil {
+		fail("tapsim over mutual TLS: %v", err)
+	}
+	var mtls map[string]any
+	_ = json.Unmarshal(out, &mtls)
+	if mtls["status"] != "approved" {
+		fail("sale over mutual TLS: %v", mtls)
+	}
+	ok("smart POS %s registered by its CSR; R$ 22,00 approved over mutual TLS with the certificate the terminal CA signed", pos["terminal_id"])
 
 	// The customer's receipt QR: the claim page, the NIP-05 file naming the signer's key, and
 	// the gift wrap read from the relay as the claim key (what the page does in the browser).
@@ -469,7 +501,7 @@ func main() {
 	}
 	scrape, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 2`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
+	for _, want := range []string{`goonerspay_card_authorizations_total{outcome="approved"} 3`, `goonerspay_disputes_open{status="evidence_required"} 1`, "goonerspay_safeguarding_headroom_centavos"} {
 		if !strings.Contains(string(scrape), want) {
 			fail("metrics lack %s:\n%s", want, scrape)
 		}

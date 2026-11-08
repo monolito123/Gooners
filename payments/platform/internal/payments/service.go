@@ -17,6 +17,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
 	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
+	"github.com/monolito123/Gooners/payments/platform/internal/db"
 	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
 	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
@@ -25,6 +26,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
 	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
@@ -105,6 +107,7 @@ type Service struct {
 	screener     AddressScreener
 	senders      SenderLookup
 	travelRule   TravelRuleProvider
+	terminalCA   *terminalpki.CA
 	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
@@ -141,6 +144,9 @@ type Deps struct {
 	// TravelRule sends travel-rule data to the provider receiving a withdrawal (docs/09
 	// §6.6). Without one, withdrawals to other providers are refused.
 	TravelRule TravelRuleProvider
+	// TerminalCA issues terminals' client certificates from their CSRs (docs/05 §2.4); nil
+	// leaves certificates to an external terminal PKI.
+	TerminalCA *terminalpki.CA
 	Logger     *slog.Logger
 }
 
@@ -175,7 +181,7 @@ func New(cfg Config, d Deps) *Service {
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
-		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule}
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA}
 }
 
 // Errors surfaced to the API as problem details.
@@ -346,11 +352,22 @@ type Terminal struct {
 	MerchantID string `json:"merchant_id"`
 	Type       string `json:"type"`
 	Status     string `json:"status"`
+	// Certificate is the client certificate the platform just issued (PEM), returned once,
+	// when issued; the SHA-256 and expiry stay on the terminal.
+	Certificate          string     `json:"certificate,omitempty"`
+	CertificateSHA256    string     `json:"certificate_sha256,omitempty"`
+	CertificateExpiresAt *time.Time `json:"certificate_expires_at,omitempty"`
+	KeySecurityLevel     string     `json:"key_security_level,omitempty"`
 }
 
-// RegisterTerminal creates a terminal ID (DE 41). Certificate issuance after attestation is
-// the job of the terminal PKI (docs/05 §2.4); certFingerprint binds the terminal to it.
+// RegisterTerminal creates a terminal ID (DE 41) bound to a certificate the terminal PKI
+// issued elsewhere (certFingerprint, its SHA-256), or to none yet; RegisterTerminalCSR has
+// the platform issue it.
 func (s *Service) RegisterTerminal(ctx context.Context, tenantID, merchantID, typ, certFingerprint string) (*Terminal, error) {
+	return s.registerTerminal(ctx, tenantID, merchantID, typ, certFingerprint, nil)
+}
+
+func (s *Service) registerTerminal(ctx context.Context, tenantID, merchantID, typ, certFingerprint string, req *TerminalCertificateRequest) (*Terminal, error) {
 	m, err := s.GetMerchant(ctx, tenantID, merchantID)
 	if err != nil {
 		return nil, err
@@ -361,25 +378,71 @@ func (s *Service) RegisterTerminal(ctx context.Context, tenantID, merchantID, ty
 	if typ == "" {
 		typ = "mpoc_cots"
 	}
-	for i := 0; i < 5; i++ {
-		u := ids.ULID()
-		id := "T" + u[len(u)-7:]
-		_, err := s.pool.Exec(ctx, `INSERT INTO terminals (id, tenant_id, merchant_id, type, cert_fingerprint) VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
-			id, tenantID, merchantID, typ, certFingerprint)
-		if err == nil {
-			return &Terminal{ID: id, Object: "terminal", MerchantID: merchantID, Type: typ, Status: "active"}, nil
-		}
+	if req != nil && s.terminalCA == nil {
+		return nil, ErrNoTerminalCA
 	}
-	return nil, errors.New("could not allocate a terminal ID")
+	var t *Terminal
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if certFingerprint != "" {
+			// A certificate belongs to one terminal: one registered twice would authenticate as
+			// whichever terminal the lookup found, so another merchant's sales could land here.
+			var taken bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM terminals WHERE cert_fingerprint = $1 OR prev_cert_fingerprint = $1)`, certFingerprint).
+				Scan(&taken); err != nil {
+				return err
+			}
+			if taken {
+				return fmt.Errorf("%w: that certificate is already registered to a terminal", ErrConflict)
+			}
+		}
+		for i := 0; ; i++ {
+			u := ids.ULID()
+			id := "T" + u[len(u)-7:]
+			res, err := tx.Exec(ctx, `INSERT INTO terminals (id, tenant_id, merchant_id, type, cert_fingerprint) VALUES ($1, $2, $3, $4, NULLIF($5, ''))
+				ON CONFLICT (id) DO NOTHING`, id, tenantID, merchantID, typ, certFingerprint)
+			if db.IsUniqueViolation(err) {
+				return fmt.Errorf("%w: that certificate is already registered to a terminal", ErrConflict)
+			}
+			if err != nil {
+				return err
+			}
+			if res.RowsAffected() == 1 {
+				t = &Terminal{ID: id, Object: "terminal", MerchantID: merchantID, Type: typ, Status: "active", CertificateSHA256: certFingerprint}
+				break
+			}
+			if i == 4 {
+				return errors.New("could not allocate a terminal ID")
+			}
+		}
+		if req == nil {
+			return nil
+		}
+		// The certificate names the new terminal ID, so it is issued inside the transaction:
+		// a refused CSR or an unreachable CA leaves no terminal without its certificate.
+		return s.certify(ctx, tx, tenantID, t, *req, "")
+	})
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
-// TerminalByFingerprint finds the terminal bound to a client certificate.
-func (s *Service) TerminalByFingerprint(ctx context.Context, fp string) (tenantID, terminalID string, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT tenant_id::text, id FROM terminals WHERE cert_fingerprint = $1 AND status = 'active'`, fp).Scan(&tenantID, &terminalID)
+// TerminalByFingerprint finds the terminal bound to a client certificate: its current one,
+// or the one its last renewal replaced until the terminal first presents the new one. A
+// phone's terminal also names its device, whose attestation rules still apply to its sales.
+func (s *Service) TerminalByFingerprint(ctx context.Context, fp string) (tenantID, terminalID, deviceID string, err error) {
+	var current, pending bool
+	err = s.pool.QueryRow(ctx, `SELECT tenant_id::text, id, COALESCE(device_id, ''), cert_fingerprint = $1, prev_cert_fingerprint IS NOT NULL FROM terminals
+		WHERE (cert_fingerprint = $1 OR prev_cert_fingerprint = $1) AND status = 'active' ORDER BY cert_fingerprint = $1 DESC LIMIT 1`, fp).
+		Scan(&tenantID, &terminalID, &deviceID, &current, &pending)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrNotFound
+		return "", "", "", ErrNotFound
 	}
-	return tenantID, terminalID, err
+	if err == nil && current && pending {
+		// The terminal holds its new certificate: the one it replaced stops working.
+		_, err = s.pool.Exec(ctx, `UPDATE terminals SET prev_cert_fingerprint = NULL WHERE id = $1 AND cert_fingerprint = $2`, terminalID, fp)
+	}
+	return tenantID, terminalID, deviceID, err
 }
 
 // ---------------------------------------------------------------- journals with safeguarding legs

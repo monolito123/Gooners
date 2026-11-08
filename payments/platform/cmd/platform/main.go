@@ -34,6 +34,7 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -71,6 +72,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/scheme"
 	"github.com/monolito123/Gooners/payments/platform/internal/screening"
 	"github.com/monolito123/Gooners/payments/platform/internal/signer"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
 	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
@@ -383,6 +385,9 @@ func serve(ctx context.Context) error {
 	if deps.Attestor, err = attestor(ctx, c); err != nil {
 		return err
 	}
+	if deps.TerminalCA, err = terminalCA(ctx, c); err != nil {
+		return err
+	}
 	switch {
 	case c.RegistrarURL != "":
 		deps.Registrar = &registrar.Client{BaseURL: c.RegistrarURL}
@@ -645,6 +650,37 @@ func settle(ctx context.Context, args []string) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
 	})
+}
+
+// terminalCA builds the terminal CA from its certificate and its key: a KMS key in production,
+// a PEM file outside it. nil without TERMINAL_CA_CERT.
+func terminalCA(ctx context.Context, c *config.Config) (*terminalpki.CA, error) {
+	if c.TerminalCACert == "" {
+		return nil, nil
+	}
+	cert, err := terminalpki.LoadCert(c.TerminalCACert)
+	if err != nil {
+		return nil, fmt.Errorf("TERMINAL_CA_CERT: %w", err)
+	}
+	var signer crypto.Signer
+	if c.TerminalCAKMSKeyID != "" {
+		signer, err = terminalpki.NewAWSKMSSigner(ctx, c.TerminalCAKMSKeyID, c.AWSRegion)
+	} else {
+		signer, err = terminalpki.LoadKey(c.TerminalCAKey)
+	}
+	if err != nil {
+		return nil, err
+	}
+	ca, err := terminalpki.New(cert, signer)
+	if err != nil {
+		return nil, err
+	}
+	if c.TerminalTLS != nil && c.TerminalTLS.CA != "" {
+		if err := ca.TrustedBy(c.TerminalTLS.CA); err != nil {
+			return nil, err
+		}
+	}
+	return ca, nil
 }
 
 // attestor builds the device attestation verifier from the configured roots; nil keeps the

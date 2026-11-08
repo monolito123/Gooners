@@ -27,7 +27,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 |---|-------------|-----|--------|------------|
 | 1 | PostgreSQL 16 | Ledger, payments, everything | Built | Required |
 | 2 | Public HTTPS endpoint | Partners, console, apps | Built | Required |
-| 3 | Terminal mTLS listener | Dedicated terminals with certificates | Built | When such terminals exist |
+| 3 | Terminal mTLS listener and terminal CA (AWS KMS key) | Card sales from terminals and, in production, phones | Built (platform); the apps' CSR and mutual-TLS client to build | Required for card sales |
 | 4 | Card scheme host (sponsor acquirer, then Visa, Mastercard) | Card authorizations | Built transport; dialect to transcribe | Required |
 | 5 | Sponsor's settlement report and chargeback files | Card reconciliation, disputes | Manual (CSV import) | Required |
 | 6 | Pix PSP (API Pix) and its webhook | Pix charges, refunds, daily reconciliation | Built | Required |
@@ -69,7 +69,12 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 
 The startup check refuses to run outside the sandbox without an https `PUBLIC_API_URL`.
 
-**3. Terminal mTLS listener.** Set `TERMINAL_ADDR` and `TERMINAL_TLS_CERT/KEY/CA`. It is for dedicated terminals that hold the certificate `POST /v1/terminals` issues. Merchant phones do not need it: they authenticate with attested DPoP sessions on the public endpoint. In production a terminal's API key alone is refused (`terminal-certificate-required`).
+**3. Terminal mTLS listener and terminal CA.** Set `TERMINAL_ADDR` and `TERMINAL_TLS_CERT/KEY/CA`. In production every card sale arrives here, presenting the terminal's client certificate; a phone's DPoP session or an API key alone is refused (`terminal_certificate_required`). The certificates come from one of two places:
+
+- **The platform's terminal CA.** Create an AWS KMS key (`ECC_NIST_P256`, `SIGN_VERIFY`) and a CA certificate for it, then set `TERMINAL_CA_CERT` and `TERMINAL_CA_KMS_KEY_ID` (with `AWS_REGION`). Put the CA certificate in `TERMINAL_TLS_CA`; the platform refuses to start otherwise. Terminals then send a CSR: a smart POS through its merchant's `POST /v1/terminals`, a phone through `POST /v1/terminals/{id}/certificate` with its session. Renewal (30-day certificates) goes through the same route over the terminal's own connection. Grant the platform's role `kms:GetPublicKey` and `kms:Sign` on the key only; every certificate it signs is in CloudTrail.
+- **An external terminal PKI.** Register each certificate's SHA-256 in `certificate_sha256`.
+
+What remains is the apps' side. Generate the terminal key in the Android Keystore with the terminal's attestation challenge, or in the Secure Enclave on iPhone. Send its CSR. Then use the certificate for authorizations on the terminal host. Until then, phones sell cards only in the sandbox.
 
 **23. Prometheus.** Set `METRICS_ADDR` on the internal network only. The alerts to configure are in [operations-runbook.md §3](operations-runbook.md#3-alerts).
 

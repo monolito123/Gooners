@@ -99,7 +99,8 @@ type principal struct {
 	scopes   map[string]bool
 	terminal string // set when authenticated by a terminal certificate
 	keyID    string // set when authenticated by an API key
-	// A merchant app session: limited to this merchant, this device and its terminal.
+	// A merchant app session: limited to this merchant, this device and its terminal. A phone's
+	// terminal authenticated by its certificate carries its deviceID too.
 	sessionID, merchantID, deviceID, deviceTerminal string
 }
 
@@ -163,6 +164,7 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/merchants/{id}/summary/period", "payments:read", false, s.periodSummary)
 	route("POST /v1/terminals", "merchants:write", true, s.registerTerminal)
 	route("POST /v1/terminals/{id}/revoke", "merchants:write", true, s.revokeTerminal)
+	route("POST /v1/terminals/{id}/certificate", scopeTerminalCertificate, true, s.certifyTerminal)
 	route("POST /v1/payment-intents", "payments:write", true, s.createIntent)
 	route("GET /v1/payment-intents", "payments:read", false, s.listIntents)
 	route("GET /v1/payment-intents/{id}", "payments:read", false, s.getIntent)
@@ -250,6 +252,10 @@ func versioned(next http.Handler) http.Handler {
 	})
 }
 
+// scopeTerminalCertificate marks the route that issues a terminal's certificate: open to the
+// terminal itself (mutual TLS) and to its phone's app session, never to API keys.
+const scopeTerminalCertificate = "terminal:certificate"
+
 // explicitOnly are the scopes "*" does not include: deciding on held funds, and reading the
 // names and documents travel-rule messages carry.
 var explicitOnly = map[string]bool{"compliance:write": true, "travel_rule:read": true}
@@ -269,6 +275,7 @@ var sessionRoutes = map[string]bool{
 	"POST /v1/payment-intents/{id}/cancel":               true,
 	"POST /v1/refunds":                                   true, // "Cancelar venda" of a Pix sale (docs/06 §5)
 	"POST /v1/terminal/authorizations":                   true,
+	"POST /v1/terminals/{id}/certificate":                true, // the phone's terminal's first certificate
 	"GET /v1/accounts/{id}/balance":                      true,
 	"GET /v1/accounts/{id}/entries":                      true,
 	"POST /v1/payouts/quotes":                            true,
@@ -481,6 +488,9 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This request's own copy: the sandbox maps a terminal route to payments:write for a
+		// session or an API key, and must not do it for every later request on the route.
+		scope := scope
 		// Only failed attempts count against the client's IP, so a client sharing an address
 		// (carrier-grade NAT) with an attacker is never locked out with a valid credential.
 		unauthorized := func(code, title, detail string) {
@@ -492,13 +502,13 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			problem(w, r, http.StatusUnauthorized, code, title, detail)
 		}
 		// Terminals authenticate with their mutual-TLS certificate.
-		if scope == "terminal" && r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
-			tenant, terminal, err := s.svc.TerminalByFingerprint(r.Context(), CertFingerprint(r.TLS.PeerCertificates[0].Raw))
+		if (scope == "terminal" || scope == scopeTerminalCertificate) && r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
+			tenant, terminal, device, err := s.svc.TerminalByFingerprint(r.Context(), CertFingerprint(r.TLS.PeerCertificates[0].Raw))
 			if err != nil {
 				unauthorized("unknown-terminal", "Unknown terminal certificate", "")
 				return
 			}
-			authenticated(w, r, principal{tenantID: tenant, terminal: terminal})
+			authenticated(w, r, principal{tenantID: tenant, terminal: terminal, deviceID: device})
 			return
 		}
 		// Merchant apps: a session token bound to a DPoP key (docs/02 §3.2).
@@ -519,7 +529,9 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 				}
 				scope = "payments:write"
 			}
-			if scope != "merchants:write" && !p.scopes[scope] { // merchants:write routes check ownership instead
+			// merchants:write routes check ownership instead, and a terminal certificate is
+			// only ever for the session's own device's terminal (certifyTerminal).
+			if scope != "merchants:write" && scope != scopeTerminalCertificate && !p.scopes[scope] {
 				problem(w, r, http.StatusForbidden, "forbidden", "Missing scope", scope)
 				return
 			}
@@ -558,6 +570,11 @@ func (s *Server) authenticate(scope string, sessionOK bool, next http.HandlerFun
 			for _, sc := range scopes {
 				p.scopes[sc] = true
 			}
+		}
+		if scope == scopeTerminalCertificate {
+			problem(w, r, http.StatusForbidden, "forbidden", "Not available to API keys",
+				"a terminal renews its certificate over its mutual-TLS connection; a phone's app asks for its terminal's first one")
+			return
 		}
 		if scope == "terminal" {
 			// Without a certificate, terminals may use an API key only in the sandbox.

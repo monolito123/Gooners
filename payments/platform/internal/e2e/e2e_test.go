@@ -313,6 +313,13 @@ type tapOpts struct {
 
 func (st *stack) tapWith(o tapOpts) (int, map[string]any) {
 	st.t.Helper()
+	return st.call("POST", "/v1/terminal/authorizations", st.tapBody(o), o.want)
+}
+
+// tapBody is a terminal authorization's request: the card as the phone's development format
+// encrypts it.
+func (st *stack) tapBody(o tapOpts) map[string]any {
+	st.t.Helper()
 	if o.stan == "" {
 		stan++
 		o.stan = fmt.Sprintf("%06d", stan)
@@ -331,7 +338,7 @@ func (st *stack) tapWith(o tapOpts) (int, map[string]any) {
 	if o.deviceRisk != nil {
 		body["device_risk"] = o.deviceRisk
 	}
-	return st.call("POST", "/v1/terminal/authorizations", body, o.want)
+	return body
 }
 
 func (st *stack) balance(acc string) map[string]any {

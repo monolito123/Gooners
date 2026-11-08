@@ -8,6 +8,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -35,6 +37,10 @@ func main() {
 	devKey := flag.String("dev-key", os.Getenv("CARDDATA_DEV_KEY_HEX"), "development card-data key (hex)")
 	atc := flag.Int("atc", -1, "the card's transaction counter (EMV 9F36, 0-65535); omitted when negative, since a shared test card has none")
 	bdkHex := flag.String("bdk", "", "a TDES base derivation key (hex): send the card as a certified reader does, DUKPT-encrypted EMV data, instead of the development format")
+	terminalURL := flag.String("terminal-url", "", "the terminal host (https): send the authorization over mutual TLS with -cert and -cert-key instead of with the API key")
+	certFile := flag.String("cert", "", "the terminal's client certificate (PEM)")
+	certKey := flag.String("cert-key", "", "the terminal's private key (PEM)")
+	caFile := flag.String("ca", "", "the CA of the terminal host's server certificate (PEM)")
 	flag.Parse()
 	k, err := hex.DecodeString(*devKey)
 	bdk, bdkErr := hex.DecodeString(*bdkHex)
@@ -42,15 +48,36 @@ func main() {
 		fmt.Fprintln(os.Stderr, "tapsim: -key, -merchant, -terminal and a 32-byte -dev-key (or a 16-byte -bdk) are required")
 		os.Exit(2)
 	}
+	// The terminal host authenticates the terminal by its certificate.
+	terminalClient := http.DefaultClient
+	if *terminalURL != "" {
+		pair, err := tls.LoadX509KeyPair(*certFile, *certKey)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "tapsim: -cert/-cert-key:", err)
+			os.Exit(2)
+		}
+		roots := x509.NewCertPool()
+		if pemCA, err := os.ReadFile(*caFile); err != nil || !roots.AppendCertsFromPEM(pemCA) {
+			fmt.Fprintln(os.Stderr, "tapsim: -ca: no certificates")
+			os.Exit(2)
+		}
+		terminalClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{pair}, RootCAs: roots, MinVersion: tls.VersionTLS13}}}
+	}
 	post := func(path string, body any, idem bool) map[string]any {
 		b, _ := json.Marshal(body)
-		req, _ := http.NewRequest("POST", *apiURL+path, bytes.NewReader(b))
-		req.Header.Set("Authorization", "Bearer "+*key)
+		base, client := *apiURL, http.DefaultClient
+		if path == "/v1/terminal/authorizations" && *terminalURL != "" {
+			base, client = *terminalURL, terminalClient
+		}
+		req, _ := http.NewRequest("POST", base+path, bytes.NewReader(b))
+		if client == http.DefaultClient {
+			req.Header.Set("Authorization", "Bearer "+*key)
+		}
 		req.Header.Set("Content-Type", "application/json")
 		if idem {
 			req.Header.Set("Idempotency-Key", ids.ULID())
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "tapsim:", err)
 			os.Exit(1)

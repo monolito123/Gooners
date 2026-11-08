@@ -820,7 +820,7 @@ Binds a device key. The request carries a device-authorization event (kind 17710
 
 ### 8.4 `POST /v1/terminals`
 
-Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate. The terminal PKI issues that certificate after attestation, and its key must be the attested hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). The request carries the certificate's SHA-256, and requests on `terminal.goonerspay.example` are then authenticated by that certificate.
+Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal's mutual-TLS certificate, whose key is the terminal's hardware key ([05 §2.4](05-mobile.md#24-attestation-and-device-integrity)). Requests on `terminal.goonerspay.example` are then authenticated by that certificate. The request carries either the SHA-256 of a certificate an external terminal PKI issued, or the terminal's CSR for the platform's terminal CA to sign (below).
 
 ```json
 { "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "device_id": "dev_01JB9A2B3C4D5E6F7G8H9J0K1M", "type": "mpoc_cots", "certificate_sha256": "d1584e3831c2e9ee819f8f538d2b49bb70875c842070b678a35724243498ec24" }
@@ -830,7 +830,18 @@ Registers a device as a terminal (its DE 41 terminal ID) and binds the terminal'
 { "terminal_id": "TP000418", "object": "terminal", "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "type": "mpoc_cots", "status": "active" }
 ```
 
-Having the platform sign a CSR (`"csr": "MIIBNjCB…"`) is reserved for when the terminal PKI runs inside the platform. Until then that variant returns `501`.
+**Certificates from a CSR.** With a terminal CA configured (`TERMINAL_CA_CERT` and its key in AWS KMS), send the terminal's CSR instead of a fingerprint: `"csr"` is a PKCS #10 request for an ECDSA P-256 key the terminal generated in its secure hardware (base64 DER or PEM). The platform signs a client certificate for the new terminal ID (common name the terminal ID, client authentication only, 30 days) and returns it once:
+
+```json
+{ "terminal_id": "TP000419", "object": "terminal", "merchant_id": "mer_01JB8Z2K5D6F7G8H9J0K1M2N3P", "type": "smart_pos", "status": "active",
+  "certificate": "-----BEGIN CERTIFICATE-----\nMIIB…\n-----END CERTIFICATE-----\n",
+  "certificate_sha256": "5b7c2f0e9d1a8b3c4e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d",
+  "certificate_expires_at": "2026-12-08T14:02:11Z" }
+```
+
+Only the CSR's key is used: whatever names it asks for, the certificate names the terminal. A certificate belongs to one terminal (`409` for one already registered). Without a terminal CA, a CSR returns `501 terminal_pki_not_enabled` and certificates come from an external terminal PKI, registered by `certificate_sha256`.
+
+**Renewal and phones.** `POST /v1/terminals/{id}/certificate` with `{ "csr": "…" }` issues the next certificate. A terminal calls it over its own mutual-TLS connection once a third of its certificate's life is left. The certificate it replaces keeps working until the terminal first presents the new one, so a lost response never locks it out. The app on a phone calls it with its session for the first certificate of the terminal its device runs; in production, card sales need that certificate. When the phone's device attested with Android key attestation, the terminal key must be attested too: it is generated in the Keystore with the challenge `SHA-256("goonerspay/v1/terminal-key:" + terminal_id)`, and its chain is sent in `key_attestation` (base64 DER, leaf first); otherwise `422`. API keys cannot call it. Every certificate issued sends `terminal.certificate_issued`. A phone's certificate does not replace its device's rules: an iPhone selling with it still signs each authorization with its App Attest key (`App-Attest-Assertion`).
 
 `POST /v1/terminals/{id}/revoke` with `{ "reason": "device lost" }` revokes a terminal for good: its certificate stops authenticating and its terminal ID takes no further authorizations. The call is recorded in the audit trail and sends `terminal.revoked`.
 
@@ -1051,6 +1062,7 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding |
 | `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
 | `terminal.revoked` | A terminal was revoked (lost device, merchant closed, fraud confirmed) |
+| `terminal.certificate_issued` | The terminal CA signed a terminal's certificate (registration, a phone's first certificate, renewal); carries its SHA-256 and expiry, so an unexpected one can be spotted |
 | `terminal.frozen` | The fraud shield froze a terminal pending a review (§5.1) |
 | `risk.review_opened` / `.review_resolved` | A sale was held or a terminal frozen; a review released it or confirmed fraud (§5.1) |
 | `payment_intent.med_returned` | A Pix was returned to the payer under the MED; the merchant was debited |

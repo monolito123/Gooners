@@ -502,9 +502,9 @@ paths:
       operationId: authorizeCardPresent
       summary: Card-present authorization from an MPoC terminal (terminal host, CDE)
       description: >
-        An iPhone attested with App Attest sends App-Attest-Assertion: the assertion its
-        attested key makes over SHA-256 of this exact request body (DCAppAttestService
-        generateAssertion). Without it, with another key, over another body or with a counter
+        An iPhone attested with App Attest sends App-Attest-Assertion, whether it calls with its
+        session or with its terminal's certificate: the assertion its attested key makes over
+        SHA-256 of this exact request body (DCAppAttestService generateAssertion). Without it, with another key, over another body or with a counter
         already used, the request is refused with 403 assertion-invalid before it reaches the
         card network.
       servers:
@@ -1235,12 +1235,16 @@ paths:
     post:
       tags: [merchants]
       operationId: registerTerminal
-      summary: Register a terminal (DE 41) and bind its attested mTLS certificate
+      summary: Register a terminal (DE 41) and bind its mutual-TLS certificate
       description: |
-        Binds a terminal ID to a merchant. certificate_sha256 is the fingerprint of the terminal's
-        mutual-TLS certificate, issued by the terminal PKI after device attestation (docs/05 §2.4);
-        requests on the terminal host are authenticated by that certificate. Sending a CSR for the
-        platform to sign returns 501 until the terminal PKI is enabled.
+        Binds a terminal ID to a merchant and to the client certificate that authenticates it on
+        the terminal host (docs/05 §2.4). Either send the terminal's CSR (a PKCS #10 request for
+        an ECDSA P-256 key generated in its secure hardware, base64 DER or PEM) and the
+        platform's terminal CA signs a certificate for the new terminal ID, valid 30 days and
+        returned once in certificate; or send certificate_sha256, the fingerprint of a
+        certificate an external terminal PKI issued. A certificate belongs to one terminal: one
+        already registered answers 409. A platform without a terminal CA answers a CSR with 501
+        terminal-pki-not-enabled. Sends terminal.certificate_issued when it signs one.
       parameters:
         - $ref: "#/components/parameters/ApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1264,28 +1268,72 @@ paths:
                   pattern: "^[0-9a-f]{64}$"
                 csr:
                   type: string
-                  contentEncoding: base64
+                  description: The terminal's PKCS #10 CSR, base64 DER or PEM. Only its key is used.
+                key_attestation:
+                  $ref: "#/components/schemas/KeyAttestationChain"
       responses:
         "201":
-          description: Terminal registered
+          description: Terminal registered (with its certificate when the platform signed one)
           content:
             application/json:
               schema:
-                type: object
-                required: [terminal_id, merchant_id, status]
-                properties:
-                  terminal_id:
-                    type: string
-                    pattern: "^[A-Z0-9]{8}$"
-                  object:
-                    const: terminal
-                  merchant_id:
-                    $ref: "#/components/schemas/Id"
-                  type:
-                    type: string
-                  status:
-                    type: string
-                    enum: [active, frozen, revoked]
+                $ref: "#/components/schemas/Terminal"
+        "501":
+          $ref: "#/components/responses/Problem"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/terminals/{id}/certificate:
+    post:
+      tags: [merchants]
+      operationId: certifyTerminal
+      summary: Issue a terminal's certificate from its CSR (first certificate or renewal)
+      description: |
+        A terminal renews its certificate over its mutual-TLS connection before the current one
+        expires (once a third of its 30 days is left), sending a CSR for a new key; the
+        certificate it replaces keeps working until the terminal first presents the new one, so
+        a lost response never locks it out. The app on a phone asks, with its session, for the
+        first certificate of the terminal its device runs. API keys cannot call this.
+
+        On a phone whose device attested with Android key attestation, the terminal key must
+        be attested too: generated in the Android Keystore with the challenge
+        SHA-256("goonerspay/v1/terminal-key:" + terminal ID), its certificate chain sent in
+        key_attestation; otherwise 422. Sends terminal.certificate_issued.
+      security:
+        - terminalCert: []
+        - dpopSession: []
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: id
+          in: path
+          required: true
+          description: The terminal ID (DE 41).
+          schema:
+            type: string
+            pattern: "^[A-Z0-9]{8}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csr]
+              properties:
+                csr:
+                  type: string
+                  description: The terminal's PKCS #10 CSR for an ECDSA P-256 key, base64 DER or PEM.
+                key_attestation:
+                  $ref: "#/components/schemas/KeyAttestationChain"
+      responses:
+        "201":
+          description: Certificate issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Terminal"
         "501":
           $ref: "#/components/responses/Problem"
         "4XX":
@@ -2469,7 +2517,11 @@ components:
       description: NIP-98 HTTP Auth event (kind 27235), base64 in the Authorization header.
     terminalCert:
       type: mutualTLS
-      description: Terminal certificate issued after device attestation.
+      description: |
+        The terminal's client certificate on the terminal host: signed by the platform's
+        terminal CA from the terminal's CSR (POST /v1/terminals, renewed through POST
+        /v1/terminals/{id}/certificate), or issued by an external terminal PKI and registered
+        by its SHA-256.
     publishableKey:
       type: apiKey
       in: header
@@ -2629,6 +2681,47 @@ components:
         scope:
           type: string
 
+    Terminal:
+      type: object
+      required: [terminal_id, merchant_id, status]
+      properties:
+        terminal_id:
+          type: string
+          pattern: "^[A-Z0-9]{8}$"
+        object:
+          const: terminal
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        type:
+          type: string
+        status:
+          type: string
+          enum: [active, frozen, revoked]
+        certificate:
+          type: string
+          description: The client certificate the platform just signed (PEM), returned only in the response that issues it.
+        certificate_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the terminal's certificate (DER), lowercase hex.
+        certificate_expires_at:
+          type: string
+          format: date-time
+        key_security_level:
+          type: string
+          enum: [trusted_environment, strongbox]
+          description: Where the terminal key lives, from its Android key attestation.
+    KeyAttestationChain:
+      type: array
+      description: |
+        Android hardware key attestation of the CSR's key: the Keystore's certificate chain,
+        leaf first, each base64 DER. The leaf must attest the CSR's key, generated with the
+        challenge SHA-256("goonerspay/v1/terminal-key:" + terminal ID).
+      minItems: 2
+      maxItems: 10
+      items:
+        type: string
+        contentEncoding: base64
     OAuthError:
       type: object
       required: [error]

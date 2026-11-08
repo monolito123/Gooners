@@ -171,7 +171,7 @@ Tap-to-phone on a consumer phone is safe only if the platform can tell, continuo
 
 | Layer | Signal | Checked | Failure action |
 |-------|--------|---------|----------------|
-| Hardware key attestation | Terminal mTLS key generated in StrongBox (or TEE) with a server challenge. The certificate chain proves hardware residence, a locked bootloader, verified boot state, the OS patch level and the app's signing certificate digest | At terminal registration and every certificate renewal (30 days) | Refuse the certificate |
+| Hardware key attestation | Terminal mTLS key generated in StrongBox (or TEE) with the terminal's challenge, SHA-256("goonerspay/v1/terminal-key:" + terminal ID). The certificate chain proves hardware residence, a locked bootloader, verified boot state, the OS patch level and the app's signing certificate digest | At terminal registration and every certificate renewal (30 days) | Refuse the certificate |
 | Play Integrity | Device recognition (`MEETS_STRONG_INTEGRITY` preferred, `MEETS_DEVICE_INTEGRITY` minimum), app recognition, licensing | At session start and every 15 minutes. A fresh token travels with each authorization | Block tap-to-phone and offer Pix and payment links |
 | MPoC SDK attestation and monitoring | Runtime protections (hooking, debugger, emulator, overlay and accessibility abuse, screen recording), SDK integrity, kernel integrity | Continuously by the SDK and its attestation-and-monitoring backend | SDK stops accepting cards. The platform disables the terminal |
 
@@ -198,7 +198,7 @@ fun generateTerminalKey(challenge: ByteArray): List<X509Certificate> {
 }
 ```
 
-The server verifies the chain up to Google's attestation roots, checks the revocation list Google publishes, parses the attestation extension, and enforces policy: `attestationSecurityLevel ≥ TRUSTED_ENVIRONMENT`, `verifiedBootState = VERIFIED`, `deviceLocked = true`, OS patch level no older than 12 months, the expected package name and signing digest.
+The app sends the chain with the key's CSR to `POST /v1/terminals/{id}/certificate` ([02 §8.4](02-api-reference.md#84-post-v1terminals)), and the platform's terminal CA signs the 30-day client certificate only for the attested key. The server verifies the chain up to Google's attestation roots, checks the revocation list Google publishes, parses the attestation extension, and enforces policy: `attestationSecurityLevel ≥ TRUSTED_ENVIRONMENT`, `verifiedBootState = VERIFIED`, `deviceLocked = true`, OS patch level no older than 12 months, the expected package name and signing digest.
 
 **App hardening.** `FLAG_SECURE` on every payment and PIN screen; `filterTouchesWhenObscured` against tapjacking; R8 with obfuscation; no WebViews in the payment flow; pinned TLS; and a server-driven **kill switch** by app and SDK version, which MPoC requires so a compromised version can be stopped within minutes.
 

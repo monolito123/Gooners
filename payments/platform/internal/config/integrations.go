@@ -45,13 +45,23 @@ func (c *Config) Integrations() []Integration {
 			i.State, i.Detail = Off, "PUBLIC_API_URL is not an https address (the sandbox's plain HTTP)"
 		}
 		add(i)
-		t := Integration{Name: "Terminal listener (mTLS)", For: "dedicated terminals that present a certificate (phones use DPoP sessions)", Settings: []string{"TERMINAL_ADDR", "TERMINAL_TLS_CERT/KEY/CA"}}
+		t := Integration{Name: "Terminal listener (mTLS)", For: "card sales from terminals presenting their certificate (in production, phones too)", Settings: []string{"TERMINAL_ADDR", "TERMINAL_TLS_CERT/KEY/CA"}}
 		if c.TerminalAddr != "" && c.TerminalTLS != nil {
 			t.State, t.Detail = Live, c.TerminalAddr
 		} else {
 			t.State, t.Detail = Off, "no TERMINAL_ADDR: terminals with certificates cannot connect"
 		}
 		add(t)
+		ca := Integration{Name: "Terminal CA", For: "issuing terminals' certificates from their CSRs (POST /v1/terminals)", Settings: []string{"TERMINAL_CA_CERT", "TERMINAL_CA_KMS_KEY_ID (or TERMINAL_CA_KEY outside production)"}}
+		switch {
+		case c.TerminalCAKMSKeyID != "":
+			ca.State, ca.Detail = Live, "AWS KMS key "+c.TerminalCAKMSKeyID
+		case c.TerminalCAKey != "":
+			ca.State, ca.Detail = Simulated, "the CA key in a file ("+c.TerminalCAKey+")"
+		default:
+			ca.State, ca.Detail = Off, "no terminal CA: certificates come from an external PKI, registered by SHA-256; a CSR answers 501"
+		}
+		add(ca)
 	}
 
 	// Card schemes: the authorization switch's routes to the acquirer or the schemes.

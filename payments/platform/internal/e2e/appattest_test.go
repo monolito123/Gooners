@@ -18,6 +18,8 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/mobileauth"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
+	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/testpki"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
 
@@ -33,8 +35,10 @@ func TestAppAttestAssertions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	terminalCA, _ := testpki.NewCA("goonersPAY terminal CA")
 	st := newStack(t, func(d *payments.Deps) {
 		d.Attestor = payments.VerifyingAttestor{AppAttest: &attest.AppAttestConfig{Roots: roots, AppID: appID}}
+		d.TerminalCA = &terminalpki.CA{Cert: terminalCA.Cert, Signer: terminalCA.Key}
 	})
 	iphone := &phone{st: st, device: dk, dpop: dpop}
 
@@ -59,6 +63,10 @@ func TestAppAttestAssertions(t *testing.T) {
 	}
 
 	stan := 0
+	// tls, when set, sends the sale on the terminal host with the phone's terminal certificate
+	// instead of with its session.
+	var tlsHost string
+	var tlsClient *http.Client
 	sale := func(counter uint32, key *ecdsa.PrivateKey, mutate func([]byte) []byte) (int, map[string]any) {
 		t.Helper()
 		_, pi := iphone.do("POST", "/v1/payment-intents", map[string]any{"amount": 2500, "channel": "card_present"})
@@ -68,6 +76,10 @@ func TestAppAttestAssertions(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"payment_intent_id": pi["id"], "terminal_id": iphone.terminal, "stan": fmt.Sprintf("%06d", stan), "emv_application": "credit",
 			"local_time": time.Now().Format(time.RFC3339), "sred": map[string]any{"format": carddata.DevFormat, "ksn": ksn, "ciphertext": base64.StdEncoding.EncodeToString(blob)}})
 		headers := map[string]string{"Authorization": "DPoP " + iphone.token, "DPoP": iphone.proof("POST", "/v1/terminal/authorizations")}
+		base, client := st.api, http.DefaultClient
+		if tlsClient != nil {
+			headers, base, client = map[string]string{}, tlsHost, tlsClient
+		}
 		if key != nil {
 			a, err := attesttest.AppAttestAssertion(key, appID, counter, body)
 			if err != nil {
@@ -78,11 +90,11 @@ func TestAppAttestAssertions(t *testing.T) {
 		if mutate != nil {
 			body = mutate(body) // what reaches the platform differs from what was signed
 		}
-		req, _ := http.NewRequest("POST", st.api+"/v1/terminal/authorizations", bytes.NewReader(body))
+		req, _ := http.NewRequest("POST", base+"/v1/terminal/authorizations", bytes.NewReader(body))
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,5 +122,22 @@ func TestAppAttestAssertions(t *testing.T) {
 	}
 	if c, r := sale(7, enclave, nil); c != 200 || r["status"] != "approved" {
 		t.Fatalf("the next counter: %d %v", c, r)
+	}
+
+	// In production the iPhone sells on the terminal host with its terminal's certificate (its
+	// key in the Secure Enclave; App Attest cannot attest it, so no key attestation is asked).
+	// The certificate does not replace the assertion: each sale is still signed. (The same
+	// server just took sales by session: certificates must still authenticate, F-23.)
+	terminalKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	c, cert := iphone.do("POST", "/v1/terminals/"+iphone.terminal+"/certificate", map[string]any{"csr": csrFor(t, terminalKey)})
+	if c != 201 || cert["key_security_level"] != nil {
+		t.Fatalf("the iPhone's terminal certificate: %d %v", c, cert)
+	}
+	tlsHost, tlsClient = terminalHost(t, st, terminalCA), terminalClient(t, terminalCA, cert["certificate"].(string), terminalKey)
+	if c, r := sale(8, nil, nil); c != http.StatusForbidden || r["code"] != "assertion_invalid" {
+		t.Fatalf("a sale with the terminal certificate but no assertion: %d %v", c, r)
+	}
+	if c, r := sale(9, enclave, nil); c != 200 || r["status"] != "approved" {
+		t.Fatalf("a signed sale with the terminal certificate: %d %v", c, r)
 	}
 }

@@ -436,7 +436,7 @@
           }
         },
         {
-          "name": "Register a terminal (DE 41) and bind its attested mTLS certificate",
+          "name": "Register a terminal (DE 41) and bind its mutual-TLS certificate",
           "request": {
             "method": "POST",
             "header": [
@@ -463,10 +463,58 @@
                 "terminals"
               ]
             },
-            "description": "Register a terminal (DE 41) and bind its attested mTLS certificate\n\nBinds a terminal ID to a merchant. certificate_sha256 is the fingerprint of the terminal's\nmutual-TLS certificate, issued by the terminal PKI after device attestation (docs/05 §2.4);\nrequests on the terminal host are authenticated by that certificate. Sending a CSR for the\nplatform to sign returns 501 until the terminal PKI is enabled.\n",
+            "description": "Register a terminal (DE 41) and bind its mutual-TLS certificate\n\nBinds a terminal ID to a merchant and to the client certificate that authenticates it on\nthe terminal host (docs/05 §2.4). Either send the terminal's CSR (a PKCS #10 request for\nan ECDSA P-256 key generated in its secure hardware, base64 DER or PEM) and the\nplatform's terminal CA signs a certificate for the new terminal ID, valid 30 days and\nreturned once in certificate; or send certificate_sha256, the fingerprint of a\ncertificate an external terminal PKI issued. A certificate belongs to one terminal: one\nalready registered answers 409. A platform without a terminal CA answers a CSR with 501\nterminal-pki-not-enabled. Sends terminal.certificate_issued when it signs one.\n",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"merchant_id\": \"mer_01JB8Z2K5D6F7G8H9J0K1M2N3P\",\n  \"device_id\": \"dev_01JB9A2B3C4D5E6F7G8H9J0K1M\",\n  \"type\": \"mpoc_cots\",\n  \"certificate_sha256\": \"d1584e3831c2e9ee819f8f538d2b49bb70875c842070b678a35724243498ec24\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Issue a terminal's certificate from its CSR (first certificate or renewal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/terminals/:id/certificate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "terminals",
+                ":id",
+                "certificate"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Issue a terminal's certificate from its CSR (first certificate or renewal)\n\nA terminal renews its certificate over its mutual-TLS connection before the current one\nexpires (once a third of its 30 days is left), sending a CSR for a new key; the\ncertificate it replaces keeps working until the terminal first presents the new one, so\na lost response never locks it out. The app on a phone asks, with its session, for the\nfirst certificate of the terminal its device runs. API keys cannot call this.\n\nOn a phone whose device attested with Android key attestation, the terminal key must\nbe attested too: generated in the Android Keystore with the challenge\nSHA-256(\"goonerspay/v1/terminal-key:\" + terminal ID), its certificate chain sent in\nkey_attestation; otherwise 422. Sends terminal.certificate_issued.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"csr\": \"\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -866,7 +914,7 @@
                 "authorizations"
               ]
             },
-            "description": "Card-present authorization from an MPoC terminal (terminal host, CDE)\n\nAn iPhone attested with App Attest sends App-Attest-Assertion: the assertion its attested key makes over SHA-256 of this exact request body (DCAppAttestService generateAssertion). Without it, with another key, over another body or with a counter already used, the request is refused with 403 assertion-invalid before it reaches the card network.\n",
+            "description": "Card-present authorization from an MPoC terminal (terminal host, CDE)\n\nAn iPhone attested with App Attest sends App-Attest-Assertion, whether it calls with its session or with its terminal's certificate: the assertion its attested key makes over SHA-256 of this exact request body (DCAppAttestService generateAssertion). Without it, with another key, over another body or with a counter already used, the request is refused with 403 assertion-invalid before it reaches the card network.\n",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"payment_intent_id\": \"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\n  \"terminal_id\": \"TP000418\",\n  \"stan\": \"004211\",\n  \"local_time\": \"2026-10-29T14:42:08-03:00\",\n  \"emv_application\": \"credit\",\n  \"sred\": {\n    \"format\": \"mpoc-sdk-v2\",\n    \"ksn\": \"FFFF9876543210E00011\",\n    \"ciphertext\": \"q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJ\"\n  },\n  \"pin\": null,\n  \"device_risk\": {\n    \"score\": 0.1,\n    \"model\": \"gp-device-1\",\n    \"signals\": [\n      \"developer_options\"\n    ]\n  },\n  \"attestation\": {\n    \"verdict_token\": \"eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig\",\n    \"obtained_at\": \"2026-10-29T17:40:01Z\"\n  },\n  \"journal_event_id\": \"a14d60ce8cf49c2c466a55a184869f29ef6954e6383144abe702bbec4c74e02b\"\n}",

@@ -94,6 +94,7 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `ACQUIRER_ID`, `CARD_PRESENT_TIMEOUT` | DE 32 and T_resp (default 10 s) |
 | `HTTP_ADDR`, `HTTP_TLS_*` | Partner and merchant API |
 | `TERMINAL_ADDR`, `TERMINAL_TLS_CA/CERT/KEY` | Mutual-TLS listener for terminals (CA = terminal CA) |
+| `TERMINAL_CA_CERT`, `TERMINAL_CA_KMS_KEY_ID` (or `TERMINAL_CA_KEY` outside production) | The terminal CA that signs terminals' CSRs (`POST /v1/terminals`, renewal at `POST /v1/terminals/{id}/certificate`): its certificate, which `TERMINAL_TLS_CA` must hold, and its key in AWS KMS (an `ECC_NIST_P256` signing key; `AWS_REGION`) or a PEM file. Unset: certificates come from an external terminal PKI, registered by SHA-256 |
 | `PIX_BASE_URL`, `PIX_TOKEN_URL`, `PIX_CLIENT_ID`, `PIX_CLIENT_SECRET`, `PIX_KEY`, `PIX_TLS_CA/CERT/KEY` | The PSP's API Pix (base URL includes `/v2`) |
 | `PIX_WEBHOOK_ADDR`, `PIX_WEBHOOK_TLS_CA/CERT/KEY`, `PIX_WEBHOOK_PUBLIC_URL` | Listener for the PSP's webhooks (CA = the PSP's client CA). The public URL is registered with `PUT /webhook/{chave}` at start |
 | `PAYOUT_BASE_URL` | Partner bank transfer API (generic adapter) |

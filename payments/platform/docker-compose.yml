@@ -54,7 +54,7 @@ services:
       schemesim: { condition: service_started }
       pixsim: { condition: service_started }
       relaysim: { condition: service_started }
-    ports: ["8080:8080", "127.0.0.1:9090:9090"]
+    ports: ["8080:8080", "8445:8445", "127.0.0.1:9090:9090"]
     volumes:
       - pki:/pki:ro
       - ./deploy/routes.sandbox.json:/etc/platform/routes.json:ro
@@ -87,6 +87,13 @@ services:
       PIX_WEBHOOK_TLS_CERT: /pki/platform-server.pem
       PIX_WEBHOOK_TLS_KEY: /pki/platform-server.key
       PIX_WEBHOOK_PUBLIC_URL: https://platform:8444
+      # The terminal host (mutual TLS) and the terminal CA that signs terminals' CSRs.
+      TERMINAL_ADDR: ":8445"
+      TERMINAL_TLS_CERT: /pki/platform-server.pem
+      TERMINAL_TLS_KEY: /pki/platform-server.key
+      TERMINAL_TLS_CA: /pki/terminal-ca.pem
+      TERMINAL_CA_CERT: /pki/terminal-ca.pem
+      TERMINAL_CA_KEY: /pki/terminal-ca.key
       BOOTSTRAP_TENANT: 00000000-0000-4000-8000-000000000001
       BOOTSTRAP_CAPITAL: "100000000"
 

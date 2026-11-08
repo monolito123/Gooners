@@ -224,3 +224,10 @@ func Challenge(devicePubHex string) []byte {
 	h := sha256.Sum256([]byte("goonerspay/v1/key-attestation:" + devicePubHex))
 	return h[:]
 }
+
+// TerminalChallenge is the attestation challenge of a terminal's mutual-TLS key: it binds the
+// attested key to the terminal it is certified for (docs/05 §2.4).
+func TerminalChallenge(terminalID string) []byte {
+	h := sha256.Sum256([]byte("goonerspay/v1/terminal-key:" + terminalID))
+	return h[:]
+}
