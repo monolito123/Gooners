@@ -42,42 +42,127 @@ const (
 	ReasonNameMatch           = "name_match"
 )
 
-// NameScreener checks the names in travel-rule data against the sanctions lists that carry
-// names (screening.Set, with OFAC's SDN.CSV loaded).
+// NameScreener checks names against the sanctions lists that carry names (screening.Set,
+// with OFAC's SDN.CSV or the UN list loaded): the names in travel-rule data, and merchants'
+// companies, partners and representatives at KYB.
 type NameScreener interface {
 	ScreenName(ctx context.Context, name string) (screening.Result, error)
 }
 
-var mNameScreenings = metrics.Default.Counter("goonerspay_name_screenings_total", "Names in travel-rule data screened, by result (clear, hit, error, skipped).", "result")
+var mNameScreenings = metrics.Default.Counter("goonerspay_name_screenings_total", "Names screened against the sanctions lists, by result (clear, hit, possible, error, skipped).", "result")
 
-// screenNames screens every name of the persons given. Without a list that holds names
-// (address lists and providers' address contracts do not) the names are not screened, and
-// the metric says so; addresses remain the control that always runs.
-func (s *Service) screenNames(ctx context.Context, persons []travelrule.Person) ([]string, error) {
-	ns, ok := s.screener.(NameScreener)
-	var hits []string
+// PossibleMatch is a screened name and the list entry it resembles without matching it.
+type PossibleMatch struct {
+	Name  string `json:"name"`
+	Entry string `json:"entry"`
+}
+
+// nameScreening is what screening names found: names on a list (hits), and names resembling
+// one (possible matches). Both stop what they concern until compliance decides; a possible
+// match compliance clears stays cleared for that name and entry, a hit never does.
+type nameScreening struct {
+	Hits     []string
+	Possible []PossibleMatch
+	Screened bool // at least one list with names was consulted
+}
+
+func (n nameScreening) found() bool { return len(n.Hits)+len(n.Possible) > 0 }
+
+// matches lists both, for a case's detail and the logs.
+func (n nameScreening) matches() []string {
+	out := append([]string{}, n.Hits...)
+	for _, p := range n.Possible {
+		out = append(out, fmt.Sprintf("possible: %q resembles %s", p.Name, p.Entry))
+	}
+	return out
+}
+
+// screenNames screens the names of the persons given (screenNameList).
+func (s *Service) screenNames(ctx context.Context, tenantID string, persons []travelrule.Person) (nameScreening, error) {
+	var names []string
 	for _, p := range persons {
-		for _, n := range p.Names() {
-			if !ok {
-				mNameScreenings.Inc("skipped")
-				continue
+		names = append(names, p.Names()...)
+	}
+	return s.screenNameList(ctx, tenantID, names)
+}
+
+// screenNameList screens names against the lists that carry names, leaving out the possible
+// matches compliance cleared for this tenant. Without such a list nothing is screened
+// (Screened is false), and the metric says so; addresses remain the control that always runs.
+func (s *Service) screenNameList(ctx context.Context, tenantID string, names []string) (nameScreening, error) {
+	var out nameScreening
+	ns, ok := s.screener.(NameScreener)
+	seen := map[string]bool{}
+	for _, n := range names {
+		if strings.TrimSpace(n) == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		if !ok {
+			mNameScreenings.Inc("skipped")
+			continue
+		}
+		r, err := ns.ScreenName(ctx, n)
+		switch {
+		case err != nil:
+			mNameScreenings.Inc("error")
+			return nameScreening{}, err
+		case len(r.Sources) == 0:
+			mNameScreenings.Inc("skipped")
+			continue
+		}
+		out.Screened = true
+		if r.Hit {
+			mNameScreenings.Inc("hit")
+			out.Hits = append(out.Hits, fmt.Sprintf("%q: %s", n, strings.Join(r.Matches, ", ")))
+		}
+		cleared := map[string]bool{}
+		if len(r.Possible) > 0 {
+			rows, err := s.pool.Query(ctx, `SELECT entry FROM name_clearances WHERE tenant_id = $1 AND name_key = $2`, tenantID, screening.NameKey(n))
+			if err != nil {
+				return nameScreening{}, err
 			}
-			r, err := ns.ScreenName(ctx, n)
-			switch {
-			case err != nil:
-				mNameScreenings.Inc("error")
-				return nil, err
-			case len(r.Sources) == 0:
-				mNameScreenings.Inc("skipped")
-			case r.Hit:
-				mNameScreenings.Inc("hit")
-				hits = append(hits, r.Matches...)
-			default:
-				mNameScreenings.Inc("clear")
+			for rows.Next() {
+				var e string
+				if err := rows.Scan(&e); err == nil {
+					cleared[e] = true
+				}
+			}
+			rows.Close()
+		}
+		possible := 0
+		for _, e := range r.Possible {
+			if !cleared[e] {
+				out.Possible = append(out.Possible, PossibleMatch{Name: n, Entry: e})
+				possible++
 			}
 		}
+		switch {
+		case r.Hit:
+		case possible > 0:
+			mNameScreenings.Inc("possible")
+		default:
+			mNameScreenings.Inc("clear")
+		}
 	}
-	return hits, nil
+	return out, nil
+}
+
+// clearPossibleMatches records the possible matches of a case compliance closed or released
+// as cleared: the same name will not be flagged for the same entry again in this tenant.
+func (s *Service) clearPossibleMatches(ctx context.Context, tx pgx.Tx, tenantID string, c *ComplianceCase, actor string) error {
+	raw, _ := json.Marshal(c.Detail["possible"])
+	var possible []PossibleMatch
+	if json.Unmarshal(raw, &possible) != nil {
+		return nil
+	}
+	for _, p := range possible {
+		if _, err := tx.Exec(ctx, `INSERT INTO name_clearances (tenant_id, name_key, entry, case_id, cleared_by) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (tenant_id, name_key, entry) DO NOTHING`, tenantID, screening.NameKey(p.Name), p.Entry, c.ID, actor); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ComplianceCase is something compliance must decide: a deposit held because a sender is on
@@ -161,10 +246,11 @@ func (s *Service) recordScreening(ctx context.Context, tenantID, merchantID, pur
 
 // depositVerdict is what screening a deposit's senders concluded.
 type depositVerdict struct {
-	reason  string // "" when clear, else sanctions_hit or screening_failed
-	senders []string
-	matches []string
-	errs    []string
+	reason   string // "" when clear, else sanctions_hit or screening_failed
+	senders  []string
+	matches  []string
+	possible []PossibleMatch
+	errs     []string
 }
 
 // screenDeposit finds who sent a deposit and screens every sender (docs/09 §6.5). It fails
@@ -253,6 +339,9 @@ func (s *Service) holdDeposit(ctx context.Context, venue string, d exchange.Depo
 	detail := map[string]any{"venue": venue, "deposit_id": d.ID, "network": d.Network, "address": d.Address, "txid": d.TxID, "senders": v.senders}
 	if len(v.matches) > 0 {
 		detail["matches"] = v.matches
+	}
+	if len(v.possible) > 0 {
+		detail["possible"] = v.possible
 	}
 	if len(v.errs) > 0 {
 		detail["errors"] = v.errs
@@ -348,6 +437,11 @@ func (s *Service) DecideCase(ctx context.Context, tenantID, id, action, note, ac
 		return nil, fmt.Errorf("%w: the case was decided meanwhile", ErrConflict)
 	}
 	if err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if action != CaseBlock {
+			if err := s.clearPossibleMatches(ctx, tx, tenantID, c, actor); err != nil {
+				return err
+			}
+		}
 		return audit(ctx, tx, tenantID, actor, "compliance_case."+action, id, map[string]any{"kind": c.Kind, "reason": c.Reason, "note": note})
 	}); err != nil {
 		return nil, err

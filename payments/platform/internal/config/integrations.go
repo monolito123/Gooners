@@ -196,19 +196,34 @@ func (c *Config) Integrations() []Integration {
 		}
 		add(i)
 	}
-	if usesCrypto {
-		{
-			i := Integration{Name: "Sanctions screening", For: "withdrawal addresses, deposit senders and the names in travel-rule data", Settings: []string{"SANCTIONS_LISTS", "SCREENING_URL", "SCREENING_TOKEN"}, Production: true}
-			switch {
-			case len(c.SanctionsLists) > 0:
-				i.State, i.Detail = Live, strings.TrimSpace(strings.Join(c.SanctionsLists, ", ")+" "+c.ScreeningURL)
-			case c.ScreeningURL != "":
-				i.State, i.Detail = Partial, "SCREENING_URL screens addresses only: names need SANCTIONS_LISTS (OFAC's SDN.CSV)"
-			default:
-				i.State, i.Detail = Off, "needs SANCTIONS_LISTS (OFAC's SDN.CSV)"
+	// Onboarding: the KYB registry and the sanctions lists every merchant's names meet.
+	{
+		k := Integration{Name: "KYB registry (Receita Federal CNPJ data)", For: "clearing new merchants before they sell", Settings: []string{"KYB_REGISTRY", "KYB_REGISTRY_URL", "KYB_AUTO_APPROVE"}, Production: true}
+		switch c.KYBRegistry {
+		case "brasilapi":
+			url := c.KYBRegistryURL
+			if url == "" {
+				url = "https://brasilapi.com.br/api/cnpj/v1"
 			}
-			add(i)
+			k.State, k.Detail = Live, url
+		case "sandbox":
+			k.State, k.Detail = Simulated, "the sandbox's test companies"
+		default:
+			k.State, k.Detail = Off, "no registry: operators clear every merchant by hand"
 		}
+		add(k)
+		i := Integration{Name: "Sanctions screening", For: "merchants' names at onboarding; with crypto, withdrawal addresses, deposit senders and travel-rule names", Settings: []string{"SANCTIONS_LISTS", "SCREENING_URL", "SCREENING_TOKEN"}, Production: true}
+		switch {
+		case len(c.SanctionsLists) > 0:
+			i.State, i.Detail = Live, strings.TrimSpace(strings.Join(c.SanctionsLists, ", ")+" "+c.ScreeningURL)
+		case c.ScreeningURL != "":
+			i.State, i.Detail = Partial, "SCREENING_URL screens addresses only: names need SANCTIONS_LISTS (OFAC's SDN.CSV)"
+		default:
+			i.State, i.Detail = Off, "needs SANCTIONS_LISTS (OFAC's SDN.CSV): names go to people unscreened"
+		}
+		add(i)
+	}
+	if usesCrypto {
 		{
 			i := Integration{Name: "Deposit sender lookups", For: "who sent each crypto deposit", Settings: []string{"BITCOIN_ESPLORA_URL", "ETHEREUM_RPC_URL", "POLYGON_RPC_URL", "TRON_API_URL", "TRON_API_KEY", "SENDER_LOOKUP_URL"}, Production: true}
 			networks := []string{}

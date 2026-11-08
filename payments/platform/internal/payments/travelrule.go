@@ -217,18 +217,19 @@ func (s *Service) travelRuleOut(ctx context.Context, tenantID string, m *Merchan
 	if msg.BeneficiaryVASP != nil {
 		parties = append(parties, msg.BeneficiaryVASP.BeneficiaryVASP)
 	}
-	hits, err := s.screenNames(ctx, parties)
+	ns, err := s.screenNames(ctx, tenantID, parties)
 	if err != nil {
 		return nil, fmt.Errorf("%w: name screening could not be completed; nothing was sent: %v", ErrUnavailable, err)
 	}
-	if len(hits) > 0 {
+	if hits := ns.matches(); ns.found() {
 		refused := &TravelRuleMessage{ID: ids.New("tr"), Direction: "outbound", MerchantID: m.ID, TransferID: w.ID, Asset: w.Asset, Network: w.Network, Address: w.Address,
 			Memo: w.Memo, Units: w.Units, Counterparty: counterparty, Status: "refused", Reason: "name screening"}
 		if err := s.saveTravel(ctx, tenantID, refused, msg); err != nil {
 			return nil, err
 		}
 		if _, err := s.openCase(ctx, tenantID, m.ID, CaseTravelRule, ReasonNameMatch, "withdrawal:"+w.ID, "", false, w.Asset, w.Units,
-			map[string]any{"matches": hits, "message": refused.ID, "note": "a withdrawal was refused: its beneficiary or receiving provider is named on a sanctions list"}); err != nil {
+			map[string]any{"matches": hits, "possible": ns.Possible, "message": refused.ID,
+				"note": "a withdrawal was refused: its beneficiary or receiving provider is named on a sanctions list, or resembles a name on one"}); err != nil {
 			return nil, err
 		}
 		s.log.Warn("withdrawal refused by name screening", "merchant", m.ID, "withdrawal", w.ID, "matches", hits)
@@ -365,14 +366,14 @@ func (s *Service) ReceiveTravelRule(ctx context.Context, in travelrule.Inbound) 
 		}
 		// The deposit came first and was settled or held on its senders alone: a name on a
 		// list now is a review (a deposit not yet recorded is held instead, in settleDeposit).
-		hits, err := s.screenNames(ctx, in.IVMS101.Originator.OriginatorPerson)
-		reason, detail := ReasonNameMatch, map[string]any{"message": rec.ID, "matches": hits,
-			"note": "the sending provider names an originator on a sanctions list, after the deposit was recorded"}
+		ns, err := s.screenNames(ctx, tenant, in.IVMS101.Originator.OriginatorPerson)
+		reason, detail := ReasonNameMatch, map[string]any{"message": rec.ID, "matches": ns.matches(), "possible": ns.Possible,
+			"note": "the sending provider names an originator on a sanctions list, or resembling a name on one, after the deposit was recorded"}
 		if err != nil {
 			reason, detail = ReasonScreeningFailed, map[string]any{"message": rec.ID, "errors": []string{err.Error()},
 				"note": "the originator's name could not be screened: screen it by hand"}
 		}
-		if err != nil || len(hits) > 0 {
+		if err != nil || ns.found() {
 			if _, err := s.openCase(ctx, tenant, merchant, CaseTravelRule, reason, "deposit:"+venue+"/"+depID, "", false, "", 0, detail); err != nil {
 				return nil, err
 			}

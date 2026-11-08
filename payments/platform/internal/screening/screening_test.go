@@ -175,3 +175,105 @@ func TestNames(t *testing.T) {
 		t.Fatalf("a stale list: %v", err)
 	}
 }
+
+// The UN Security Council Consolidated List, in its XML's shape (the names are synthetic).
+const unXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<CONSOLIDATED_LIST xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" dateGenerated="2026-11-08T00:00:00.869Z">
+  <INDIVIDUALS>
+    <INDIVIDUAL>
+      <DATAID>1</DATAID><FIRST_NAME>EXAMPLO</FIRST_NAME><SECOND_NAME>PERSONA</SECOND_NAME><THIRD_NAME>SINTETICA</THIRD_NAME>
+      <UN_LIST_TYPE>Al-Qaida</UN_LIST_TYPE><REFERENCE_NUMBER>QDi.999</REFERENCE_NUMBER>
+      <INDIVIDUAL_ALIAS><QUALITY>Good</QUALITY><ALIAS_NAME>Abu Exemplo</ALIAS_NAME></INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ALIAS><QUALITY>Low</QUALITY><ALIAS_NAME>Ahmed</ALIAS_NAME></INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ALIAS><QUALITY>Low</QUALITY><ALIAS_NAME>Mohamed Ali Hassan</ALIAS_NAME></INDIVIDUAL_ALIAS>
+      <INDIVIDUAL_ALIAS><QUALITY/><ALIAS_NAME/></INDIVIDUAL_ALIAS>
+    </INDIVIDUAL>
+  </INDIVIDUALS>
+  <ENTITIES>
+    <ENTITY>
+      <DATAID>2</DATAID><FIRST_NAME>EXAMPLE FRONT COMPANY</FIRST_NAME><REFERENCE_NUMBER>QDe.999</REFERENCE_NUMBER>
+      <ENTITY_ALIAS><QUALITY>a.k.a.</QUALITY><ALIAS_NAME>Front Trading Example</ALIAS_NAME></ENTITY_ALIAS>
+    </ENTITY>
+  </ENTITIES>
+</CONSOLIDATED_LIST>`
+
+func TestUNList(t *testing.T) {
+	ns, err := ParseUNNames(strings.NewReader(unXML), "UN SC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"Examplo Persona Sintetica", "abu exemplo", "Example Front Company", "FRONT TRADING EXAMPLE"} {
+		if ns[NameKey(n)] == "" {
+			t.Errorf("%q not listed: %v", n, ns)
+		}
+	}
+	if ns[NameKey("Mohamed Ali Hassan")] != "" || len(ns) != 4 {
+		t.Errorf("a low-quality alias listed: %v", ns)
+	}
+	if !strings.Contains(ns[NameKey("Abu Exemplo")], "QDi.999 EXAMPLO PERSONA SINTETICA") {
+		t.Errorf("the match does not name the entry: %q", ns[NameKey("Abu Exemplo")])
+	}
+	// Loaded as a list: names, and no XML line taken for an address.
+	path := filepath.Join(t.TempDir(), "consolidated.xml")
+	_ = os.WriteFile(path, []byte(unXML), 0o600)
+	l := &List{Sources: []string{path}}
+	if err := l.Load(ctx); err != nil || !l.HasNames() || l.Size() != 0 {
+		t.Fatalf("%v names %v addresses %d", err, l.HasNames(), l.Size())
+	}
+	if hit, m, _ := l.ScreenName(ctx, "Front Trading Example"); !hit || !strings.Contains(m, "QDe.999") {
+		t.Fatalf("%v %q", hit, m)
+	}
+	if _, err := ParseUNNames(strings.NewReader("<CONSOLIDATED_LIST><INDIVIDUAL><FIRST_NAME>x"), "UN"); err == nil {
+		t.Fatal("a truncated list accepted")
+	}
+}
+
+// Possible matches: other spellings and partial names of a listed name, never namesakes of
+// one word or unrelated people.
+func TestPossibleMatches(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"Muhammad Example Rahman", "Mohammed Example Rahman", true},  // transliteration
+		{"Mohamed Exemplo Rahmani", "MUHAMMAD Exemplo Rahmani", true}, // skeleton MMD
+		{"Ayman Zawahiri", "Ayman Muhammad Rabi al-Zawahiri", true},   // partial: 2 of 4
+		{"Muammar Qadhafi", "Muammar Gaddafi", true},                  // Q/G and DH/DD
+		{"Osama Laden", "Usama bin Laden", true},                      // initial vowel, one edit
+		{"Joao Silva", "Joao Silva", false},                           // equal: a hit, not a resemblance
+		{"Ayman", "Ayman Zawahiri", false},                            // one word is never enough
+		{"Maria Silva", "Maria Silva Santos Oliveira Costa", false},   // 2 of 5: too partial
+		{"Ana Souza", "Ana Sousa", true},                              // one surname, two spellings
+		{"Ana Lima", "Ana Luna", false},                               // words of four letters must be equal
+		{"Ana Souza", "Ana Silva", false},                             // another surname
+
+		{"Pedro Almeida Prado", "Paulo Almeida Prado", false},            // a different first name
+		{"Exemplo Trading Company", "Example Trading Company", true},     // one edit
+		{"Front Trading Example", "Example Front Company Trading", true}, // word order is irrelevant
+	} {
+		if got := Resembles(tc.a, tc.b); got != tc.want {
+			t.Errorf("%q ~ %q = %v, want %v (keys %q %q)", tc.a, tc.b, got, tc.want, NameKey(tc.a), NameKey(tc.b))
+		}
+	}
+	// Through a list and a Set: the possible match is reported beside the (absent) hit.
+	path := filepath.Join(t.TempDir(), "consolidated.xml")
+	_ = os.WriteFile(path, []byte(unXML), 0o600)
+	l := &List{Sources: []string{path}}
+	if err := l.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Set{l}.ScreenName(ctx, "Exemplo Persona Sintetica")
+	if err != nil || r.Hit || len(r.Possible) != 1 || !strings.Contains(r.Possible[0], "QDi.999") {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if r, _ := (Set{l}).ScreenName(ctx, "Examplo Persona Sintetica"); !r.Hit || len(r.Possible) != 0 {
+		t.Fatalf("the listed name itself is a hit, not a possible match: %+v", r)
+	}
+	if r, _ := (Set{SandboxNames}).ScreenName(ctx, "Sandbox Sanctioned Persson"); r.Hit || len(r.Possible) != 1 {
+		t.Fatalf("the sandbox's test name misspelled: %+v", r)
+	}
+	l.Now = func() time.Time { return time.Now().Add(100 * time.Hour) }
+	if _, err := l.PossibleNames(ctx, "Exemplo Persona"); !errors.Is(err, ErrStale) {
+		t.Fatalf("a stale list: %v", err)
+	}
+}

@@ -94,14 +94,36 @@ The platform serves Prometheus metrics on `METRICS_ADDR` (internal network only)
 
 ### 4.1 KYB approval
 
-In production a merchant is created as `kyb_in_review` and cannot take payments. When the KYB case closes:
+In production a merchant is created as `kyb_in_review` and cannot take payments. Within a minute the platform checks it ([04 §2.5](../docs/04-serverless-backend.md#25-workflows)):
+
+- It reads the CNPJ's registration at the Receita Federal (`KYB_REGISTRY`).
+- It compares the legal name, the city and the representatives with what was declared. Representatives are matched by name and the CPF digits the registry publishes.
+- It screens every name against the sanctions lists: the company, its trade name, its partners and the representatives.
+
+The result is on the merchant. Partners see `kyb.outcome` and the findings they can act on; operators see everything with `platform kyb`:
+
+```bash
+platform kyb -tenant T -merchant mer_…            # registry data, every finding, the screening
+```
+
+- **approved**: with `KYB_AUTO_APPROVE=on` the merchant is already active. Otherwise activate it (below).
+- **review**: people decide. A high-risk MCC, a company opened less than 180 days ago, a suspended CNPJ, a name or a representative the registry does not show, or an individual (CPF), whose identity is checked with documents and liveness. A name on a sanctions list also opens a compliance case (`kind: merchant_kyb`, §4.11). Compliance closes it, and only then is the merchant decided.
+- **rejected**: the CNPJ is closed, unfit, null or unknown. Close the merchant after reading the result.
+
+A registry that does not answer is retried every ten minutes; nothing is decided without it. Once the partner corrects the data, or the registry is updated, ask for a fresh check:
+
+```bash
+platform kyb-recheck -tenant T -merchant mer_… -reason "representative corrected" -actor ana@goonerspay.example
+```
+
+To decide:
 
 ```bash
 platform merchant-status -tenant T -merchant mer_… -status active -reason "KYB case 2026-0042 approved" -actor ana@goonerspay.example
 platform merchant-status -tenant T -merchant mer_… -status closed -reason "KYB case 2026-0043 rejected: UBO not verified" -actor ana@goonerspay.example
 ```
 
-The partner receives `merchant.kyb.approved` or `merchant.kyb.rejected`.
+The partner receives `merchant.kyb.approved` or `merchant.kyb.rejected`. Before either, a `review` with findings the partner can fix sends `merchant.kyb.action_required` with those findings.
 
 ### 4.2 Restricting and reactivating a merchant
 
@@ -190,7 +212,7 @@ A deposit whose sender is on a sanctions list (`sanctions_hit`), or whose sender
 
 1. Open the case: Console › Compliance, or `platform compliance-cases -tenant T` (the platform tenant `00000000-0000-0000-0000-000000000000` holds the deposits no charge matches). The case lists the transaction, the senders, the matches and any errors.
 2. `screening_failed`: the job screens it again every ten minutes once the lookup or the list is back, and releases it if every sender is clear. Release it by hand only after screening the senders yourself, and say how in the note.
-3. `sanctions_hit`: compare the match with the list's entry (the address, the asset, the program). `name_match` (a payer or an originator whose name is on the list): namesakes are common; compare the document, the date and place of birth and the country with the list's entry before deciding, and say what you compared in the note. A deposit held because the name could not be screened is not released by the job: decide it by hand. A false positive (the list's own error, or an entry since removed): release, with the evidence in the note; the charge settles for the intent's amount.
+3. `sanctions_hit`: compare the match with the list's entry (the address, the asset, the program). `name_match` (a payer or an originator whose name is on the list): namesakes are common; compare the document, the date and place of birth and the country with the list's entry before deciding, and say what you compared in the note. A deposit held because the name could not be screened is not released by the job: decide it by hand. A **possible match** (the case's `possible` list: a name that only resembles a listed one, by one letter, a transliteration or a partial name) is decided the same way. Releasing or closing it clears that name for that entry in the tenant, so the same person is not flagged again for it. Block when in doubt; an exact match is never cleared. A false positive (the list's own error, or an entry since removed): release, with the evidence in the note; the charge settles for the intent's amount.
 4. A real match: block. The coins stay frozen in `liability.compliance_hold`; they are never returned to the sender, and the charge is canceled. The same day, report the frozen assets to the Ministry of Justice and Public Security as Law 13.810/2019 and Resolution BCB 44/2020 require, and file the communication to the COAF (Siscoaf); record both protocol numbers in the case's note trail (the decision note says what was done; add the protocols to the ticket).
 5. Every decision is `platform compliance-decide -tenant T -case cc_… -action release|block -reason "…" -actor you@goonerspay.example`, or the console's buttons; the decision, its author and the note are kept.
 

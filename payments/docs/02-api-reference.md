@@ -761,7 +761,26 @@ Requires an HTTP Message Signature (§1.2).
 }
 ```
 
-`account_id` is the merchant's ledger account: balances, entries and payouts take it. `plan` sets the merchant's prices; without one the platform's default applies. `root_npub` is optional here: the owner's phone sets it when it enrolls ([§8.2](#82-enrolling-a-phone)). In production a new merchant starts `kyb_in_review` and takes no payments until the operator activates it once KYB clears; the sandbox activates it at once. `GET /v1/merchants/{id}` reads it back, and `GET /v1/merchants` lists the tenant's merchants, newest first.
+`account_id` is the merchant's ledger account: balances, entries and payouts take it. `plan` sets the merchant's prices; without one the platform's default applies. `root_npub` is optional here: the owner's phone sets it when it enrolls ([§8.2](#82-enrolling-a-phone)). In production a new merchant starts `kyb_in_review` and takes no payments until KYB clears. The sandbox activates it at once, unless `KYB_REGISTRY=sandbox` turns the check on.
+
+Within a minute the platform checks the merchant ([04 §2.5](04-serverless-backend.md#25-workflows)):
+
+- It reads the CNPJ's registration at the Receita Federal.
+- It compares the legal name, the city and the `representatives` with it. Representatives are matched by name and the CPF digits the registry publishes.
+- It screens every name against the sanctions lists.
+
+The outcome appears on the merchant as `kyb`:
+
+```json
+{ "kyb": { "outcome": "review", "checked_at": "2026-11-08T14:03:00Z",
+  "findings": [ { "code": "legal_name_mismatch", "detail": "declared \"Cafe Aurora Comercio\"; the registry has \"CAFE AURORA LTDA\"" } ] } }
+```
+
+- **approved**: the merchant is activated (`merchant.kyb.approved`), at once where the platform approves automatically.
+- **review**: people decide. When there are findings the partner can fix, `merchant.kyb.action_required` carries them.
+- **rejected**: the CNPJ is closed, unfit or unknown. An operator closes the merchant (`merchant.kyb.rejected`).
+
+What sanctions screening found is compliance's and never appears here, so a merchant in `review` may list no findings. `GET /v1/merchants/{id}` reads it back, and `GET /v1/merchants` lists the tenant's merchants, newest first.
 
 ### 8.2 Enrolling a phone
 
@@ -1059,7 +1078,7 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `payout.paid` / `.failed` / `.returned` | Payout outcome |
 | `settlement.published` | Daily statement signed and published to Nostr |
 | `payment_method.updated` | Network token lifecycle update (new expiry, reissued card) |
-| `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding |
+| `merchant.kyb.approved` / `.rejected` / `.action_required` | Onboarding: the merchant cleared KYB, was refused, or is in review with findings the partner can fix (`findings` as in the merchant's `kyb`) |
 | `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
 | `terminal.revoked` | A terminal was revoked (lost device, merchant closed, fraud confirmed) |
 | `terminal.certificate_issued` | The terminal CA signed a terminal's certificate (registration, a phone's first certificate, renewal); carries its SHA-256 and expiry, so an unexpected one can be spotted |

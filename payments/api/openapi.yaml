@@ -3929,11 +3929,40 @@ components:
         status_reason:
           type: string
         kyb:
-          type: object
-          additionalProperties: true
+          $ref: "#/components/schemas/KYBResult"
         root_npub:
           $ref: "#/components/schemas/Npub"
           description: The merchant's root key, once the owner's phone set it at enrollment (03 §4.1).
+
+    KYBResult:
+      type: object
+      description: |
+        The onboarding check (docs/04 §2.5), once it ran: the merchant's CNPJ registration at the
+        Receita Federal compared with what was declared, and the names screened. It shows the
+        findings the partner can act on; what sanctions screening found is compliance's and is
+        never shown, so a merchant in review may list no findings. approved activates the
+        merchant where the platform approves automatically; otherwise, and for review and
+        rejected, people decide (merchant.kyb.approved, merchant.kyb.rejected).
+      required: [outcome, findings, checked_at]
+      properties:
+        outcome:
+          type: string
+          enum: [approved, review, rejected]
+        findings:
+          type: array
+          items:
+            type: object
+            required: [code, detail]
+            properties:
+              code:
+                type: string
+                enum: [high_risk_mcc, identity_check_required, registration_suspended, registration_inactive, not_registered, legal_name_mismatch,
+                  city_mismatch, recently_opened, representative_not_registered]
+              detail:
+                type: string
+        checked_at:
+          type: string
+          format: date-time
 
     Plan:
       type: object
@@ -4414,13 +4443,13 @@ components:
           const: compliance_case
         kind:
           type: string
-          enum: [deposit_screening, travel_rule]
+          enum: [deposit_screening, travel_rule, merchant_kyb]
         reason:
           type: string
           enum: [sanctions_hit, screening_failed, originator_missing, beneficiary_mismatch, name_match]
         subject:
           type: string
-          description: '"deposit:<venue>/<deposit id>"'
+          description: '"deposit:<venue>/<deposit id>", or "merchant:<id>" for a merchant''s onboarding'
         merchant_id:
           $ref: "#/components/schemas/Id"
         payment_intent_id:

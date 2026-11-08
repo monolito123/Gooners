@@ -13,6 +13,8 @@
 // access or money needs -actor, the operator's SSO identity, for the audit trail:
 //
 //	platform merchant-status -tenant UUID -merchant ID -status active|restricted|closed -reason R -actor A
+//	platform kyb -tenant UUID -merchant ID                       (a merchant's full KYB result)
+//	platform kyb-recheck -tenant UUID -merchant ID -reason R -actor A
 //	platform terminal-revoke -tenant UUID -terminal ID -reason R -actor A
 //	platform apikey-list -tenant UUID
 //	platform apikey-revoke -tenant UUID -id ak_… -reason R -actor A
@@ -63,6 +65,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
 	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
+	"github.com/monolito123/Gooners/payments/platform/internal/kyb"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
 	"github.com/monolito123/Gooners/payments/platform/internal/payments"
@@ -413,7 +416,9 @@ func serve(ctx context.Context) error {
 	case c.Env == config.Sandbox:
 		deps.Broker = brokerage.NewMemory()
 	}
-	if deps.Exchanges != nil {
+	// Sanctions screening: merchants' names at KYB, and with crypto, addresses, senders and
+	// travel-rule names.
+	if deps.Exchanges != nil || c.KYBRegistry != "" || len(c.SanctionsLists) > 0 {
 		var set screening.Set
 		if len(c.SanctionsLists) > 0 {
 			l := &screening.List{Sources: c.SanctionsLists}
@@ -438,6 +443,14 @@ func serve(ctx context.Context) error {
 		if len(set) > 0 {
 			deps.Screener = set
 		}
+	}
+	switch c.KYBRegistry {
+	case "brasilapi":
+		deps.KYB = &kyb.BrasilAPI{BaseURL: c.KYBRegistryURL}
+	case "sandbox":
+		deps.KYB = kyb.Sandbox
+	}
+	if deps.Exchanges != nil {
 		// Who sent each deposit, read from each network (docs/09 §6.5).
 		lookups := chain.Router{}
 		for network, urls := range c.SenderLookups {
@@ -499,7 +512,8 @@ func serve(ctx context.Context) error {
 	}
 	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
 		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview, TravelRuleRetention: c.TravelRuleRetention,
-		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps}, deps)
+		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps,
+		RequireKYB: deps.KYB != nil, KYBAutoApprove: c.KYBAutoApprove}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)

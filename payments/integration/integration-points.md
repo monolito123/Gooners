@@ -49,9 +49,9 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 22 | Partner token service (`/oauth2/token`, mTLS) | Certificate-bound partner tokens | Built | Optional (API keys remain) |
 | 23 | Prometheus and alerting | The runbook's alerts | Built (metrics) | Operationally required |
 | 24 | Operator identity (SSO) | Who ran each operator command | Missing | Required by the runbook |
-| 25 | KYB/KYC provider | Clearing merchants before they sell | Missing (operators decide) | Required by regulation |
+| 25 | KYB: CNPJ registry (BrasilAPI or a self-hosted minhareceita); KYC provider for individuals | Clearing merchants before they sell | Built (registry and checks); Missing (CPF identity, liveness, PEP) | Required |
 | 26 | Crypto exchanges (Binance, Kraken, Coinbase) | Crypto payments, conversions, withdrawals | Built | With crypto |
-| 27 | Sanctions lists (OFAC SDN) and a screening provider | Addresses, senders, names | Built (lists); Contract (provider) | With crypto |
+| 27 | Sanctions lists (OFAC SDN, UN Security Council) and a screening provider | Merchants' names at KYB; with crypto, addresses, senders and names | Built (lists); Contract (provider) | Required |
 | 28 | Chain data (Esplora, EVM JSON-RPC, Tron) or an analytics provider | Who sent each deposit | Built (nodes); Contract (provider) | With crypto |
 | 29 | Travel-rule network | IVMS101 data with other providers | Contract | With crypto |
 | 30 | DeCripto at the Receita Federal | The monthly crypto report | Manual (file built) | With crypto |
@@ -265,14 +265,19 @@ What remains: route a public host to the platform and set `RECEIPT_CLAIM_BASE` t
 
 **24. Operator identity.** Every command that changes money or access takes `-actor` and writes it to the hash-chained audit trail. The platform does not verify that identity. Operators must reach the commands only through a bastion or job runner that authenticates them with the company's SSO and passes the authenticated identity as `-actor`. A back-office UI over the same commands, behind SSO, is not built.
 
-**25. KYB and KYC.** In production a new merchant starts `kyb_in_review` and takes no payments until an operator runs `platform merchant-status` to activate it. No provider is connected. Operators clear merchants with outside checks:
+**25. KYB and KYC.** Built:
 
-- the CNPJ registry;
-- the owners' identity documents;
-- PEP lists;
-- sanctions lists.
+- **Registry.** `internal/kyb` reads each new merchant's CNPJ registration through the `kyb.Registry` contract. `KYB_REGISTRY=brasilapi` uses BrasilAPI's open Receita Federal data. Set `KYB_REGISTRY_URL` to a server with the same answer, such as a self-hosted [minhareceita](https://github.com/cuducos/minhareceita) loaded from the Receita's monthly open data. That is the production choice: no third party sees the merchants, and there is no rate limit. `KYB_REGISTRY=sandbox` serves test companies.
+- **The check.** The periodic job compares the registration with what was declared: status, legal name, city and representatives (name and the published CPF digits). It also flags companies opened less than 180 days ago and high-risk MCCs, and screens every name against `SANCTIONS_LISTS`.
+- **Decisions.** The result is stored on the merchant: `approved`, `review` or `rejected`. With `KYB_AUTO_APPROVE=on`, `approved` activates the merchant; the rest go to people ([runbook §4.1](operations-runbook.md#41-kyb-approval)). A name on a list opens a compliance case.
 
-A provider integration would call the same command, or the API, once a merchant clears. The re-KYB that rebinds a merchant's root key follows the same path ([03](../docs/03-nostr-layer.md)).
+Production requires `KYB_REGISTRY` and `SANCTIONS_LISTS`. Still missing, by provider:
+
+- **Individuals (CPF).** There is no public registry. They go to review, so identity must be checked through Serpro's Datavalid or a bureau behind a new adapter.
+- **Liveness.** It needs a vendor (Unico, idwall).
+- **PEP.** The CGU's PEP list is not loaded. Loading it as a names list would join the screening.
+
+The re-KYB that rebinds a merchant's root key follows the same path ([03](../docs/03-nostr-layer.md)).
 
 ## 9. Crypto, accounts abroad and B3
 
@@ -292,9 +297,13 @@ The exchanges' settings:
 
 **27. Sanctions screening.**
 
-- **Lists.** `SANCTIONS_LISTS` takes OFAC's `SDN.CSV` or address lists, refreshed every six hours.
+- **Lists.** `SANCTIONS_LISTS` takes, refreshed every six hours:
+  - OFAC's `SDN.CSV`, with names and crypto addresses;
+  - the UN Security Council Consolidated List as XML (`https://scsanctions.un.org/resources/xml/en/consolidated.xml`), which Lei 13.810/2019 makes binding in Brazil. Its low-quality aliases are left out;
+  - address lists.
 - **Provider.** `SCREENING_URL` is a provider's contract: `GET {URL}?network=…&address=…` returns `{"sanctioned", "matches"}`.
-- **What screens what.** The provider screens addresses only. Names in travel-rule data are screened against a list that holds names. So production with crypto requires `SANCTIONS_LISTS` with the SDN file.
+- **What screens what.** The provider screens addresses only. Names are screened against the lists that hold names: merchants' companies, partners and representatives at KYB (#25), and with crypto the names in travel-rule data. So production requires `SANCTIONS_LISTS` with the SDN file and the UN list.
+- **Possible matches.** A name resembling a listed one is a possible match, treated as a hit until compliance decides. Resembling means one edit apart, a transliteration, or a partial name. Closing the case clears that name and entry for the tenant ([09 §6.1](../docs/09-digital-assets-international-b3.md#61-crypto-the-central-banks-vasp-rules)).
 
 **28. Who sent each deposit.**
 

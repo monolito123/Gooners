@@ -136,11 +136,19 @@ type Config struct {
 	// production: its own BCB authorization or the licensed partner it acts for.
 	CryptoAuthorization, FXAuthorization                                      string
 	CryptoFeeBps, CryptoSpreadBps, FXFeeBps, FXSpreadBps, IOFOutBps, IOFInBps int
-	// SanctionsLists are lists of sanctioned addresses (paths or https URLs: OFAC's SDN.CSV,
-	// or one address per line); ScreeningURL is a screening provider's adapter. Crypto
-	// withdrawals are screened against all of them (docs/09 §6.1).
+	// SanctionsLists are sanctions lists (paths or https URLs: OFAC's SDN.CSV, which holds
+	// names and addresses, or one address per line); ScreeningURL is a screening provider's
+	// adapter. New merchants' names are screened at KYB (docs/04 §2.5), and crypto withdrawals,
+	// deposit senders and travel-rule names against them (docs/09 §6.1).
 	SanctionsLists               []string
 	ScreeningURL, ScreeningToken string
+	// KYB (docs/04 §2.5). KYBRegistry is where new merchants' CNPJ registrations are read:
+	// brasilapi (BrasilAPI's open Receita Federal data, or the server at KYBRegistryURL with
+	// the same answer, such as a self-hosted minhareceita) or sandbox (test companies).
+	// KYBAutoApprove (KYB_AUTO_APPROVE=on) activates a merchant whose check comes back
+	// approved; otherwise an operator does, with the result in hand.
+	KYBRegistry, KYBRegistryURL string
+	KYBAutoApprove              bool
 	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
 	ReportingName, ReportingURL string
 	// SenderLookups find who sent each crypto deposit, per network (docs/09 §6.5): an
@@ -304,6 +312,7 @@ func Read() (*Config, error) {
 		}
 	}
 	c.ScreeningURL, c.ScreeningToken = os.Getenv("SCREENING_URL"), os.Getenv("SCREENING_TOKEN")
+	c.KYBRegistry, c.KYBRegistryURL, c.KYBAutoApprove = os.Getenv("KYB_REGISTRY"), os.Getenv("KYB_REGISTRY_URL"), os.Getenv("KYB_AUTO_APPROVE") == "on"
 	c.ReportingName, c.ReportingURL = env("REPORTING_NAME", "goonersPAY"), os.Getenv("REPORTING_URL")
 	c.SenderLookups = map[string]string{}
 	for network, k := range map[string]string{"bitcoin": "BITCOIN_ESPLORA_URL", "ethereum": "ETHEREUM_RPC_URL", "polygon": "POLYGON_RPC_URL", "tron": "TRON_API_URL"} {
@@ -451,6 +460,10 @@ func (c *Config) Validate() error {
 		return errors.New("config: the terminal CA's key is either a PEM file (TERMINAL_CA_KEY) or a KMS key (TERMINAL_CA_KMS_KEY_ID): set one")
 	case c.TerminalCAKMSKeyID != "" && c.AWSRegion == "":
 		return errors.New("config: TERMINAL_CA_KMS_KEY_ID needs AWS_REGION")
+	case c.KYBRegistry != "" && c.KYBRegistry != "brasilapi" && c.KYBRegistry != "sandbox":
+		return fmt.Errorf("config: KYB_REGISTRY %q: use brasilapi (with KYB_REGISTRY_URL for a self-hosted server) or sandbox", c.KYBRegistry)
+	case c.KYBRegistryURL != "" && !strings.HasPrefix(c.KYBRegistryURL, "https://") && c.Env != Sandbox:
+		return errors.New("config: KYB_REGISTRY_URL must be an https address outside the sandbox")
 	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")
@@ -469,6 +482,10 @@ func (c *Config) Validate() error {
 			return errors.New("config: production signs receipts and roots through the signer service: set SIGNER_URL and SIGNER_TLS_CERT/KEY/CA")
 		case c.TerminalCAKey != "":
 			return errors.New("config: production keeps the terminal CA key in a KMS: set TERMINAL_CA_KMS_KEY_ID and unset TERMINAL_CA_KEY")
+		case c.KYBRegistry != "brasilapi":
+			return errors.New("config: production checks every new merchant's CNPJ at the Receita Federal before it sells: set KYB_REGISTRY=brasilapi (KYB_REGISTRY_URL for a self-hosted minhareceita)")
+		case len(c.SanctionsLists) == 0:
+			return errors.New("config: production screens merchants' names at onboarding (and, with crypto, addresses, senders and travel-rule names): set SANCTIONS_LISTS with OFAC's SDN.CSV and the UN Security Council list")
 		case c.RegistrarURL == "" || c.PlatformDocument == "":
 			return errors.New("config: production registers receivables before any advance: set REGISTRAR_URL and PLATFORM_DOCUMENT")
 		case c.AppAttestRoots == "" || c.AndroidAttestationRoots == "":

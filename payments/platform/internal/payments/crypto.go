@@ -393,11 +393,11 @@ func (s *Service) settleDeposit(ctx context.Context, venue exchange.Exchange, d 
 		s.log.Error("travel rule for a deposit", "venue", venue.Name(), "deposit", d.ID, "err", err)
 	}
 	if v.reason == "" && len(originators) > 0 {
-		switch hits, err := s.screenNames(ctx, originators); {
+		switch ns, err := s.screenNames(ctx, tenantID, originators); {
 		case err != nil:
 			v.reason, v.errs = ReasonScreeningFailed, append(v.errs, "originator's name: "+err.Error())
-		case len(hits) > 0:
-			v.reason, v.matches = ReasonNameMatch, hits
+		case ns.found():
+			v.reason, v.matches, v.possible = ReasonNameMatch, ns.matches(), ns.Possible
 		}
 		if v.reason != "" {
 			if _, err := s.pool.Exec(ctx, `UPDATE crypto_deposits SET screening = 'pending' WHERE exchange = $1 AND deposit_id = $2`, venue.Name(), d.ID); err != nil {

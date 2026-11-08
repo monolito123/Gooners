@@ -70,6 +70,8 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 			c.TerminalCACert, c.TerminalCAKey = "terminal-ca.pem", "terminal-ca.key"
 		}},
 		{"TERMINAL_CA_KMS_KEY_ID", func(c *Config) { c.TerminalCAKey, c.TerminalCAKMSKeyID = "", "alias/goonerspay-terminal-ca" }},
+		{"KYB_REGISTRY", func(c *Config) { c.KYBRegistry = "brasilapi" }},
+		{"SANCTIONS_LISTS", func(c *Config) { c.SanctionsLists = []string{"/etc/platform/sdn.csv"} }},
 		{"registers receivables", func(c *Config) {
 			c.RegistrarURL, c.PlatformDocument = "https://registrar-adapter.internal", "99999999000191"
 		}},
@@ -108,12 +110,14 @@ func productionSigner(c *Config) {
 	c.SignerURL, c.SignerTLS = "https://signer.internal:8446", &TLSFiles{CA: "signer-ca.pem", Cert: "platform.pem", Key: "platform.key"}
 }
 
-// productionPix fills the PSP, payout, relay and claim-page settings production requires.
+// productionPix fills the PSP, payout, relay and claim-page settings production requires,
+// and the onboarding ones: the KYB registry and the sanctions lists.
 func productionPix(c *Config) {
 	tls := &TLSFiles{CA: "psp-ca.pem", Cert: "c.pem", Key: "k.pem"}
 	c.PixBaseURL, c.PixTLS, c.PixClientID, c.PixKey = "https://psp.example/api/v2", tls, "client", "12345678000195"
 	c.PixWebhookAddr, c.PixWebhookTLS = ":8443", tls
 	c.PayoutBaseURL, c.Relays, c.ClaimBase = "https://psp.example/pagamentos", []string{"wss://relay.goonerspay.com.br"}, "https://r.goonerspay.com.br/c"
+	c.KYBRegistry, c.SanctionsLists = "brasilapi", []string{"/etc/platform/sdn.csv"}
 }
 
 func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
@@ -131,7 +135,9 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 		"do not run in production": func(c *Config) { c.Exchanges = []string{"sandbox"} },
 		"CRYPTO_AUTHORIZATION":     func(c *Config) { c.Exchanges = []string{"binance"} },
 		"FX_AUTHORIZATION":         func(c *Config) { c.FXProvider = "wise" },
-		"SANCTIONS_LISTS":          func(c *Config) { c.Exchanges, c.CryptoAuthorization = []string{"binance"}, "SPSAV" },
+		"SANCTIONS_LISTS": func(c *Config) {
+			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists = []string{"binance"}, "SPSAV", nil
+		},
 		"REPORTING_URL": func(c *Config) {
 			c.Exchanges, c.CryptoAuthorization, c.SanctionsLists = []string{"binance"}, "SPSAV", []string{"/etc/platform/sdn.csv"}
 		},
@@ -156,7 +162,7 @@ func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
 	}
 	c := prod()
 	c.Exchanges, c.CryptoAuthorization, c.FXProvider, c.FXAuthorization = []string{"binance"}, "SPSAV autorizada pelo BCB", "wise", "Banco parceiro de câmbio"
-	c.ScreeningURL, c.ReportingURL = "https://screening.internal/v1/screen", "https://goonerspay.example"
+	c.ScreeningURL, c.ReportingURL, c.SanctionsLists = "https://screening.internal/v1/screen", "https://goonerspay.example", nil
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "SANCTIONS_LISTS") {
 		t.Errorf("a provider's address screening alone leaves names unscreened: %v", err)
 	}
@@ -196,7 +202,7 @@ func TestIntegrationsReport(t *testing.T) {
 		AppAttestRoots: "apple.pem", AppAttestAppID: "TEAM.br.com.gooners.pay", AndroidAttestationRoots: "google.pem",
 		Exchanges: []string{"binance"}, BinanceKey: "k", BinanceSecret: "s", CryptoAuthorization: "BCB 519",
 		SanctionsLists: []string{"https://lists.example/sdn.csv"}, SenderLookupURL: "https://chain.example", TravelRuleURL: "https://tr.example", TravelRuleSecret: "whsec_x",
-		ReportingURL: "https://goonerspay.com.br", PublicURL: "https://api.goonerspay.com.br",
+		ReportingURL: "https://goonerspay.com.br", PublicURL: "https://api.goonerspay.com.br", KYBRegistry: "brasilapi",
 		Relays: []string{"wss://relay.goonerspay.com.br"}, ClaimBase: "https://r.goonerspay.com.br/c"}
 	productionKeys(p)
 	is = p.Integrations()
@@ -260,6 +266,8 @@ func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
 		"Signer (receipts and transparency keys)": func(c *Config) {
 			c.SignerURL, c.SignerTLS, c.ReceiptsSecret = "", nil, make([]byte, 32)
 		},
+		"KYB registry (Receita Federal CNPJ data)": func(c *Config) { c.KYBRegistry = "sandbox" },
+		"Sanctions screening":                      func(c *Config) { c.SanctionsLists = nil },
 	} {
 		c := full()
 		unset(c)

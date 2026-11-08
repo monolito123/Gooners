@@ -66,6 +66,12 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	if err := s.PurgeAuthState(ctx); err != nil {
 		s.log.Error("purge auth state", "err", err)
 	}
+	// New merchants' KYB checks (docs/04 §2.5).
+	if n, err := s.CheckKYB(ctx); err != nil {
+		s.log.Error("kyb checks", "err", err)
+	} else if n > 0 {
+		s.log.Info("merchants' KYB checked", "count", n)
+	}
 	// Digital assets and international accounts (docs/09).
 	if n, err := s.PollCryptoDeposits(ctx); err != nil {
 		s.log.Error("crypto deposits", "err", err)

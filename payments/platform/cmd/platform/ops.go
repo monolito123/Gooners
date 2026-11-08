@@ -44,6 +44,8 @@ var opsCommands = map[string]func(context.Context, []string) error{
 	"compliance-cases":    complianceCases,
 	"audit-verify":        auditVerify,
 	"compliance-decide":   complianceDecide,
+	"kyb":                 kybShow,
+	"kyb-recheck":         kybRecheck,
 }
 
 type opsFlags struct {
@@ -559,6 +561,43 @@ func auditVerify(ctx context.Context, args []string) error {
 		if !c.OK() {
 			return errors.New("the audit trail was altered")
 		}
+		return nil
+	})
+}
+
+// kybShow prints a merchant's full KYB result: the registry's data, every finding and the
+// screening (docs/04 §2.5). It is for operators and compliance; partners see only the outcome
+// and the findings they can act on.
+func kybShow(ctx context.Context, args []string) error {
+	var merchant string
+	o, err := newOps("kyb", args, func(fs *flag.FlagSet) { fs.StringVar(&merchant, "merchant", "", "merchant ID") })
+	if err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		r, err := svc.KYBDetail(ctx, *o.tenant, merchant)
+		if err != nil {
+			return err
+		}
+		return printJSON(r)
+	})
+}
+
+// kybRecheck has the server check a merchant in KYB review again within a minute.
+func kybRecheck(ctx context.Context, args []string) error {
+	var merchant string
+	o, err := newOps("kyb-recheck", args, func(fs *flag.FlagSet) { fs.StringVar(&merchant, "merchant", "", "merchant ID") })
+	if err != nil {
+		return err
+	}
+	if err := o.requireActor(); err != nil {
+		return err
+	}
+	return withService(ctx, func(svc *payments.Service) error {
+		if err := svc.RequestKYBRecheck(ctx, *o.tenant, merchant, *o.reason, *o.actor); err != nil {
+			return err
+		}
+		fmt.Println("the running platform checks", merchant, "again within a minute; see it with platform kyb")
 		return nil
 	})
 }

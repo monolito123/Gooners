@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -26,11 +27,13 @@ import (
 	"time"
 )
 
-// Result is what screening found about one address.
+// Result is what screening found about one address or name.
 type Result struct {
 	Hit     bool     `json:"hit"`
 	Sources []string `json:"sources"` // what was consulted
 	Matches []string `json:"matches"` // which entries matched, and where
+	// Possible are the entries a name resembles without matching (fuzzy.go): for review.
+	Possible []string `json:"possible,omitempty"`
 }
 
 // Screener checks one address.
@@ -95,6 +98,16 @@ func (s Set) ScreenName(ctx context.Context, name string) (Result, error) {
 		if hit {
 			r.Hit = true
 			r.Matches = append(r.Matches, n.Name()+": "+match)
+		}
+		if p, ok := x.(PossibleNameScreener); ok {
+			possible, err := p.PossibleNames(ctx, name)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", n.Name(), err))
+				continue
+			}
+			for _, m := range possible {
+				r.Possible = append(r.Possible, n.Name()+": "+m)
+			}
 		}
 	}
 	return r, errors.Join(errs...)
@@ -172,6 +185,59 @@ func ParseNames(r io.Reader, label string) (map[string]string, error) {
 	}
 }
 
+// ParseUNNames reads the names of the UN Security Council Consolidated List (its XML,
+// https://scsanctions.un.org/resources/xml/en/consolidated.xml), which Lei 13.810/2019 makes
+// binding in Brazil: every individual's full name and every entity's, with their aliases.
+// Aliases the list grades "Low" quality are left out: too little identifies them, and they
+// would flag namesakes.
+func ParseUNNames(r io.Reader, label string) (map[string]string, error) {
+	type alias struct {
+		Quality string `xml:"QUALITY"`
+		Name    string `xml:"ALIAS_NAME"`
+	}
+	out := map[string]string{}
+	dec := xml.NewDecoder(r)
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("screening: UN list: %w", err)
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || (se.Name.Local != "INDIVIDUAL" && se.Name.Local != "ENTITY") {
+			continue
+		}
+		var e struct {
+			Ref           string  `xml:"REFERENCE_NUMBER"`
+			First         string  `xml:"FIRST_NAME"`
+			Second        string  `xml:"SECOND_NAME"`
+			Third         string  `xml:"THIRD_NAME"`
+			Fourth        string  `xml:"FOURTH_NAME"`
+			Aliases       []alias `xml:"INDIVIDUAL_ALIAS"`
+			EntityAliases []alias `xml:"ENTITY_ALIAS"`
+		}
+		if err := dec.DecodeElement(&e, &se); err != nil {
+			return nil, fmt.Errorf("screening: UN list: %w", err)
+		}
+		name := strings.Join(strings.Fields(strings.Join([]string{e.First, e.Second, e.Third, e.Fourth}, " ")), " ")
+		add := func(n string) {
+			if k := NameKey(n); k != "" {
+				out[k] = label + " (" + e.Ref + " " + name + ")"
+			}
+		}
+		add(name)
+		for _, a := range append(e.Aliases, e.EntityAliases...) {
+			if !strings.EqualFold(strings.TrimSpace(a.Quality), "Low") {
+				add(a.Name)
+			}
+		}
+	}
+}
+
+var unList = regexp.MustCompile(`<CONSOLIDATED_LIST[\s>]`)
+
 var ofacFeature = regexp.MustCompile(`Digital Currency Address - ([A-Z0-9]+)\s+([A-Za-z0-9:]+)`)
 
 // Parse reads a list: OFAC's SDN.CSV (every "Digital Currency Address - CODE address" in it)
@@ -214,7 +280,8 @@ type List struct {
 
 	mu       sync.RWMutex
 	set      map[string]string
-	names    map[string]string // from SDN.CSV, by NameKey
+	names    map[string]string   // from SDN.CSV and the UN list, by NameKey
+	tokens   map[string][]string // each name's words, for possible matches
 	loadedAt time.Time
 }
 
@@ -256,6 +323,16 @@ func (l *List) Load(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("screening: %s: %w", src, err)
 		}
+		if unList.Match(raw[:min(len(raw), 4096)]) { // the UN list: names only
+			ns, err := ParseUNNames(bytes.NewReader(raw), label(src))
+			if err != nil {
+				return err
+			}
+			for k, v := range ns {
+				names[k] = v
+			}
+			continue
+		}
 		m, err := Parse(bytes.NewReader(raw), label(src))
 		if err != nil {
 			return fmt.Errorf("screening: %s: %w", src, err)
@@ -271,7 +348,11 @@ func (l *List) Load(ctx context.Context) error {
 		}
 	}
 	l.mu.Lock()
-	l.set, l.names, l.loadedAt = set, names, l.now()
+	tokens := make(map[string][]string, len(names))
+	for k := range names {
+		tokens[k] = fuzzyWords(k)
+	}
+	l.set, l.names, l.tokens, l.loadedAt = set, names, tokens, l.now()
 	l.mu.Unlock()
 	return nil
 }
@@ -347,15 +428,20 @@ func (l *List) HasNames() bool {
 	return len(l.names) > 0
 }
 
-// ScreenName implements NameScreener.
-func (l *List) ScreenName(_ context.Context, name string) (bool, string, error) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+// fresh reports whether the list is loaded and recent enough to rely on (l.mu held).
+func (l *List) fresh() bool {
 	maxAge := l.MaxAge
 	if maxAge == 0 {
 		maxAge = 72 * time.Hour
 	}
-	if l.set == nil || l.now().Sub(l.loadedAt) > maxAge {
+	return l.set != nil && l.now().Sub(l.loadedAt) <= maxAge
+}
+
+// ScreenName implements NameScreener.
+func (l *List) ScreenName(_ context.Context, name string) (bool, string, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if !l.fresh() {
 		return false, "", ErrStale
 	}
 	k := NameKey(name)

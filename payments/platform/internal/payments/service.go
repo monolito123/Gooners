@@ -21,6 +21,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
 	"github.com/monolito123/Gooners/payments/platform/internal/fx"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
+	"github.com/monolito123/Gooners/payments/platform/internal/kyb"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
 	"github.com/monolito123/Gooners/payments/platform/internal/pixout"
 	"github.com/monolito123/Gooners/payments/platform/internal/pricing"
@@ -78,6 +79,11 @@ type Config struct {
 	// TravelRuleRetention is how long the personal data of the travel rule is kept before it
 	// is redacted. Default ten years (Circular BCB 3.978/2020, art. 67).
 	TravelRuleRetention time.Duration
+	// RequireKYB starts new merchants in kyb_in_review outside production too (production
+	// always does). KYBAutoApprove activates a merchant whose KYB check comes back approved;
+	// without it an operator activates it. KYBPolicy tunes the check.
+	RequireKYB, KYBAutoApprove bool
+	KYBPolicy                  kyb.Policy
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -108,6 +114,7 @@ type Service struct {
 	senders      SenderLookup
 	travelRule   TravelRuleProvider
 	terminalCA   *terminalpki.CA
+	kyb          kyb.Registry
 	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
@@ -147,7 +154,10 @@ type Deps struct {
 	// TerminalCA issues terminals' client certificates from their CSRs (docs/05 §2.4); nil
 	// leaves certificates to an external terminal PKI.
 	TerminalCA *terminalpki.CA
-	Logger     *slog.Logger
+	// KYB reads new merchants' CNPJ registrations (docs/04 §2.5); with Config.RequireKYB, the
+	// periodic job checks every merchant in kyb_in_review. nil leaves KYB to operators.
+	KYB    kyb.Registry
+	Logger *slog.Logger
 }
 
 // New returns the service.
@@ -181,7 +191,7 @@ func New(cfg Config, d Deps) *Service {
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
-		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA}
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA, kyb: d.KYB}
 }
 
 // Errors surfaced to the API as problem details.
@@ -251,7 +261,9 @@ type Merchant struct {
 	Plan       pricing.Plan `json:"plan"`
 	Status     string       `json:"status"`
 	StatusNote string       `json:"status_reason,omitempty"`
-	CreatedAt  string       `json:"created_at,omitempty"`
+	// KYB is the onboarding check's outcome and what the partner may see of it.
+	KYB        *KYBResult `json:"kyb,omitempty"`
+	CreatedAt  string     `json:"created_at,omitempty"`
 	rootPubHex string
 	document   string
 	pixKey     string
@@ -296,7 +308,7 @@ func (s *Service) CreateMerchant(ctx context.Context, tenantID string, in Mercha
 	id := ids.New("mer")
 	m := &Merchant{ID: id, Object: "merchant", AccountID: "acc_" + id[4:], LegalName: in.LegalName, TradeName: in.TradeName, MCC: in.MCC,
 		SchemeMID: in.SchemeMID, City: in.City, RootNpub: in.RootNpub, Plan: in.Plan, Status: "active", rootPubHex: rootHex}
-	if s.cfg.Env == "production" {
+	if s.cfg.Env == "production" || s.cfg.RequireKYB {
 		m.Status = "kyb_in_review"
 	}
 	plan, _ := json.Marshal(in.Plan)
@@ -319,7 +331,8 @@ func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 	m := &Merchant{Object: "merchant"}
 	var plan []byte
 	var created time.Time
-	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote, &created)
+	var kybResult []byte
+	err := q.Scan(&m.ID, &m.AccountID, &m.LegalName, &m.TradeName, &m.document, &m.MCC, &m.SchemeMID, &m.City, &m.rootPubHex, &m.pixKey, &m.pixKeyType, &plan, &m.Status, &m.StatusNote, &created, &kybResult)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -327,6 +340,7 @@ func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 		return nil, err
 	}
 	_ = json.Unmarshal(plan, &m.Plan)
+	m.KYB = kybSummary(kybResult)
 	m.CreatedAt = created.UTC().Format(time.RFC3339)
 	if m.rootPubHex != "" {
 		m.RootNpub, _ = nostr.EncodeNpub(m.rootPubHex)
@@ -334,7 +348,7 @@ func (s *Service) merchant(ctx context.Context, q pgx.Row) (*Merchant, error) {
 	return m, nil
 }
 
-const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, ''), created_at`
+const merchantCols = `id, account_id, legal_name, trade_name, document, mcc, scheme_mid, city, COALESCE(root_pubkey, ''), COALESCE(pix_key, ''), COALESCE(pix_key_type, ''), plan, status, COALESCE(status_reason, ''), created_at, kyb_result`
 
 // GetMerchant loads a merchant.
 func (s *Service) GetMerchant(ctx context.Context, tenantID, id string) (*Merchant, error) {
