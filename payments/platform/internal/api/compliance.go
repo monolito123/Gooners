@@ -131,3 +131,48 @@ func (s *Server) travelRuleInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "reference": m.ID, "reason": m.Reason})
 }
+
+// disputeAlertInbound serves POST /v1/dispute-alerts/inbound: a pre-dispute alert the alerts
+// provider's adapter posts (Ethoca, Verifi), signed as the platform's own webhooks are.
+func (s *Server) disputeAlertInbound(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.DisputeAlertsSecret == "" {
+		problem(w, r, http.StatusServiceUnavailable, "not-configured", "Feature not configured", "no pre-dispute alerts provider is configured")
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if tooLarge(err) {
+		problem(w, r, http.StatusRequestEntityTooLarge, "body-too-large", "Request body too large", "the limit is 1 MiB")
+		return
+	}
+	if err != nil {
+		problem(w, r, http.StatusBadRequest, "bad-body", "Unreadable body", "")
+		return
+	}
+	if err := webhooks.Verify(s.cfg.DisputeAlertsSecret, r.Header.Get("webhook-id"), r.Header.Get("webhook-timestamp"), r.Header.Get("webhook-signature"),
+		body, 5*time.Minute, time.Now()); err != nil {
+		problem(w, r, http.StatusUnauthorized, "bad-signature", "The delivery is not signed by the alerts adapter", "")
+		return
+	}
+	var in payments.AlertInput
+	if err := json.Unmarshal(body, &in); err != nil {
+		problem(w, r, http.StatusBadRequest, "bad-body", "The body is not a dispute alert", err.Error())
+		return
+	}
+	a, err := s.svc.ReceiveDisputeAlert(r.Context(), in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+// listDisputeAlerts serves GET /v1/dispute-alerts.
+func (s *Server) listDisputeAlerts(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	as, err := s.svc.ListDisputeAlerts(r.Context(), from(r.Context()).tenantID, limit)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": as})
+}

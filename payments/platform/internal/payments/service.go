@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
 	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
@@ -121,6 +122,7 @@ type Service struct {
 	kyb          kyb.Registry
 	stamps       []*tsa.Client
 	worm         worm.Store
+	play         *attest.PlayIntegrity
 	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
@@ -167,8 +169,10 @@ type Deps struct {
 	Timestamps []*tsa.Client
 	// Audit copies each day's audit rows to WORM storage (S3 Object Lock); nil keeps them in
 	// the database only.
-	Audit  worm.Store
-	Logger *slog.Logger
+	Audit worm.Store
+	// PlayIntegrity checks the Google verdict each Android card sale carries; nil skips it.
+	PlayIntegrity *attest.PlayIntegrity
+	Logger        *slog.Logger
 }
 
 // New returns the service.
@@ -202,7 +206,7 @@ func New(cfg Config, d Deps) *Service {
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
-		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA, kyb: d.KYB, stamps: d.Timestamps, worm: d.Audit}
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA, kyb: d.KYB, stamps: d.Timestamps, worm: d.Audit, play: d.PlayIntegrity}
 }
 
 // Errors surfaced to the API as problem details.

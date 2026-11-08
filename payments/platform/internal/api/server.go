@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/console"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/metrics"
@@ -55,6 +56,9 @@ type Config struct {
 	// ClientCertHeader names the header a trusted TLS-terminating proxy puts the client's
 	// certificate in (URL-encoded PEM), for certificate-bound partner tokens behind the edge.
 	ClientCertHeader string
+	// DisputeAlertsSecret ("whsec_…") verifies the pre-dispute alerts the alerts provider's
+	// adapter posts to POST /v1/dispute-alerts/inbound. Empty: the route answers 503.
+	DisputeAlertsSecret string
 }
 
 // NostrIdentity names the platform's Nostr keys and relays.
@@ -152,6 +156,7 @@ func (s *Server) Handler() http.Handler {
 	open := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, instrument(pattern, h)) }
 	open("GET /.well-known/nostr.json", s.nip05)
 	open("POST /oauth2/token", s.token)
+	open("POST /v1/dispute-alerts/inbound", s.disputeAlertInbound)
 	open("POST /v1/auth/nostr", s.loginNostr)
 	open("GET /v1/enrollment", s.getEnrollment)
 	open("POST /v1/enrollment", s.enroll)
@@ -184,6 +189,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/payouts/quotes", "payouts:write", true, s.quote)
 	route("POST /v1/payouts", "payouts:write", true, s.payout)
 	route("GET /v1/disputes", "disputes:write", false, s.listDisputes)
+	route("GET /v1/dispute-alerts", "disputes:write", false, s.listDisputeAlerts)
 	route("GET /v1/disputes/{id}", "disputes:write", false, s.getDispute)
 	route("POST /v1/disputes/{id}/evidence", "disputes:write", true, s.disputeEvidence)
 	route("POST /v1/disputes/{id}/accept", "disputes:write", true, s.acceptDispute)
@@ -745,6 +751,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem(w, r, http.StatusUnprocessableEntity, "invalid-request", "Invalid request", err.Error())
 	case errors.Is(err, mobileauth.ErrUnauthorized):
 		problem(w, r, http.StatusUnauthorized, "unauthorized", "Unauthorized", err.Error())
+	case errors.Is(err, attest.ErrIntegrity):
+		problem(w, r, http.StatusForbidden, "integrity-refused", "The Play Integrity verdict refuses this sale", err.Error())
 	case errors.Is(err, payments.ErrAssertion):
 		problem(w, r, http.StatusForbidden, "assertion-invalid", "The request needs a valid App Attest assertion", err.Error())
 	case errors.Is(err, payments.ErrMerchantInactive):

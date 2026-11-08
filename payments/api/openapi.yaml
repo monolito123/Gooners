@@ -504,7 +504,10 @@ paths:
       description: >
         An iPhone attested with App Attest sends App-Attest-Assertion, whether it calls with its
         session or with its terminal's certificate: the assertion its attested key makes over
-        SHA-256 of this exact request body (DCAppAttestService generateAssertion). Without it, with another key, over another body or with a counter
+        SHA-256 of this exact request body (DCAppAttestService generateAssertion). Where the
+        platform checks Play Integrity, an Android phone sends Play-Integrity-Token: a standard
+        integrity token requested with requestHash = the SHA-256 of this exact body in
+        lowercase hex. A missing or refused verdict answers 403 integrity_refused. Without it, with another key, over another body or with a counter
         already used, the request is refused with 403 assertion-invalid before it reaches the
         card network.
       servers:
@@ -640,6 +643,108 @@ paths:
       responses:
         "204":
           description: Deleted
+        "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/dispute-alerts/inbound:
+    post:
+      tags: [disputes]
+      operationId: receiveDisputeAlert
+      summary: A pre-dispute alert (the alerts provider's adapter only)
+      description: |
+        An issuer's notice, through Mastercard's Ethoca or Visa's Verifi (CDRN, RDR), that a
+        cardholder disputes a sale. The platform finds the sale by its RRN and authorization
+        code and refunds what is still refundable, before the chargeback: outcome refunded.
+        Otherwise already_refunded, in_dispute (a chargeback came first), not_found, or
+        refund_failed (the merchant's balance cannot cover it; the chargeback follows its
+        course). Signed with the adapter's shared secret in the webhook-id, webhook-timestamp
+        and webhook-signature headers, as the platform's own webhooks are. The same alert twice
+        answers the first result. Sends dispute.alert to the tenant.
+      security: []
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alert_id, provider, type, amount, rrn]
+              properties:
+                alert_id:
+                  type: string
+                provider:
+                  type: string
+                  enum: [ethoca, verifi_cdrn, verifi_rdr]
+                type:
+                  type: string
+                  enum: [fraud, dispute]
+                amount:
+                  $ref: "#/components/schemas/MinorUnits"
+                currency:
+                  const: BRL
+                rrn:
+                  type: string
+                auth_code:
+                  type: string
+                reason_code:
+                  type: string
+      responses:
+        "200":
+          description: What the platform did
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DisputeAlert"
+        "4XX":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+
+  /v1/dispute-alerts:
+    get:
+      tags: [disputes]
+      operationId: listDisputeAlerts
+      summary: The tenant's pre-dispute alerts, newest first
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object:
+                    const: list
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DisputeAlert"
         "4XX":
           $ref: "#/components/responses/Problem"
         default:
@@ -3462,6 +3567,37 @@ components:
         - won
         - lost
 
+    DisputeAlert:
+      type: object
+      required: [id, object, provider, alert_id, type, amount, outcome, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        object:
+          const: dispute_alert
+        provider:
+          type: string
+          enum: [ethoca, verifi_cdrn, verifi_rdr]
+        alert_id:
+          type: string
+        type:
+          type: string
+          enum: [fraud, dispute]
+        amount:
+          $ref: "#/components/schemas/MinorUnits"
+        outcome:
+          type: string
+          enum: [refunded, already_refunded, in_dispute, not_found, refund_failed]
+        payment_intent_id:
+          $ref: "#/components/schemas/Id"
+        merchant_id:
+          $ref: "#/components/schemas/Id"
+        refund_id:
+          type: string
+        detail:
+          type: string
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
     Dispute:
       type: object
       required: [id, object, payment_intent_id, scheme, reason_code, amount, currency, status]

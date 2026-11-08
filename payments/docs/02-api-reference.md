@@ -551,6 +551,20 @@ The CVC is used for one verification and never stored (PCI DSS v4.0.1 requiremen
 
 The amount is taken from the merchant when the chargeback arrives, because the scheme debits the acquirer at once. If the available balance is short, the difference is booked as owed by the merchant (`ledger.owed_by_merchant`) and recovered from its next credits. While a dispute is open, refunds on the payment are refused with `409`: the cardholder already has the money back. `GET /v1/disputes` filters by `status` and `merchant_id`. A dispute still in `evidence_required` at `evidence_due_at` is accepted automatically, after a `dispute.evidence_due_soon` warning 48 hours before. Operations files representments with the sponsor and imports the outcomes ([operations runbook §4.6](../integration/operations-runbook.md#46-chargebacks)).
 
+### 5.0a Pre-dispute alerts
+
+Before filing a chargeback, many issuers warn the acquirer: Mastercard's **Ethoca** alerts, and Visa's **Verifi** CDRN and RDR. Refunding the sale then ends the dispute. There is no chargeback, no chargeback fee, and no count against the merchant in the schemes' monitoring programs (VAMP, ECM).
+
+The alerts provider's adapter posts each alert, signed, to `POST /v1/dispute-alerts/inbound`. The platform finds the sale by its RRN and authorization code and refunds what is still refundable, up to the alert's amount. It answers the provider with the outcome:
+
+- `refunded`;
+- `already_refunded`;
+- `in_dispute` (a chargeback came first);
+- `not_found`;
+- `refund_failed` (the merchant's available balance cannot cover the refund, as for any refund; the chargeback then follows its course).
+
+The tenant receives `dispute.alert`, and `GET /v1/dispute-alerts` lists them. An alert delivered twice answers the first result.
+
 ### 5.1 Fraud shield reviews
 
 A sale the fraud shield approved but held, and a terminal it froze, open a review and send `risk.review_opened`. `GET /v1/risk/reviews?status=open` lists them oldest first (scope `risk:read`); each shows both halves of the decision, never the raw device observations:
@@ -1095,6 +1109,7 @@ Receivers must reject timestamps more than 5 minutes old, compare signatures in 
 | `merchant.status_changed` | Restricted, reactivated or closed by risk or operations |
 | `terminal.revoked` | A terminal was revoked (lost device, merchant closed, fraud confirmed) |
 | `transfer.posted` | A transfer between two of the tenant's accounts was posted |
+| `dispute.alert` | A pre-dispute alert arrived and was answered (§5.0a): the outcome and, when refunded, the refund |
 | `terminal.certificate_issued` | The terminal CA signed a terminal's certificate (registration, a phone's first certificate, renewal); carries its SHA-256 and expiry, so an unexpected one can be spotted |
 | `terminal.frozen` | The fraud shield froze a terminal pending a review (§5.1) |
 | `risk.review_opened` / `.review_resolved` | A sale was held or a terminal frozen; a review released it or confirmed fraud (§5.1) |

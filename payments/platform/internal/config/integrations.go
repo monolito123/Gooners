@@ -206,6 +206,26 @@ func (c *Config) Integrations() []Integration {
 		}
 		add(w)
 	}
+	// Play Integrity: Google's verdict on each Android card sale.
+	{
+		pi := Integration{Name: "Play Integrity", For: "a Google verdict on the app and the phone with each Android card sale", Settings: []string{"PLAY_INTEGRITY", "PLAY_INTEGRITY_STRONG", "GOOGLE_APPLICATION_CREDENTIALS"}}
+		if c.PlayIntegrity {
+			pi.State, pi.Detail = Live, "decodeIntegrityToken for "+c.AndroidPackage
+		} else {
+			pi.State, pi.Detail = Off, "Android phones rely on key attestation alone"
+		}
+		add(pi)
+	}
+	// Pre-dispute alerts, which turn would-be chargebacks into refunds.
+	{
+		a := Integration{Name: "Pre-dispute alerts (Ethoca, Verifi)", For: "refunding disputed sales before they become chargebacks", Settings: []string{"DISPUTE_ALERTS_SECRET"}}
+		if c.DisputeAlertsSecret != "" {
+			a.State, a.Detail = Live, "the alerts adapter posts to /v1/dispute-alerts/inbound"
+		} else {
+			a.State, a.Detail = Off, "alerts reach operations through the sponsor; every dispute becomes a chargeback"
+		}
+		add(a)
+	}
 	// Independent dates for the daily roots.
 	{
 		t := Integration{Name: "Timestamp anchoring (RFC 3161)", For: "dating each daily transparency root by independent authorities", Settings: []string{"TSA_URLS", "TSA_ROOTS"}}

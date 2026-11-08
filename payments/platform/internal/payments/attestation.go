@@ -136,3 +136,29 @@ func (s *Service) strictAttestation() bool {
 	st, ok := s.attest.(StrictAttestor)
 	return ok && st.Strict()
 }
+
+// CheckPlayIntegrity verifies the Play Integrity token an Android phone sends with a card
+// sale (docs/05 §2.4): requested over this exact body, decoded by Google, and passing the
+// policy. Devices attested otherwise (iPhones sign their sales with App Attest) pass, as does
+// everything when Play Integrity is not configured.
+func (s *Service) CheckPlayIntegrity(ctx context.Context, tenantID, deviceID string, body []byte, token string) error {
+	if s.play == nil {
+		return nil
+	}
+	var integrityJSON []byte
+	if err := s.pool.QueryRow(ctx, `SELECT integrity FROM devices WHERE tenant_id = $1 AND id = $2`, tenantID, deviceID).Scan(&integrityJSON); err != nil {
+		return fmt.Errorf("%w: device", ErrNotFound)
+	}
+	var stored struct {
+		Verdict map[string]any `json:"verdict"`
+	}
+	_ = json.Unmarshal(integrityJSON, &stored)
+	if stored.Verdict["method"] != "android_key_attestation" {
+		return nil
+	}
+	if token == "" {
+		return fmt.Errorf("%w: required: request a standard integrity token with requestHash = SHA-256 of the body (hex) and send it in Play-Integrity-Token", attest.ErrIntegrity)
+	}
+	_, err := s.play.Check(ctx, token, body)
+	return err
+}

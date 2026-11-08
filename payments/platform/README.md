@@ -97,6 +97,8 @@ All configuration is environment variables plus a routes file (`deploy/routes.*.
 | `TERMINAL_CA_CERT`, `TERMINAL_CA_KMS_KEY_ID` (or `TERMINAL_CA_KEY` outside production) | The terminal CA that signs terminals' CSRs (`POST /v1/terminals`, renewal at `POST /v1/terminals/{id}/certificate`): its certificate, which `TERMINAL_TLS_CA` must hold, and its key in AWS KMS (an `ECC_NIST_P256` signing key; `AWS_REGION`) or a PEM file. Unset: certificates come from an external terminal PKI, registered by SHA-256 |
 | `KYB_REGISTRY`, `KYB_REGISTRY_URL`, `KYB_AUTO_APPROVE` | New merchants' KYB (docs/04 §2.5): `brasilapi` reads each CNPJ's registration at the Receita Federal through BrasilAPI, or through `KYB_REGISTRY_URL` (a self-hosted minhareceita); `sandbox` serves test companies (12345678000195 clears, 11222333000181 is closed). `on` activates merchants whose check comes back approved. Required in production |
 | `OPERATOR_OIDC_ISSUER`, `OPERATOR_OIDC_CLIENT_ID`, `OPERATOR_OIDC_DOMAINS`, `OPERATOR_OIDC_GROUP` (`OPERATOR_OIDC_CLIENT_SECRET` for Google) | Operator SSO: `platform login` signs in at the company's identity provider (device grant), and every operator command records the verified e-mail as its actor; `OPERATOR_ID_TOKEN` passes a token from automation. Required in production, with a domain or a group limiting who operates |
+| `PLAY_INTEGRITY`, `PLAY_INTEGRITY_STRONG` | `on`: every card sale from a key-attested Android phone carries a Play Integrity token over its body (`Play-Integrity-Token`), decoded by Google with the environment's Google credentials and checked against `ANDROID_PACKAGE` and `ANDROID_SIGNING_DIGESTS`; `PLAY_INTEGRITY_STRONG=on` asks for `MEETS_STRONG_INTEGRITY` |
+| `DISPUTE_ALERTS_SECRET` | The shared secret (`whsec_…`) of the pre-dispute alerts adapter (Ethoca, Verifi) posting to `POST /v1/dispute-alerts/inbound`; without it the route answers `503` |
 | `TSA_URLS`, `TSA_ROOTS` | RFC 3161 time-stamping authorities that date each daily transparency root (an ICP-Brasil ACT; `http://timestamp.digicert.com`), and their roots (PEM; default the system's). The tokens are served with the root at `GET /v1/transparency/{date}` |
 | `AUDIT_EXPORT_BUCKET`, `AUDIT_EXPORT_PREFIX`, `AUDIT_EXPORT_ENDPOINT` | The audit trail's daily copies in an S3 bucket with Object Lock (compliance mode, ten years), with `AWS_REGION`. Required in production |
 | `PIX_BASE_URL`, `PIX_TOKEN_URL`, `PIX_CLIENT_ID`, `PIX_CLIENT_SECRET`, `PIX_KEY`, `PIX_TLS_CA/CERT/KEY` | The PSP's API Pix (base URL includes `/v2`) |
@@ -150,9 +152,8 @@ Specified but not built yet. The API answers these explicitly rather than half-w
 | Spec feature | Today | Needs |
 |--------------|-------|-------|
 | Card-not-present (`confirm` with a card) | `501` | EMVCo-certified 3DS server, network tokens ([01 §4–§5](../docs/01-acquiring-engine.md#4-emv-3-d-secure-card-not-present)) |
-| Play Integrity verdicts | App Attest (with an assertion over every card authorization) and Android key attestation (checked against Google's revocation list) are verified; Play Integrity is not | Google's `decodeIntegrityToken` API with a service account |
 | OpenTimestamps anchoring of the daily roots ([03 §6.6](../docs/03-nostr-layer.md#66-anchoring)) | RFC 3161 time stamps (`TSA_URLS`) date them | Calendar servers and Bitcoin attestations |
-| Pre-dispute alerts (Visa RDR, Ethoca), arbitration | Handled by operations at the sponsor | Alert feeds through the sponsor |
+| Arbitration | Handled by operations at the sponsor | The sponsor's arbitration interface |
 | `/v1/payment-methods` (card vault for card-not-present) | Not routed (`404`) | The card-not-present stack above |
 | `/v1/accounts` (sub-ledgers whose holders are not merchants) | Every merchant has its account; transfers move money between them | Holders' KYB and payout rules ([02 §6.1](../docs/02-api-reference.md#61-post-v1accounts)) |
 

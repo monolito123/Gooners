@@ -520,6 +520,10 @@ func (s *Server) terminalAuthorization(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		}
+		if err := s.svc.CheckPlayIntegrity(r.Context(), p.tenantID, p.deviceID, raw, r.Header.Get("Play-Integrity-Token")); err != nil {
+			s.fail(w, r, err)
+			return
+		}
 	}
 	ct, err := base64.StdEncoding.DecodeString(in.SRED.Ciphertext)
 	if err != nil {

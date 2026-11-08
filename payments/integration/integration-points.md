@@ -38,7 +38,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 11 | Signer service (`cmd/signer`) in an enclave or confidential VM | Receipt and transparency signatures | Built; to deploy | Required |
 | 12 | Apple App Attest | Trusting iPhones | Built | Required |
 | 13 | Android key attestation and Google's status list | Trusting Android phones | Built | Required |
-| 14 | Play Integrity | A second Android signal | Missing | Optional |
+| 14 | Play Integrity | A second Android signal | Built (platform); the app's token request to build | Optional |
 | 15 | Android card reading (licensed MPoC SDK) | Tap on Android | Interface | Required for cards on Android |
 | 16 | iPhone card reading (Tap to Pay on iPhone, or a BLE PCI PTS reader) | Tap on iPhone | Interface | Required for cards on iPhone |
 | 17 | App release settings (API URL, pins, platform keys) and the stores | Shipping the apps | Built | Required |
@@ -58,6 +58,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 31 | Wise | Accounts abroad, international payouts | Built | With câmbio |
 | 32 | A B3 broker, and brapi.dev quotes | Shares and positions | Contract (broker); Built (brapi) | With B3 |
 | 33 | WORM storage for the audit trail (S3 Object Lock) | Keeping the audit trail ten years beyond the database's reach | Built | Required |
+| 34 | Pre-dispute alerts (Mastercard Ethoca, Visa Verifi CDRN and RDR) | Refunding disputed sales before they become chargebacks | Contract (adapter to translate) | Recommended |
 
 ## 2. Infrastructure
 
@@ -192,7 +193,9 @@ The app's entitlement `com.apple.developer.devicecheck.appattest-environment` li
 
 The platform fetches Google's revocation list from `ANDROID_ATTESTATION_STATUS` (default `https://android.googleapis.com/attestation/status`), and production refuses to turn that off.
 
-**14. Play Integrity** is not built. It needs Google's `decodeIntegrityToken` API with a service account. Key attestation already covers what production requires.
+**14. Play Integrity.** Built on the platform. Set `PLAY_INTEGRITY=on` with Google credentials for the app's Cloud project: `GOOGLE_APPLICATION_CREDENTIALS`, or the metadata server's identity (scope `playintegrity`). `ANDROID_SIGNING_DIGESTS` names the app's signing certificates. `PLAY_INTEGRITY_STRONG=on` asks for `MEETS_STRONG_INTEGRITY`.
+
+Every card sale from an Android phone whose device attested with key attestation must carry `Play-Integrity-Token`. That is a standard integrity token requested with `requestHash` = the SHA-256 of the authorization's body in hex. The platform has Google decode it (`decodeIntegrityToken`) and checks five things: this app and package, this request, fresh (ten minutes), Play-recognized and signed with the platform's key, and a device meeting integrity. Otherwise `403 integrity_refused`. What remains is the app's side: prepare a `StandardIntegrityTokenProvider` with the Cloud project number, and request a token per sale.
 
 **15. Card reading on Android.** The seam is `CardReader` in `mobile/android/core/.../sandbox/CardReading.kt`, chosen in `AppContainer.reader()` (`GoonersPayApp.kt`). Only `SandboxCardReader` exists. What remains:
 
@@ -289,6 +292,8 @@ Production requires `KYB_REGISTRY` and `SANCTIONS_LISTS`. Still missing, by prov
 
 The re-KYB that rebinds a merchant's root key follows the same path ([03](../docs/03-nostr-layer.md)).
 
+**34. Pre-dispute alerts.** A contract. An adapter receives Ethoca's and Verifi's alerts, usually through the sponsor acquirer's enrollment. It translates each one to `{alert_id, provider, type, amount, rrn, auth_code, reason_code}` and posts it, signed with `DISPUTE_ALERTS_SECRET`, to `POST /v1/dispute-alerts/inbound`. The platform refunds the sale and answers with the outcome, which the adapter reports back to the provider before its deadline ([02 §5.0a](../docs/02-api-reference.md#50a-pre-dispute-alerts)). Every alert refunded is a chargeback that never comes.
+
 **33. Audit copies in WORM storage.** Built. Create an S3 bucket with Object Lock enabled; it can only be enabled at creation. Then set `AUDIT_EXPORT_BUCKET`, `AWS_REGION` and optionally `AUDIT_EXPORT_PREFIX`; `AUDIT_EXPORT_ENDPOINT` is for an S3-compatible store with Object Lock.
 
 An hour after each Brasília day ends, the job writes the audit rows since the last copy to `audit/YYYY/MM/YYYY-MM-DD.jsonl`. They are locked ten years in compliance mode, with the SHA-256 checksum S3 verifies. Each copy is a contiguous stretch of the hash chain with the strings each hash covers, so it verifies without the database (runbook §6).
@@ -364,7 +369,8 @@ The code to write, smallest first. Contracts and certifications run alongside ([
    - payout bank (#7);
    - registrar (#8);
    - with crypto: travel-rule network (#29), and the screening and analytics providers if used (#27, #28);
-   - with B3: broker (#32).
+   - with B3: broker (#32);
+   - the pre-dispute alerts adapter (#34), through the sponsor's Ethoca and Verifi enrollment.
 2. ~~The receipt claim page and the NIP-05 file~~ (#19): built. What remains is two production relays (#18) and the public host for `/c`.
 3. ~~The three key adapters~~ (#9–#11): built. What remains is the payment HSM's key ceremony with the reader vendors and deploying the signer.
 4. **The card readers:**

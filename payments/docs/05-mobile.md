@@ -172,7 +172,7 @@ Tap-to-phone on a consumer phone is safe only if the platform can tell, continuo
 | Layer | Signal | Checked | Failure action |
 |-------|--------|---------|----------------|
 | Hardware key attestation | Terminal mTLS key generated in StrongBox (or TEE) with the terminal's challenge, SHA-256("goonerspay/v1/terminal-key:" + terminal ID). The certificate chain proves hardware residence, a locked bootloader, verified boot state, the OS patch level and the app's signing certificate digest | At terminal registration and every certificate renewal (30 days) | Refuse the certificate |
-| Play Integrity | Device recognition (`MEETS_STRONG_INTEGRITY` preferred, `MEETS_DEVICE_INTEGRITY` minimum), app recognition, licensing | At session start and every 15 minutes. A fresh token travels with each authorization | Block tap-to-phone and offer Pix and payment links |
+| Play Integrity | Device recognition (`MEETS_STRONG_INTEGRITY` with `PLAY_INTEGRITY_STRONG`, `MEETS_DEVICE_INTEGRITY` minimum), app recognition and signing certificate, licensing | With each card sale: a standard request whose `requestHash` is the SHA-256 of the authorization's body, decoded by Google on the platform | Refuse the sale (`403 integrity_refused`) and offer Pix and payment links |
 | MPoC SDK attestation and monitoring | Runtime protections (hooking, debugger, emulator, overlay and accessibility abuse, screen recording), SDK integrity, kernel integrity | Continuously by the SDK and its attestation-and-monitoring backend | SDK stops accepting cards. The platform disables the terminal |
 
 ```kotlin

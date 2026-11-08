@@ -72,9 +72,10 @@ type stack struct {
 	pool     *pgxpool.Pool
 	vault    *vault.Vault
 	logs     *syncBuffer // everything every component logged, at debug level
-	// travelSecret signs what the travel-rule adapter posts to /v1/travel-rule/inbound.
-	travelSecret string
-	compKey      string // see complianceKey
+	// travelSecret signs what the travel-rule adapter posts to /v1/travel-rule/inbound;
+	// alertsSecret what the alerts adapter posts to /v1/dispute-alerts/inbound.
+	travelSecret, alertsSecret string
+	compKey                    string // see complianceKey
 
 	receiptsKey, transparencyKey nostr.Keys
 	relay                        *relay.Relay // the sandbox relay receipts are published to
@@ -194,8 +195,8 @@ func newStack(t *testing.T, opts ...any) *stack {
 	if err := svc.BootstrapTenant(ctx, tenant, 100_000_000); err != nil {
 		t.Fatal(err)
 	}
-	st.travelSecret = webhooks.NewSecret()
-	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret,
+	st.travelSecret, st.alertsSecret = webhooks.NewSecret(), webhooks.NewSecret()
+	srv := api.New(api.Config{Env: "sandbox", TravelRuleSecret: st.travelSecret, DisputeAlertsSecret: st.alertsSecret,
 		Nostr: api.NostrIdentity{ReceiptsPub: signer.PubHex, TransparencyPub: st.transparencyKey.PubHex, Relays: []string{st.relayURL}}}, svc, pool, log)
 	st.handler = srv.Handler()
 	apiServer := httptest.NewServer(st.handler)

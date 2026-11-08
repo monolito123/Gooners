@@ -914,7 +914,7 @@
                 "authorizations"
               ]
             },
-            "description": "Card-present authorization from an MPoC terminal (terminal host, CDE)\n\nAn iPhone attested with App Attest sends App-Attest-Assertion, whether it calls with its session or with its terminal's certificate: the assertion its attested key makes over SHA-256 of this exact request body (DCAppAttestService generateAssertion). Without it, with another key, over another body or with a counter already used, the request is refused with 403 assertion-invalid before it reaches the card network.\n",
+            "description": "Card-present authorization from an MPoC terminal (terminal host, CDE)\n\nAn iPhone attested with App Attest sends App-Attest-Assertion, whether it calls with its session or with its terminal's certificate: the assertion its attested key makes over SHA-256 of this exact request body (DCAppAttestService generateAssertion). Where the platform checks Play Integrity, an Android phone sends Play-Integrity-Token: a standard integrity token requested with requestHash = the SHA-256 of this exact body in lowercase hex. A missing or refused verdict answers 403 integrity_refused. Without it, with another key, over another body or with a counter already used, the request is refused with 403 assertion-invalid before it reaches the card network.\n",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"payment_intent_id\": \"pi_01JBK3Z9Y8X7W6V5T4S3R2Q1P0\",\n  \"terminal_id\": \"TP000418\",\n  \"stan\": \"004211\",\n  \"local_time\": \"2026-10-29T14:42:08-03:00\",\n  \"emv_application\": \"credit\",\n  \"sred\": {\n    \"format\": \"mpoc-sdk-v2\",\n    \"ksn\": \"FFFF9876543210E00011\",\n    \"ciphertext\": \"q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJ\"\n  },\n  \"pin\": null,\n  \"device_risk\": {\n    \"score\": 0.1,\n    \"model\": \"gp-device-1\",\n    \"signals\": [\n      \"developer_options\"\n    ]\n  },\n  \"attestation\": {\n    \"verdict_token\": \"eyJhbGciOiJFUzI1NiJ9.eyJ2ZXJkaWN0IjoicGFzcyJ9.sig\",\n    \"obtained_at\": \"2026-10-29T17:40:01Z\"\n  },\n  \"journal_event_id\": \"a14d60ce8cf49c2c466a55a184869f29ef6954e6383144abe702bbec4c74e02b\"\n}",
@@ -1101,6 +1101,77 @@
       "name": "disputes",
       "description": "Chargebacks and evidence",
       "item": [
+        {
+          "name": "A pre-dispute alert (the alerts provider's adapter only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/dispute-alerts/inbound",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "dispute-alerts",
+                "inbound"
+              ]
+            },
+            "description": "A pre-dispute alert (the alerts provider's adapter only)\n\nAn issuer's notice, through Mastercard's Ethoca or Visa's Verifi (CDRN, RDR), that a\ncardholder disputes a sale. The platform finds the sale by its RRN and authorization\ncode and refunds what is still refundable, before the chargeback: outcome refunded.\nOtherwise already_refunded, in_dispute (a chargeback came first), not_found, or\nrefund_failed (the merchant's balance cannot cover it; the chargeback follows its\ncourse). Signed with the adapter's shared secret in the webhook-id, webhook-timestamp\nand webhook-signature headers, as the platform's own webhooks are. The same alert twice\nanswers the first result. Sends dispute.alert to the tenant.\n",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alert_id\": \"\",\n  \"provider\": \"ethoca\",\n  \"type\": \"fraud\",\n  \"amount\": 0,\n  \"rrn\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "The tenant's pre-dispute alerts, newest first",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Api-Version",
+                "value": "2026-10-01"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/dispute-alerts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "dispute-alerts"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true,
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The tenant's pre-dispute alerts, newest first"
+          }
+        },
         {
           "name": "List disputes",
           "request": {

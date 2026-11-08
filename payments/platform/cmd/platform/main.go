@@ -67,6 +67,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/db"
 	"github.com/monolito123/Gooners/payments/platform/internal/exchange"
 	"github.com/monolito123/Gooners/payments/platform/internal/fx"
+	"github.com/monolito123/Gooners/payments/platform/internal/gcpauth"
 	"github.com/monolito123/Gooners/payments/platform/internal/ids"
 	"github.com/monolito123/Gooners/payments/platform/internal/kyb"
 	"github.com/monolito123/Gooners/payments/platform/internal/ledger"
@@ -449,6 +450,13 @@ func serve(ctx context.Context) error {
 			deps.Screener = set
 		}
 	}
+	if c.PlayIntegrity {
+		tokens, err := gcpauth.FromEnvironment(attest.PlayIntegrityScope)
+		if err != nil {
+			return fmt.Errorf("PLAY_INTEGRITY: Google credentials: %w", err)
+		}
+		deps.PlayIntegrity = &attest.PlayIntegrity{PackageName: c.AndroidPackage, SigningDigests: c.AndroidSigningDigests, Strong: c.PlayIntegrityStrong, Tokens: tokens}
+	}
 	if c.AuditExportBucket != "" {
 		deps.Audit = &worm.S3{Bucket: c.AuditExportBucket, Region: c.AWSRegion, Endpoint: c.AuditExportEndpoint, Credentials: awsauth.FromEnvironment()}
 	}
@@ -550,7 +558,8 @@ func serve(ctx context.Context) error {
 		identity.TransparencyPub = transparencyAuthor.Public()
 	}
 	srv := api.New(api.Config{Env: c.Env, RatePerSecond: c.RatePerSecond, RateBurst: c.RateBurst, AuthFailuresPerMinute: c.AuthFailuresPerMinute,
-		TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret, Nostr: identity, ClientCertHeader: c.ClientCertHeader}, svc, pool, log)
+		TrustProxy: c.TrustProxy, PublicURL: c.PublicURL, TravelRuleSecret: c.TravelRuleSecret, Nostr: identity, ClientCertHeader: c.ClientCertHeader,
+		DisputeAlertsSecret: c.DisputeAlertsSecret}, svc, pool, log)
 	disp := &webhooks.Dispatcher{Pool: pool, Logger: log, Policy: svc.WebhookPolicy(), Secrets: v}
 	go disp.Run(ctx, time.Second)
 	holder := fmt.Sprintf("%s-%d-%s", hostname(), os.Getpid(), ids.ULID()[20:])

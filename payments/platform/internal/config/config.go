@@ -137,6 +137,10 @@ type Config struct {
 	AppAttestProduction                     bool
 	AndroidAttestationRoots, AndroidPackage string   // PEM file of Google's hardware attestation roots; application ID
 	AndroidSigningDigests                   [][]byte // SHA-256 of the app signing certificates
+	// PlayIntegrity (PLAY_INTEGRITY=on) has Google decode the integrity token each Android
+	// card sale carries (Google credentials from the environment); PlayIntegrityStrong asks for
+	// MEETS_STRONG_INTEGRITY.
+	PlayIntegrity, PlayIntegrityStrong bool
 	// AndroidAttestationStatus is where Google's certificate status list is read (URL or
 	// file); "off" skips the check (refused in production).
 	AndroidAttestationStatus string
@@ -195,7 +199,10 @@ type Config struct {
 	// ("whsec_…") verifies the messages it posts in. TravelRuleThreshold (centavos; 0 = every
 	// withdrawal) and TravelRuleReview (deposits without originator data) set the values.
 	TravelRuleURL, TravelRuleToken, TravelRuleSecret string
-	TravelRuleThreshold, TravelRuleReview            int64
+	// DisputeAlertsSecret verifies the pre-dispute alerts (Ethoca, Verifi) the alerts
+	// provider's adapter posts to the platform.
+	DisputeAlertsSecret                   string
+	TravelRuleThreshold, TravelRuleReview int64
 	// TravelRuleRetention is how long the travel rule's personal data is kept (default ten years).
 	TravelRuleRetention time.Duration
 	// PlatformLEI is the platform's Legal Entity Identifier, when it has one.
@@ -304,6 +311,7 @@ func Read() (*Config, error) {
 	c.AppAttestRoots, c.AppAttestAppID = os.Getenv("APPATTEST_ROOT_CA"), os.Getenv("APPATTEST_APP_ID")
 	c.AppAttestProduction = os.Getenv("APPATTEST_ENVIRONMENT") == "production"
 	c.AndroidAttestationRoots, c.AndroidPackage = os.Getenv("ANDROID_ATTESTATION_ROOTS"), env("ANDROID_PACKAGE", "br.com.gooners.pay")
+	c.PlayIntegrity, c.PlayIntegrityStrong = os.Getenv("PLAY_INTEGRITY") == "on", os.Getenv("PLAY_INTEGRITY_STRONG") == "on"
 	c.AndroidAttestationStatus = env("ANDROID_ATTESTATION_STATUS", "https://android.googleapis.com/attestation/status")
 	for _, d := range strings.Split(os.Getenv("ANDROID_SIGNING_DIGESTS"), ",") {
 		if d = strings.TrimSpace(d); d == "" {
@@ -317,6 +325,9 @@ func Read() (*Config, error) {
 	}
 	if (c.AppAttestRoots != "") != (c.AppAttestAppID != "") {
 		return nil, fmt.Errorf("config: APPATTEST_ROOT_CA and APPATTEST_APP_ID go together")
+	}
+	if c.PlayIntegrity && len(c.AndroidSigningDigests) == 0 {
+		return nil, errors.New("config: PLAY_INTEGRITY needs ANDROID_SIGNING_DIGESTS (the app's signing certificates)")
 	}
 	if c.AndroidAttestationRoots != "" && len(c.AndroidSigningDigests) == 0 {
 		return nil, fmt.Errorf("config: ANDROID_ATTESTATION_ROOTS needs ANDROID_SIGNING_DIGESTS")
@@ -363,6 +374,7 @@ func Read() (*Config, error) {
 	}
 	c.TronAPIKey, c.SenderLookupURL, c.SenderLookupToken = os.Getenv("TRON_API_KEY"), os.Getenv("SENDER_LOOKUP_URL"), os.Getenv("SENDER_LOOKUP_TOKEN")
 	c.TravelRuleURL, c.TravelRuleToken, c.TravelRuleSecret = os.Getenv("TRAVEL_RULE_URL"), os.Getenv("TRAVEL_RULE_TOKEN"), os.Getenv("TRAVEL_RULE_INBOUND_SECRET")
+	c.DisputeAlertsSecret = os.Getenv("DISPUTE_ALERTS_SECRET")
 	c.PlatformLEI = os.Getenv("PLATFORM_LEI")
 	if v := os.Getenv("TRAVEL_RULE_RETENTION_YEARS"); v != "" {
 		n, err := strconv.Atoi(v)
