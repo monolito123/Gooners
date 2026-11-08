@@ -59,6 +59,7 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/api"
 	"github.com/monolito123/Gooners/payments/platform/internal/attest"
 	"github.com/monolito123/Gooners/payments/platform/internal/authswitch"
+	"github.com/monolito123/Gooners/payments/platform/internal/awsauth"
 	"github.com/monolito123/Gooners/payments/platform/internal/brokerage"
 	"github.com/monolito123/Gooners/payments/platform/internal/carddata"
 	"github.com/monolito123/Gooners/payments/platform/internal/chain"
@@ -79,8 +80,10 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/signer"
 	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
 	"github.com/monolito123/Gooners/payments/platform/internal/travelrule"
+	"github.com/monolito123/Gooners/payments/platform/internal/tsa"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
+	"github.com/monolito123/Gooners/payments/platform/internal/worm"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 	"github.com/monolito123/Gooners/payments/platform/pkg/iso8583"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
@@ -446,6 +449,18 @@ func serve(ctx context.Context) error {
 			deps.Screener = set
 		}
 	}
+	if c.AuditExportBucket != "" {
+		deps.Audit = &worm.S3{Bucket: c.AuditExportBucket, Region: c.AWSRegion, Endpoint: c.AuditExportEndpoint, Credentials: awsauth.FromEnvironment()}
+	}
+	if len(c.TSAURLs) > 0 {
+		roots, err := tsaRoots(c.TSARoots)
+		if err != nil {
+			return err
+		}
+		for _, u := range c.TSAURLs {
+			deps.Timestamps = append(deps.Timestamps, &tsa.Client{URL: u, Roots: roots})
+		}
+	}
 	switch c.KYBRegistry {
 	case "brasilapi":
 		deps.KYB = &kyb.BrasilAPI{BaseURL: c.KYBRegistryURL}
@@ -515,7 +530,7 @@ func serve(ctx context.Context) error {
 	svc := payments.New(payments.Config{Env: c.Env, AcquirerID: c.AcquirerID, PixKey: c.PixKey, RelayURL: firstOr(c.Relays, ""), MaxPaymentAmount: c.MaxPaymentAmount, TransparencyPadTo: c.TransparencyPadTo, PlatformDocument: c.PlatformDocument, RiskMode: c.RiskMode,
 		ReportingName: c.ReportingName, ReportingURL: c.ReportingURL, PlatformLEI: c.PlatformLEI, TravelRuleThreshold: c.TravelRuleThreshold, TravelRuleReview: c.TravelRuleReview, TravelRuleRetention: c.TravelRuleRetention,
 		CryptoFeeBps: c.CryptoFeeBps, CryptoSpreadBps: c.CryptoSpreadBps, FXFeeBps: c.FXFeeBps, FXSpreadBps: c.FXSpreadBps, IOFOutBps: c.IOFOutBps, IOFInBps: c.IOFInBps,
-		RequireKYB: deps.KYB != nil, KYBAutoApprove: c.KYBAutoApprove}, deps)
+		RequireKYB: deps.KYB != nil, KYBAutoApprove: c.KYBAutoApprove, AuditExportPrefix: c.AuditExportPrefix}, deps)
 	if c.BootstrapTenant != "" {
 		if err := svc.BootstrapTenant(ctx, c.BootstrapTenant, c.BootstrapCapital); err != nil {
 			return fmt.Errorf("bootstrap tenant: %w", err)
@@ -671,6 +686,23 @@ func settle(ctx context.Context, args []string) error {
 		svc := payments.New(payments.Config{}, payments.Deps{Pool: pool, Ledger: ledger.New(pool, log), Logger: log})
 		return svc.RecordSchemeSettlement(ctx, *tenant, *brand, *report, *amount, *actor)
 	})
+}
+
+// tsaRoots is the pool the time-stamping authorities must chain to: TSA_ROOTS, or the
+// system's roots.
+func tsaRoots(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return x509.SystemCertPool()
+	}
+	b, err := os.ReadFile(path) // #nosec G304 G703 -- set by the operator
+	if err != nil {
+		return nil, fmt.Errorf("TSA_ROOTS: %w", err)
+	}
+	p := x509.NewCertPool()
+	if !p.AppendCertsFromPEM(b) {
+		return nil, fmt.Errorf("TSA_ROOTS: no certificates in %s", path)
+	}
+	return p, nil
 }
 
 // terminalCA builds the terminal CA from its certificate and its key: a KMS key in production,

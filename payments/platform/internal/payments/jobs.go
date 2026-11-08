@@ -66,6 +66,18 @@ func (s *Service) RunPeriodic(ctx context.Context, holder string) {
 	if err := s.PurgeAuthState(ctx); err != nil {
 		s.log.Error("purge auth state", "err", err)
 	}
+	// The audit trail's daily copies in WORM storage.
+	if n, err := s.ExportAudit(ctx, now); err != nil {
+		s.log.Error("audit export", "err", err)
+	} else if n > 0 {
+		s.log.Info("audit days copied to WORM storage", "count", n)
+	}
+	// The daily roots' time stamps from independent authorities.
+	if n, err := s.AnchorRoots(ctx); err != nil {
+		s.log.Error("root time stamps", "err", err)
+	} else if n > 0 {
+		s.log.Info("roots time-stamped", "count", n)
+	}
 	// New merchants' KYB checks (docs/04 §2.5).
 	if n, err := s.CheckKYB(ctx); err != nil {
 		s.log.Error("kyb checks", "err", err)

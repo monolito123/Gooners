@@ -74,6 +74,7 @@ func TestProductionRefusesSoftwareKeys(t *testing.T) {
 			c.Operators = OperatorSSO{Issuer: "https://accounts.google.com", ClientID: "ops.apps.googleusercontent.com"}
 		}},
 		{"OPERATOR_OIDC_DOMAINS", func(c *Config) { c.Operators.Domains = []string{"goonerspay.com.br"} }},
+		{"AUDIT_EXPORT_BUCKET", func(c *Config) { c.AuditExportBucket = "goonerspay-audit" }},
 		{"KYB_REGISTRY", func(c *Config) { c.KYBRegistry = "brasilapi" }},
 		{"SANCTIONS_LISTS", func(c *Config) { c.SanctionsLists = []string{"/etc/platform/sdn.csv"} }},
 		{"registers receivables", func(c *Config) {
@@ -123,6 +124,7 @@ func productionPix(c *Config) {
 	c.PayoutBaseURL, c.Relays, c.ClaimBase = "https://psp.example/pagamentos", []string{"wss://relay.goonerspay.com.br"}, "https://r.goonerspay.com.br/c"
 	c.KYBRegistry, c.SanctionsLists = "brasilapi", []string{"/etc/platform/sdn.csv"}
 	c.Operators = OperatorSSO{Issuer: "https://login.microsoftonline.com/tenant/v2.0", ClientID: "operators-cli", Domains: []string{"goonerspay.com.br"}}
+	c.AuditExportBucket = "goonerspay-audit"
 }
 
 func TestProductionDigitalAssetsNeedAuthorization(t *testing.T) {
@@ -208,8 +210,9 @@ func TestIntegrationsReport(t *testing.T) {
 		Exchanges: []string{"binance"}, BinanceKey: "k", BinanceSecret: "s", CryptoAuthorization: "BCB 519",
 		SanctionsLists: []string{"https://lists.example/sdn.csv"}, SenderLookupURL: "https://chain.example", TravelRuleURL: "https://tr.example", TravelRuleSecret: "whsec_x",
 		ReportingURL: "https://goonerspay.com.br", PublicURL: "https://api.goonerspay.com.br", KYBRegistry: "brasilapi",
-		Operators: OperatorSSO{Issuer: "https://accounts.google.com", ClientID: "ops", Group: "payments-ops"},
-		Relays:    []string{"wss://relay.goonerspay.com.br"}, ClaimBase: "https://r.goonerspay.com.br/c"}
+		Operators:         OperatorSSO{Issuer: "https://accounts.google.com", ClientID: "ops", Group: "payments-ops"},
+		AuditExportBucket: "goonerspay-audit",
+		Relays:            []string{"wss://relay.goonerspay.com.br"}, ClaimBase: "https://r.goonerspay.com.br/c"}
 	productionKeys(p)
 	is = p.Integrations()
 	for _, i := range is {
@@ -275,6 +278,7 @@ func TestProductionRequiresWhatTheReportRequires(t *testing.T) {
 		"KYB registry (Receita Federal CNPJ data)": func(c *Config) { c.KYBRegistry = "sandbox" },
 		"Sanctions screening":                      func(c *Config) { c.SanctionsLists = nil },
 		"Operator identity (SSO)":                  func(c *Config) { c.Operators.Domains = nil },
+		"Audit copies (WORM)":                      func(c *Config) { c.AuditExportBucket = "" },
 	} {
 		c := full()
 		unset(c)

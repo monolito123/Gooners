@@ -44,7 +44,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 17 | App release settings (API URL, pins, platform keys) and the stores | Shipping the apps | Built | Required |
 | 18 | Nostr relays | Customer receipts, merchant copies, the public root | Built (client, and `relaysim` for the sandbox); production relays to run or contract | Required |
 | 19 | Receipt claim page and NIP-05 file | Opening the receipt QR | Built (served by the platform at `/c` and `/.well-known/nostr.json`) | Required |
-| 20 | Timestamp anchoring (ICP-Brasil TSA, OpenTimestamps) | Dating the daily roots independently | Missing | Optional |
+| 20 | Timestamp anchoring (RFC 3161: an ICP-Brasil TSA, DigiCert, Sectigo; OpenTimestamps) | Dating the daily roots independently | Built (RFC 3161); Missing (OpenTimestamps) | Optional |
 | 21 | Partners' webhook endpoints | Event delivery | Built | Per partner |
 | 22 | Partner token service (`/oauth2/token`, mTLS) | Certificate-bound partner tokens | Built | Optional (API keys remain) |
 | 23 | Prometheus and alerting | The runbook's alerts | Built (metrics) | Operationally required |
@@ -57,6 +57,7 @@ The sandbox runs every point on a simulator or a stand-in, which is why the whol
 | 30 | DeCripto at the Receita Federal | The monthly crypto report | Manual (file built) | With crypto |
 | 31 | Wise | Accounts abroad, international payouts | Built | With câmbio |
 | 32 | A B3 broker, and brapi.dev quotes | Shares and positions | Contract (broker); Built (brapi) | With B3 |
+| 33 | WORM storage for the audit trail (S3 Object Lock) | Keeping the audit trail ten years beyond the database's reach | Built | Required |
 
 ## 2. Infrastructure
 
@@ -253,7 +254,7 @@ See [03 §3.2](../docs/03-nostr-layer.md#32-claim-by-qr).
 
 What remains: route a public host to the platform and set `RECEIPT_CLAIM_BASE` to `https://<host>/c`. Production refuses the `goonerspay.example` placeholder. When the platform publishes to relays through private addresses, `RELAYS_PUBLIC` lists the addresses customers' browsers use.
 
-**20. Anchoring the daily roots.** The roots are signed, chained and published today. RFC 3161 timestamps from an ICP-Brasil authority, and OpenTimestamps, are specified in [03 §6.6](../docs/03-nostr-layer.md#66-anchoring) and not built.
+**20. Anchoring the daily roots.** Built for RFC 3161 ([03 §6.6](../docs/03-nostr-layer.md#66-anchoring)). Set `TSA_URLS` to the authorities, comma-separated: an ICP-Brasil ACT for legal value (a contract with it), and public ones as extra witnesses (`http://timestamp.digicert.com`, `http://timestamp.sectigo.com`). Set `TSA_ROOTS` to their root certificates (PEM); without it, the system's roots are used. The periodic job stamps each root over its event ID with every authority and checks the token before keeping it: signature, imprint, nonce, an authority certificate for time stamping, and the chain. It asks again after a failure. The tokens are served with the root. The verifier (`internal/tsa`) was checked against real tokens from DigiCert, Sectigo and FreeTSA. OpenTimestamps is not built.
 
 ## 7. Partners
 
@@ -287,6 +288,12 @@ Production requires `KYB_REGISTRY` and `SANCTIONS_LISTS`. Still missing, by prov
 - **PEP.** The CGU's PEP list is not loaded. Loading it as a names list would join the screening.
 
 The re-KYB that rebinds a merchant's root key follows the same path ([03](../docs/03-nostr-layer.md)).
+
+**33. Audit copies in WORM storage.** Built. Create an S3 bucket with Object Lock enabled; it can only be enabled at creation. Then set `AUDIT_EXPORT_BUCKET`, `AWS_REGION` and optionally `AUDIT_EXPORT_PREFIX`; `AUDIT_EXPORT_ENDPOINT` is for an S3-compatible store with Object Lock.
+
+An hour after each Brasília day ends, the job writes the audit rows since the last copy to `audit/YYYY/MM/YYYY-MM-DD.jsonl`. They are locked ten years in compliance mode, with the SHA-256 checksum S3 verifies. Each copy is a contiguous stretch of the hash chain with the strings each hash covers, so it verifies without the database (runbook §6).
+
+The platform's role needs only `s3:PutObject`, `s3:PutObjectRetention` and `s3:GetObject` (to recognize a copy it wrote but did not record). Production requires it.
 
 ## 9. Crypto, accounts abroad and B3
 
@@ -360,9 +367,12 @@ The code to write, smallest first. Contracts and certifications run alongside ([
    - with B3: broker (#32).
 2. ~~The receipt claim page and the NIP-05 file~~ (#19): built. What remains is two production relays (#18) and the public host for `/c`.
 3. ~~The three key adapters~~ (#9–#11): built. What remains is the payment HSM's key ceremony with the reader vendors and deploying the signer.
-4. **The card readers:** the MPoC SDK adapter on Android (#15), Tap to Pay or a BLE reader on iPhone (#16).
+4. **The card readers:**
+   - the MPoC SDK adapter on Android (#15);
+   - Tap to Pay or a BLE reader on iPhone (#16);
+   - the apps' terminal key, CSR and mutual-TLS client (#3). The platform side is built: the terminal CA, issuance and renewal.
 5. **The sponsor's dialect file** (#4) and the converter for its report and chargeback files (#5).
-6. **Operator SSO in front of the commands** (#24), and a KYB provider if operators should not clear merchants by hand (#25).
-7. **Later:** Play Integrity (#14), timestamp anchoring (#20). ~~The partner token service (#22)~~: built.
+6. ~~Operator SSO in front of the commands~~ (#24): built. What remains is a back-office UI. ~~The KYB registry check~~ (#25): built. What remains is a provider for individuals' identity, liveness and PEP.
+7. **Later:** Play Integrity (#14) and OpenTimestamps (#20). These are built: ~~the partner token service~~ (#22), ~~RFC 3161 time stamps~~ (#20), and ~~the WORM audit copies~~ (#33).
 
 `platform integrations -strict` passing in the production environment is the sign that everything the settings can show is in place; production's startup check enforces the same list.

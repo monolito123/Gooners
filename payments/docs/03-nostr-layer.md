@@ -345,7 +345,13 @@ Daily totals in the example statement ([`7713-settlement-statement.json`](../nos
 
 ### 6.6 Anchoring
 
-Each root event ID is timestamped by an **RFC 3161 timestamp authority accredited under ICP-Brasil**, which gives it legal evidentiary value in Brazil, and by **OpenTimestamps**, which anchors it in Bitcoin for public verifiability without any trusted party. Both tokens are stored in the WORM archive and served at `GET /v1/transparency/{date}/timestamps`. The roots are mirrored to at least two public relays that the platform does not operate, so any later fork is visible to anyone.
+Each root event ID (a SHA-256) is time-stamped by **RFC 3161 time-stamping authorities**, every one in `TSA_URLS`. An authority accredited under ICP-Brasil (an ACT) gives the stamp legal evidentiary value in Brazil; public authorities (DigiCert, Sectigo) add independent witnesses. The platform verifies each token against the authority's roots (`TSA_ROOTS`) before keeping it, and serves the tokens with the root at `GET /v1/transparency/{date}` (`timestamps`). Anyone can check one with the event ID alone:
+
+```bash
+openssl ts -verify -digest <event id> -in token.der -token_in -CAfile authority-root.pem
+```
+
+**OpenTimestamps**, which would anchor the roots in Bitcoin without any trusted party, is not built. The roots are mirrored to at least two public relays that the platform does not operate, so any later fork is visible to anyone.
 
 ---
 

@@ -196,6 +196,26 @@ func (c *Config) Integrations() []Integration {
 		}
 		add(i)
 	}
+	// The audit trail's copies nobody can change or delete.
+	{
+		w := Integration{Name: "Audit copies (WORM)", For: "keeping the audit trail ten years beyond the database's reach", Settings: []string{"AUDIT_EXPORT_BUCKET", "AUDIT_EXPORT_PREFIX", "AWS_REGION"}, Production: true}
+		if c.AuditExportBucket != "" {
+			w.State, w.Detail = Live, "s3://"+c.AuditExportBucket+" (Object Lock, compliance mode)"
+		} else {
+			w.State, w.Detail = Off, "the audit trail lives only in the database"
+		}
+		add(w)
+	}
+	// Independent dates for the daily roots.
+	{
+		t := Integration{Name: "Timestamp anchoring (RFC 3161)", For: "dating each daily transparency root by independent authorities", Settings: []string{"TSA_URLS", "TSA_ROOTS"}}
+		if len(c.TSAURLs) > 0 {
+			t.State, t.Detail = Live, strings.Join(c.TSAURLs, ", ")
+		} else {
+			t.State, t.Detail = Off, "the roots are dated by the platform's signature alone"
+		}
+		add(t)
+	}
 	// Who runs the operator commands, as the company's identity provider says.
 	{
 		o := Integration{Name: "Operator identity (SSO)", For: "naming who ran each operator command in the audit trail", Settings: []string{"OPERATOR_OIDC_ISSUER", "OPERATOR_OIDC_CLIENT_ID", "OPERATOR_OIDC_DOMAINS", "OPERATOR_OIDC_GROUP"}, Production: true}

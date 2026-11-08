@@ -270,4 +270,8 @@ The trail is a hash chain and append-only: `UPDATE` and `DELETE` on `ops_audit` 
 platform audit-verify      # prints rows, head, anchors compared and any problem; exits 1 if the trail was altered
 ```
 
+**Copies.** Every day the trail is also copied to WORM storage (`AUDIT_EXPORT_BUCKET`, S3 Object Lock in compliance mode for ten years). Nobody can change or delete a copy before then, the account's root user included. `audit_exports` lists them: the object key, the chain's head after the day and the object's SHA-256.
+
+A copy is JSON lines: a header with the previous day's head, one line per row, and an end line with the row count and the head. Recompute each row's hash as SHA-256 of `prev_hash|seq|tenant_id|actor|action|target|detail|at`, using the line's own strings. If the export job reports that a copy exists "with other content", someone wrote that key outside the platform. Keep both, and compare the copy with the chain before anything else.
+
 A failure (`goonerspay_audit_chain_failures_total` increases) is a security incident: the problems name the first row that no longer matches, or the published day whose head the trail no longer reproduces. Preserve the database as it is (a snapshot), compare it with the latest backup and the WORM export, and treat every operator action since the last good head as unverified until explained.

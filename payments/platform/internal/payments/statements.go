@@ -70,6 +70,8 @@ type TransparencyRoot struct {
 	Event     *nostr.Event `json:"event"`
 	Previous  string       `json:"prev_event_id,omitempty"`
 	CreatedAt string       `json:"created_at"`
+	// Timestamps are RFC 3161 tokens over the event id from independent authorities.
+	Timestamps []RootTimestamp `json:"timestamps"`
 }
 
 // settlementMode says how a captured payment reaches the merchant, for its statement line.
@@ -495,5 +497,9 @@ func (s *Service) GetTransparencyRoot(ctx context.Context, date string) (*Transp
 	}
 	r.CreatedAt = created.UTC().Format(time.RFC3339)
 	r.Event = &nostr.Event{}
-	return r, json.Unmarshal(raw, r.Event)
+	if err := json.Unmarshal(raw, r.Event); err != nil {
+		return nil, err
+	}
+	r.Timestamps, err = s.rootTimestamps(ctx, day)
+	return r, err
 }

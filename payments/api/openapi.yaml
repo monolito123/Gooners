@@ -1539,6 +1539,30 @@ paths:
                   created_at:
                     type: string
                     format: date-time
+                  timestamps:
+                    type: array
+                    description: |
+                      RFC 3161 time-stamp tokens over the root event's id (a SHA-256), from
+                      independent authorities: proof the root existed at that time. Verify one
+                      with the authority's root certificate, for example openssl ts -verify
+                      -digest <event id> -in <token> -token_in -CAfile <root>.
+                    items:
+                      type: object
+                      required: [authority, time, signer, token]
+                      properties:
+                        authority:
+                          type: string
+                          format: uri
+                        time:
+                          type: string
+                          format: date-time
+                        signer:
+                          type: string
+                          description: The authority certificate's subject.
+                        token:
+                          type: string
+                          contentEncoding: base64
+                          description: The TimeStampToken (CMS SignedData), DER.
         "4XX":
           $ref: "#/components/responses/Problem"
         default:

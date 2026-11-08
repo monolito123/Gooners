@@ -28,8 +28,10 @@ import (
 	"github.com/monolito123/Gooners/payments/platform/internal/receipts"
 	"github.com/monolito123/Gooners/payments/platform/internal/registrar"
 	"github.com/monolito123/Gooners/payments/platform/internal/terminalpki"
+	"github.com/monolito123/Gooners/payments/platform/internal/tsa"
 	"github.com/monolito123/Gooners/payments/platform/internal/vault"
 	"github.com/monolito123/Gooners/payments/platform/internal/webhooks"
+	"github.com/monolito123/Gooners/payments/platform/internal/worm"
 	"github.com/monolito123/Gooners/payments/platform/pkg/apipix"
 	"github.com/monolito123/Gooners/payments/platform/pkg/nostr"
 )
@@ -84,6 +86,8 @@ type Config struct {
 	// without it an operator activates it. KYBPolicy tunes the check.
 	RequireKYB, KYBAutoApprove bool
 	KYBPolicy                  kyb.Policy
+	// AuditExportPrefix is put before the audit copies' keys in the WORM store ("prod/").
+	AuditExportPrefix string
 }
 
 // MaxAmount is the largest amount the rails carry: DE 4 is n12 (twelve digits of centavos)
@@ -115,6 +119,8 @@ type Service struct {
 	travelRule   TravelRuleProvider
 	terminalCA   *terminalpki.CA
 	kyb          kyb.Registry
+	stamps       []*tsa.Client
+	worm         worm.Store
 	opened       sync.Map // tenant/account → true: ledger accounts opened (crypto.go)
 }
 
@@ -156,7 +162,12 @@ type Deps struct {
 	TerminalCA *terminalpki.CA
 	// KYB reads new merchants' CNPJ registrations (docs/04 §2.5); with Config.RequireKYB, the
 	// periodic job checks every merchant in kyb_in_review. nil leaves KYB to operators.
-	KYB    kyb.Registry
+	KYB kyb.Registry
+	// Timestamps are the RFC 3161 authorities that date each daily transparency root.
+	Timestamps []*tsa.Client
+	// Audit copies each day's audit rows to WORM storage (S3 Object Lock); nil keeps them in
+	// the database only.
+	Audit  worm.Store
 	Logger *slog.Logger
 }
 
@@ -191,7 +202,7 @@ func New(cfg Config, d Deps) *Service {
 	}
 	return &Service{cfg: cfg, pool: d.Pool, ledger: d.Ledger, sw: d.Switch, vault: d.Vault, dec: d.Decryptor,
 		pix: d.Pix, payout: d.Payout, receipts: d.Receipts, publisher: d.Publisher, attest: d.Attestor, transparency: d.Transparency, registrar: d.Registrar, log: d.Logger,
-		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA, kyb: d.KYB}
+		exchanges: d.Exchanges, fx: d.FX, broker: d.Broker, screener: d.Screener, senders: d.Senders, travelRule: d.TravelRule, terminalCA: d.TerminalCA, kyb: d.KYB, stamps: d.Timestamps, worm: d.Audit}
 }
 
 // Errors surfaced to the API as problem details.

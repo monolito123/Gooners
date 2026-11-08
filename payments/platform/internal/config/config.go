@@ -174,6 +174,14 @@ type Config struct {
 	KYBAutoApprove              bool
 	// Operators are identified through the company's identity provider (OpenID Connect).
 	Operators OperatorSSO
+	// TSAURLs are the RFC 3161 time-stamping authorities that date each daily transparency
+	// root (an ICP-Brasil ACT, DigiCert, Sectigo...); TSARoots is a PEM bundle of their roots
+	// (empty: the system's roots).
+	TSAURLs  []string
+	TSARoots string
+	// The audit trail's daily copies (integration point 33): an S3 bucket created with Object
+	// Lock (AWS_REGION), a key prefix, and an endpoint only for S3-compatible stores.
+	AuditExportBucket, AuditExportPrefix, AuditExportEndpoint string
 	// ReportingName and ReportingURL identify the platform in the DeCripto (record 0000).
 	ReportingName, ReportingURL string
 	// SenderLookups find who sent each crypto deposit, per network (docs/09 §6.5): an
@@ -339,6 +347,13 @@ func Read() (*Config, error) {
 	c.ScreeningURL, c.ScreeningToken = os.Getenv("SCREENING_URL"), os.Getenv("SCREENING_TOKEN")
 	c.KYBRegistry, c.KYBRegistryURL, c.KYBAutoApprove = os.Getenv("KYB_REGISTRY"), os.Getenv("KYB_REGISTRY_URL"), os.Getenv("KYB_AUTO_APPROVE") == "on"
 	c.Operators = ReadOperatorSSO()
+	for _, u := range strings.Split(os.Getenv("TSA_URLS"), ",") {
+		if u = strings.TrimSpace(u); u != "" {
+			c.TSAURLs = append(c.TSAURLs, u)
+		}
+	}
+	c.TSARoots = os.Getenv("TSA_ROOTS")
+	c.AuditExportBucket, c.AuditExportPrefix, c.AuditExportEndpoint = os.Getenv("AUDIT_EXPORT_BUCKET"), os.Getenv("AUDIT_EXPORT_PREFIX"), os.Getenv("AUDIT_EXPORT_ENDPOINT")
 	c.ReportingName, c.ReportingURL = env("REPORTING_NAME", "goonersPAY"), os.Getenv("REPORTING_URL")
 	c.SenderLookups = map[string]string{}
 	for network, k := range map[string]string{"bitcoin": "BITCOIN_ESPLORA_URL", "ethereum": "ETHEREUM_RPC_URL", "polygon": "POLYGON_RPC_URL", "tron": "TRON_API_URL"} {
@@ -493,6 +508,15 @@ func (c *Config) Validate() error {
 	case c.Operators.Issuer != "" && (c.Operators.ClientID == "" || !strings.HasPrefix(c.Operators.Issuer, "https://")):
 		return errors.New("config: operator SSO needs OPERATOR_OIDC_ISSUER (https) and OPERATOR_OIDC_CLIENT_ID")
 	}
+	if c.AuditExportBucket != "" && c.AWSRegion == "" {
+		return errors.New("config: AUDIT_EXPORT_BUCKET needs AWS_REGION")
+	}
+	for _, u := range c.TSAURLs {
+		// Time-stamp tokens are signed: plain http (as DigiCert serves it) loses nothing.
+		if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			return fmt.Errorf("config: TSA_URLS: %q is not an http(s) URL", u)
+		}
+	}
 	if c.BootstrapCapital > 0 && c.Env != Sandbox {
 		return errors.New("config: BOOTSTRAP_CAPITAL is a sandbox convenience; fund the settlement account through treasury")
 	}
@@ -514,6 +538,8 @@ func (c *Config) Validate() error {
 			return errors.New("config: production identifies operators through the company's identity provider: set OPERATOR_OIDC_ISSUER, OPERATOR_OIDC_CLIENT_ID and OPERATOR_OIDC_DOMAINS")
 		case len(c.Operators.Domains) == 0 && c.Operators.Group == "":
 			return errors.New("config: OPERATOR_OIDC_DOMAINS or OPERATOR_OIDC_GROUP must limit who operates production; any account the identity provider knows would do otherwise")
+		case c.AuditExportBucket == "":
+			return errors.New("config: production copies the audit trail to WORM storage every day: set AUDIT_EXPORT_BUCKET (an S3 bucket created with Object Lock) and AWS_REGION")
 		case c.KYBRegistry != "brasilapi":
 			return errors.New("config: production checks every new merchant's CNPJ at the Receita Federal before it sells: set KYB_REGISTRY=brasilapi (KYB_REGISTRY_URL for a self-hosted minhareceita)")
 		case len(c.SanctionsLists) == 0:
