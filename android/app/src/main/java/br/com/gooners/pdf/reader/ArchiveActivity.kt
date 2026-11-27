@@ -4,66 +4,87 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import br.com.gooners.pdf.R
+import br.com.gooners.pdf.archive.ArchiveEntry
+import br.com.gooners.pdf.archive.ArchiveReader
+import br.com.gooners.pdf.archive.Archives
 import br.com.gooners.pdf.ui.Dialogs
 import br.com.gooners.pdf.ui.FileRow
 import br.com.gooners.pdf.ui.Router
-import br.com.gooners.pdf.ui.SaveHelper
 import br.com.gooners.pdf.util.DocKind
 import br.com.gooners.pdf.util.FileUtil
 import com.google.android.material.appbar.MaterialToolbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.util.zip.ZipFile
 
-/** Lista o conteúdo de arquivos ZIP e abre qualquer item suportado direto no app. */
+/** Navega por ZIP, 7z, RAR, TAR(.gz/.bz2/.xz), GZ, BZ2, XZ, DEB/AR, CPIO e ARJ; abre qualquer item no app. */
 class ArchiveActivity : AppCompatActivity() {
-    private class Entry(val path: String, val size: Long)
+    private var reader: ArchiveReader? = null
+    private var entries: List<ArchiveEntry> = emptyList()
+    private var folder = ""
+    private var name = ""
+    private lateinit var toolbar: MaterialToolbar
+    private lateinit var list: RecyclerView
 
-    private var zipFile: File? = null
-    private var entries: List<Entry> = emptyList()
-    private val saver = SaveHelper(this)
+    /** Itens da pasta atual: subpastas primeiro, depois arquivos. */
+    private var rows: List<Pair<String, ArchiveEntry?>> = emptyList()
+
+    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let { extractAllTo(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_list)
         val uri = intent.data ?: run { finish(); return }
-        val name = intent.getStringExtra(Router.EXTRA_NAME) ?: FileUtil.displayName(this, uri)
-        val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
+        name = intent.getStringExtra(Router.EXTRA_NAME) ?: FileUtil.displayName(this, uri)
+        toolbar = findViewById(R.id.toolbar)
         toolbar.title = name
-        toolbar.setNavigationOnClickListener { finish() }
-        toolbar.menu.add("Extrair tudo").setOnMenuItemClickListener { extractAll(); true }
-        val list = findViewById<RecyclerView>(R.id.list)
+        toolbar.setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
+        toolbar.menu.add("Extrair tudo").setOnMenuItemClickListener { pickFolder.launch(null); true }
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (folder.isNotEmpty()) { folder = folder.trimEnd('/').substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }; refresh() } else finish()
+            }
+        })
+        list = findViewById(R.id.list)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = object : RecyclerView.Adapter<FileRow>() {
-            override fun getItemCount() = entries.size
+            override fun getItemCount() = rows.size
             override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = FileRow(parent)
             override fun onBindViewHolder(h: FileRow, pos: Int) {
-                val e = entries[pos]
-                val n = e.path.substringAfterLast('/')
-                h.bind(n, (e.path.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it · " }) + FileUtil.human(e.size), DocKind.fromName(n))
-                h.itemView.setOnClickListener { openEntry(e) }
+                val (label, e) = rows[pos]
+                if (e == null) {
+                    h.bind("$label/", "Pasta", DocKind.ZIP)
+                    h.icon.setImageResource(R.drawable.ic_folder)
+                    h.itemView.setOnClickListener { folder = "$folder$label/"; refresh() }
+                } else {
+                    h.bind(label, if (e.size >= 0) FileUtil.human(e.size) else "", DocKind.fromName(label))
+                    h.itemView.setOnClickListener { openEntry(e) }
+                }
             }
         }
         val progress = findViewById<View>(R.id.progress)
         progress.visibility = View.VISIBLE
         lifecycleScope.launch {
             try {
-                val f = withContext(Dispatchers.IO) { FileUtil.copyToCache(this@ArchiveActivity, uri, "work", name) }
-                zipFile = f
-                entries = withContext(Dispatchers.IO) {
-                    ZipFile(f).use { z -> z.entries().toList().filter { !it.isDirectory }.map { Entry(it.name, it.size) }.sortedBy { it.path.lowercase() } }
+                val r = withContext(Dispatchers.IO) {
+                    val f = FileUtil.copyToCache(this@ArchiveActivity, uri, "work", name)
+                    Archives.open(f, name)
                 }
-                toolbar.subtitle = "${entries.size} arquivos"
-                list.adapter?.notifyDataSetChanged()
-                if (entries.isEmpty()) findViewById<TextView>(R.id.empty).apply { visibility = View.VISIBLE; text = "Arquivo ZIP vazio" }
-            } catch (e: Exception) {
+                reader = r
+                entries = r.entries
+                toolbar.subtitle = "${r.format} · ${entries.size} arquivos"
+                // arquivo com um único item (ex.: relatorio.pdf.gz): abre direto
+                if (entries.size == 1 && (r.format in setOf("GZIP", "BZIP2", "XZ", "Z", "LZMA"))) { openEntry(entries[0]); finish(); return@launch }
+                refresh()
+                if (entries.isEmpty()) findViewById<TextView>(R.id.empty).apply { visibility = View.VISIBLE; text = "Arquivo vazio" }
+            } catch (e: Throwable) {
                 Dialogs.message(this@ArchiveActivity, "Não foi possível abrir", e.message ?: e.toString())
             } finally {
                 progress.visibility = View.GONE
@@ -71,41 +92,72 @@ class ArchiveActivity : AppCompatActivity() {
         }
     }
 
-    private fun safeTarget(dir: File, path: String): File {
-        val out = File(dir, path)
-        // evita "zip slip" (caminhos com ../ saindo da pasta)
-        if (!out.canonicalPath.startsWith(dir.canonicalPath)) throw SecurityException("Caminho inválido no ZIP")
-        return out
-    }
-
-    private suspend fun extract(e: Entry): File = withContext(Dispatchers.IO) {
-        val dir = FileUtil.dir(this@ArchiveActivity, "zip/${zipFile!!.name.hashCode()}")
-        val out = safeTarget(dir, e.path)
-        out.parentFile?.mkdirs()
-        if (!out.exists() || out.length() != e.size) ZipFile(zipFile!!).use { z ->
-            z.getInputStream(z.getEntry(e.path)).use { input -> out.outputStream().use { input.copyTo(it) } }
+    private fun refresh() {
+        val dirs = sortedSetOf<String>()
+        val files = ArrayList<Pair<String, ArchiveEntry?>>()
+        for (e in entries) {
+            val p = e.path.replace('\\', '/').trimStart('/')
+            if (!p.startsWith(folder)) continue
+            val rest = p.removePrefix(folder)
+            if (rest.contains('/')) dirs += rest.substringBefore('/') else if (rest.isNotEmpty()) files += rest to e
         }
-        out
+        rows = dirs.map { it to null } + files.sortedBy { it.first.lowercase() }
+        toolbar.title = if (folder.isEmpty()) name else folder.trimEnd('/').substringAfterLast('/')
+        list.adapter?.notifyDataSetChanged()
     }
 
-    private fun openEntry(e: Entry) {
+    private fun openEntry(e: ArchiveEntry) {
+        val r = reader ?: return
         lifecycleScope.launch {
-            try { Router.openFile(this@ArchiveActivity, extract(e)) } catch (ex: Exception) {
-                Dialogs.message(this@ArchiveActivity, "Erro", ex.message ?: ex.toString())
+            try {
+                val f = withContext(Dispatchers.IO) { r.extract(e, FileUtil.dir(this@ArchiveActivity, "zip/${name.hashCode()}")) }
+                Router.openFile(this@ArchiveActivity, f)
+            } catch (ex: Throwable) {
+                Dialogs.message(this@ArchiveActivity, "Erro ao extrair", ex.message ?: ex.toString())
             }
         }
     }
 
-    private fun extractAll() {
+    private fun extractAllTo(tree: android.net.Uri) {
+        val r = reader ?: return
         val pd = Dialogs.progress(this, "Extraindo…")
         lifecycleScope.launch {
             try {
-                val files = entries.map { extract(it) }
+                val n = withContext(Dispatchers.IO) {
+                    val root = DocumentFile.fromTreeUri(this@ArchiveActivity, tree) ?: return@withContext 0
+                    var count = 0
+                    val dirs = HashMap<String, DocumentFile>()
+                    fun dirFor(path: String): DocumentFile {
+                        if (path.isEmpty()) return root
+                        dirs[path]?.let { return it }
+                        val parent = dirFor(path.substringBeforeLast('/', ""))
+                        val leaf = path.substringAfterLast('/')
+                        val d = parent.findFile(leaf)?.takeIf { it.isDirectory } ?: parent.createDirectory(leaf) ?: parent
+                        dirs[path] = d
+                        return d
+                    }
+                    entries.forEachIndexed { i, e ->
+                        runOnUiThread { pd.update("Extraindo ${i + 1} de ${entries.size}…", i / entries.size.toFloat()) }
+                        val clean = e.path.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." && it != ".." }
+                        if (clean.isEmpty()) return@forEachIndexed
+                        val dir = dirFor(clean.dropLast(1).joinToString("/"))
+                        val doc = dir.createFile(FileUtil.mimeOf(clean.last()), clean.last()) ?: return@forEachIndexed
+                        contentResolver.openOutputStream(doc.uri)?.use { out -> r.open(e).use { it.copyTo(out, 64 * 1024) } }
+                        count++
+                    }
+                    count
+                }
                 pd.dismiss()
-                saver.saveAll(files)
-            } catch (ex: Exception) {
-                pd.dismiss(); Dialogs.message(this@ArchiveActivity, "Erro", ex.message ?: ex.toString())
+                Dialogs.message(this@ArchiveActivity, "Pronto", "$n de ${entries.size} arquivos extraídos.")
+            } catch (ex: Throwable) {
+                pd.dismiss()
+                Dialogs.message(this@ArchiveActivity, "Erro ao extrair", ex.message ?: ex.toString())
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        runCatching { reader?.close() }
     }
 }

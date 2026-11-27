@@ -31,29 +31,54 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # Opcional: com os secrets GPDF_KEYSTORE_BASE64, GPDF_KEYSTORE_PASSWORD, GPDF_KEY_ALIAS e GPDF_KEY_PASSWORD
-      # o APK sai sempre com a mesma assinatura (atualizações instalam por cima). Sem eles, usa a chave de debug.
+      # o APK sai sempre com a sua chave. Sem eles, usa uma chave gerada pelo próprio CI (guardada em cache).
       - name: Chave de assinatura
         if: env.KEYSTORE_B64 != ''
         run: |
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "GPDF_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
+      # Sem secrets: reaproveita (via cache) uma chave gerada no próprio CI, para que as atualizações
+      # continuem instalando por cima da versão anterior.
+      - name: Cache da chave do CI
+        if: env.KEYSTORE_B64 == ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.gpdf-ci-keystore.jks
+          key: gpdf-ci-keystore-v1
+      - name: Chave do CI
+        if: env.KEYSTORE_B64 == ''
+        run: |
+          KS="$HOME/.gpdf-ci-keystore.jks"
+          if [ ! -f "$KS" ]; then
+            keytool -genkeypair -noprompt -keystore "$KS" -storepass gooners-ci -keypass gooners-ci -alias gpdf \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Gooners PDF CI, O=Gooners, C=BR"
+          fi
+          { echo "GPDF_KEYSTORE=$KS"; echo "GPDF_KEYSTORE_PASSWORD=gooners-ci"; echo "GPDF_KEY_ALIAS=gpdf"; echo "GPDF_KEY_PASSWORD=gooners-ci"; } >> "$GITHUB_ENV"
+
       - name: Testes
         run: ./gradlew --no-daemon testDebugUnitTest
 
-      - name: Gerar APK
+      - name: Senhas da chave (secrets)
+        if: env.KEYSTORE_B64 != ''
         env:
-          GPDF_KEYSTORE_PASSWORD: ${{ secrets.GPDF_KEYSTORE_PASSWORD }}
-          GPDF_KEY_ALIAS: ${{ secrets.GPDF_KEY_ALIAS }}
-          GPDF_KEY_PASSWORD: ${{ secrets.GPDF_KEY_PASSWORD }}
+          P1: ${{ secrets.GPDF_KEYSTORE_PASSWORD }}
+          P2: ${{ secrets.GPDF_KEY_ALIAS }}
+          P3: ${{ secrets.GPDF_KEY_PASSWORD }}
+        run: |
+          { echo "GPDF_KEYSTORE_PASSWORD=$P1"; echo "GPDF_KEY_ALIAS=$P2"; echo "GPDF_KEY_PASSWORD=$P3"; } >> "$GITHUB_ENV"
+
+      - name: Gerar APK
         run: |
           ./gradlew --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk GoonersPDF.apk
+          cp app/build/outputs/apk/release/app-universal-release.apk GoonersPDF.apk
+          cp app/build/outputs/apk/release/app-arm64-v8a-release.apk GoonersPDF-arm64.apk
+          cp app/build/outputs/apk/release/app-armeabi-v7a-release.apk GoonersPDF-armv7.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: GoonersPDF-apk
-          path: android/GoonersPDF.apk
+          path: android/GoonersPDF*.apk
 
       # Mantém sempre o APK mais recente para download na aba "Releases" do repositório.
       - name: Publicar na release "apk-latest"
@@ -61,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete apk-latest --yes --cleanup-tag || true
-          gh release create apk-latest GoonersPDF.apk \
+          gh release create apk-latest GoonersPDF.apk GoonersPDF-arm64.apk GoonersPDF-armv7.apk \
             --target "$GITHUB_SHA" --prerelease \
             --title "Gooners PDF — build ${GITHUB_SHA::7}" \
-            --notes "APK gerado automaticamente a partir de ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Android 5.0 ou superior. Baixe GoonersPDF.apk e permita a instalação de fontes desconhecidas."
+            --notes "APK gerado automaticamente a partir de ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Android 5.0 ou superior. GoonersPDF.apk funciona em qualquer aparelho; GoonersPDF-arm64.apk é menor e serve para a maioria dos celulares atuais (armv7 para os mais antigos). Permita a instalação de fontes desconhecidas."

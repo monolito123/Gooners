@@ -4,6 +4,8 @@
     <item android:id="@+id/m_search" android:icon="@drawable/ic_search" android:title="Buscar" app:showAsAction="always" />
     <item android:id="@+id/m_theme" android:icon="@drawable/ic_night" android:title="Modo de leitura" app:showAsAction="ifRoom" />
     <item android:id="@+id/m_share" android:icon="@drawable/ic_share" android:title="Compartilhar" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_thumbs" android:title="Páginas (miniaturas)" />
+    <item android:id="@+id/m_save" android:title="Salvar alterações" />
     <item android:id="@+id/m_toc" android:title="Sumário" />
     <item android:id="@+id/m_bookmarks" android:title="Marcadores" />
     <item android:id="@+id/m_goto" android:title="Ir para a página" />

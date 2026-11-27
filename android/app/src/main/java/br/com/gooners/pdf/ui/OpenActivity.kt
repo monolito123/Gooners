@@ -17,7 +17,12 @@ class OpenActivity : AppCompatActivity() {
             else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
             else -> intent.data
         }
-        if (uri == null) {
+        val sharedText = if (intent.action == Intent.ACTION_SEND) intent.getStringExtra(Intent.EXTRA_TEXT) else null
+        val link = sharedText?.let { Regex("(https?|rtsp|rtmp)://\\S+").find(it)?.value }
+        if (uri == null && link != null) {
+            // link compartilhado como texto (ex.: navegador): abre como transmissão ou baixa o documento
+            startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_LINK, link).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+        } else if (uri == null) {
             Toast.makeText(this, "Nenhum arquivo recebido", Toast.LENGTH_SHORT).show()
         } else {
             try {

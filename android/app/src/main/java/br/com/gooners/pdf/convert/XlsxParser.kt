@@ -33,8 +33,9 @@ object XlsxParser {
         return sheets.map { (name, path) -> Sheet(name, readSheet(zip.text(path) ?: "", shared, dateStyles)) }
     }
 
-    fun toHtml(zip: ZipRes): String {
-        val sheets = read(zip)
+    fun toHtml(zip: ZipRes): String = sheetsHtml(read(zip))
+
+    fun sheetsHtml(sheets: List<Sheet>): String {
         val sb = StringBuilder()
         if (sheets.size > 1) {
             sb.append("<div class=\"tabs\">")
@@ -45,6 +46,7 @@ object XlsxParser {
             sb.append("<h3 class=\"sheet\" id=\"s$i\">${X.esc(s.name)}</h3>")
             sb.append(gridHtml(s.rows))
         }
+        if (sheets.isEmpty()) sb.append("<p><i>(planilha vazia)</i></p>")
         return sb.toString()
     }
 
@@ -105,13 +107,12 @@ object XlsxParser {
             when (p.local()) {
                 "numFmt" -> {
                     val id = p.attr("numFmtId")?.toIntOrNull() ?: return@walk
-                    val code = (p.attr("formatCode") ?: "").lowercase().replace(Regex("\\[[^]]*]|\"[^\"]*\""), "")
-                    if ((code.contains('d') || code.contains('y') || (code.contains('m') && !code.contains('0'))) && !code.contains('#')) customDate += id
+                    if (isDateFormat(p.attr("formatCode") ?: "")) customDate += id
                 }
                 "cellXfs" -> { inXfs = true; idx = 0 }
                 "xf" -> if (inXfs) {
                     val id = p.attr("numFmtId")?.toIntOrNull() ?: 0
-                    if (id in 14..22 || id in 45..47 || id in customDate) out += idx
+                    if (isBuiltinDate(id) || id in customDate) out += idx
                     idx++
                 }
             }
@@ -123,15 +124,32 @@ object XlsxParser {
     private val dateFmt = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")).apply { timeZone = TimeZone.getTimeZone("UTC") }
     private val dateTimeFmt = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("pt", "BR")).apply { timeZone = TimeZone.getTimeZone("UTC") }
 
-    private fun formatNumber(v: String, isDate: Boolean): String {
-        val d = v.toDoubleOrNull() ?: return v
+    /** Formatos de data embutidos do Excel (ids de numFmt). */
+    fun isBuiltinDate(id: Int) = id in 14..22 || id in 45..47 || id in 27..36 || id in 50..58
+
+    /** Código de formato personalizado que representa data/hora. */
+    fun isDateFormat(code: String): Boolean {
+        // ignora cores/condições entre colchetes, textos entre aspas e caracteres escapados
+        val c = code.lowercase().replace(Regex("\\[[^]]*]|\"[^\"]*\"|\\\\."), "")
+        return (c.contains('d') || c.contains('y') || (c.contains('m') && !c.contains('0')) || c.contains("h:")) && !c.contains('#')
+    }
+
+    /** Número da célula já formatado em pt-BR (datas no padrão dd/mm/aaaa). */
+    fun formatValue(d: Double, isDate: Boolean, date1904: Boolean = false): String {
         if (isDate && d > 0 && d < 2958466) {
             val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-            cal.set(1899, Calendar.DECEMBER, 30, 0, 0, 0); cal.set(Calendar.MILLISECOND, 0)
+            if (date1904) cal.set(1904, Calendar.JANUARY, 1, 0, 0, 0) else cal.set(1899, Calendar.DECEMBER, 30, 0, 0, 0)
+            cal.set(Calendar.MILLISECOND, 0)
             cal.timeInMillis += Math.round(d * 86400000.0)
-            return if (d % 1.0 == 0.0) dateFmt.format(cal.time) else dateTimeFmt.format(cal.time)
+            return synchronized(this) { if (d % 1.0 == 0.0) dateFmt.format(cal.time) else dateTimeFmt.format(cal.time) }
         }
-        return if (kotlin.math.abs(d) >= 1e15 || (d != 0.0 && kotlin.math.abs(d) < 1e-9)) v else numFmt.format(d)
+        if (d.isNaN() || d.isInfinite()) return d.toString()
+        return if (kotlin.math.abs(d) >= 1e15 || (d != 0.0 && kotlin.math.abs(d) < 1e-9)) d.toString() else synchronized(this) { numFmt.format(d) }
+    }
+
+    private fun formatNumber(v: String, isDate: Boolean): String {
+        val d = v.toDoubleOrNull() ?: return v
+        return formatValue(d, isDate)
     }
 
     private fun readSheet(xml: String, shared: List<String>, dates: Set<Int>): List<List<String>> {

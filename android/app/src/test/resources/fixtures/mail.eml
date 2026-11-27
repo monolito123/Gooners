@@ -1,0 +1,29 @@
+From: =?UTF-8?B?Sm/Do28gU2lsdmE=?= <joao@exemplo.com>
+To: maria@exemplo.com
+Subject: =?ISO-8859-1?Q?Relat=F3rio_mensal?=
+Date: Tue, 15 Mar 2024 10:30:00 -0300
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="XYZ"
+
+--XYZ
+Content-Type: multipart/related; boundary="REL"
+
+--REL
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><p>Ol=C3=A1 Maria, segue o relat=C3=B3rio.</p><img src=3D"cid:logo1"></body></html>
+--REL
+Content-Type: image/png
+Content-ID: <logo1>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgpmYWtlcG5n
+--REL--
+--XYZ
+Content-Type: text/plain; name="dados.txt"
+Content-Disposition: attachment; filename="dados.txt"
+Content-Transfer-Encoding: base64
+
+Y29udGXDumRvIGRvIGFuZXhv
+--XYZ--

@@ -125,3 +125,60 @@ object OdfParser {
         }, { p -> if (p.name == "style:style") cur = null })
     }
 }
+
+/** Planilhas OpenDocument (.ods) como linhas e colunas de texto, para o editor de planilhas. */
+object OdsReader {
+    fun sheets(zip: ZipRes, maxRows: Int = 20000, maxCols: Int = 200): List<XlsxParser.Sheet> {
+        val xml = zip.text("content.xml") ?: throw IllegalArgumentException("Planilha OpenDocument inválida")
+        val out = ArrayList<XlsxParser.Sheet>()
+        var name = ""
+        var rows = ArrayList<MutableList<String>>()
+        var row: MutableList<String>? = null
+        var rowRepeat = 1
+        var cellRepeat = 1
+        var cell: StringBuilder? = null
+        var cellValue: String? = null
+        var inP = 0
+        X.walk(xml, { p ->
+            when (p.name) {
+                "table:table" -> { name = p.getAttributeValue(null, "table:name") ?: "Planilha ${out.size + 1}"; rows = ArrayList() }
+                "table:table-row" -> { row = ArrayList(); rowRepeat = (p.getAttributeValue(null, "table:number-rows-repeated")?.toIntOrNull() ?: 1).coerceIn(1, 1000) }
+                "table:table-cell", "table:covered-table-cell" -> {
+                    cell = StringBuilder()
+                    cellRepeat = (p.getAttributeValue(null, "table:number-columns-repeated")?.toIntOrNull() ?: 1).coerceIn(1, 1000)
+                    cellValue = when (p.getAttributeValue(null, "office:value-type")) {
+                        "float", "percentage", "currency" -> p.getAttributeValue(null, "office:value")
+                        "date" -> p.getAttributeValue(null, "office:date-value")?.let { d ->
+                            Regex("(\\d{4})-(\\d{2})-(\\d{2})").find(d)?.let { "${it.groupValues[3]}/${it.groupValues[2]}/${it.groupValues[1]}" } ?: d
+                        }
+                        "boolean" -> if (p.getAttributeValue(null, "office:boolean-value") == "true") "VERDADEIRO" else "FALSO"
+                        else -> null
+                    }
+                }
+                "text:p" -> { if ((cell?.length ?: 0) > 0) cell?.append('\n'); inP++ }
+                "text:s" -> cell?.append(" ".repeat((p.getAttributeValue(null, "text:c")?.toIntOrNull() ?: 1).coerceAtMost(40)))
+                "text:tab" -> cell?.append('\t')
+                "text:line-break" -> cell?.append('\n')
+            }
+        }, { p ->
+            when (p.name) {
+                "text:p" -> inP--
+                "table:table-cell", "table:covered-table-cell" -> {
+                    val v = cellValue?.let { raw -> raw.toDoubleOrNull()?.let { XlsxParser.formatValue(it, false) } ?: raw } ?: cell?.toString().orEmpty()
+                    row?.let { r -> repeat(cellRepeat) { if (r.size < maxCols) r += v } }
+                    cell = null; cellValue = null
+                }
+                "table:table-row" -> row?.let { r ->
+                    while (r.isNotEmpty() && r.last().isEmpty()) r.removeAt(r.size - 1)
+                    repeat(if (r.isEmpty()) minOf(rowRepeat, 100) else rowRepeat) { if (rows.size < maxRows) rows += ArrayList(r) }
+                    row = null
+                }
+                "table:table" -> {
+                    while (rows.isNotEmpty() && rows.last().isEmpty()) rows.removeAt(rows.size - 1)
+                    out += XlsxParser.Sheet(name, rows)
+                }
+            }
+        }, { t -> if (inP > 0) cell?.append(t) })
+        return out
+    }
+}

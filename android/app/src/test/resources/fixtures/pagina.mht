@@ -1,0 +1,15 @@
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="B"; type="text/html"
+
+--B
+Content-Type: text/html; charset="utf-8"
+Content-Location: http://site.com/pagina.html
+
+<html><body><h1>Pagina salva</h1><img src="http://site.com/foto.png"></body></html>
+--B
+Content-Type: image/png
+Content-Location: http://site.com/foto.png
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgppbWc=
+--B--

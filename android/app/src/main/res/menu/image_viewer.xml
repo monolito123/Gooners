@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
-    <item android:id="@+id/m_rotate" android:icon="@drawable/ic_rotate" android:title="Girar" app:showAsAction="always" />
-    <item android:id="@+id/m_share" android:icon="@drawable/ic_share" android:title="Compartilhar" app:showAsAction="always" />
+    <item android:id="@+id/m_edit" android:icon="@drawable/ic_edit" android:title="Editar imagem" app:showAsAction="always" />
+    <item android:id="@+id/m_rotate" android:icon="@drawable/ic_rotate" android:title="Girar" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_share" android:icon="@drawable/ic_share" android:title="Compartilhar" app:showAsAction="ifRoom" />
+    <item android:id="@+id/m_convert" android:title="Converter (JPG, PNG, WebP)" />
     <item android:id="@+id/m_to_pdf" android:title="Converter para PDF" />
     <item android:id="@+id/m_ocr" android:title="Extrair texto (OCR)" />
+    <item android:id="@+id/m_goto" android:title="Ir para a página" />
     <item android:id="@+id/m_info" android:title="Informações" />
     <item android:id="@+id/m_other" android:title="Abrir com outro app" />
 </menu>

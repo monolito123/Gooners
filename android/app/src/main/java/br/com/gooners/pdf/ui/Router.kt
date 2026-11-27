@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import br.com.gooners.pdf.player.PlayerActivity
 import br.com.gooners.pdf.reader.ArchiveActivity
 import br.com.gooners.pdf.reader.DocumentViewerActivity
 import br.com.gooners.pdf.reader.ImageViewerActivity
@@ -41,7 +42,8 @@ object Router {
         val cls = when (kind) {
             DocKind.PDF -> PdfViewerActivity::class.java
             DocKind.IMAGE, DocKind.CBZ -> ImageViewerActivity::class.java
-            DocKind.ZIP -> ArchiveActivity::class.java
+            DocKind.VIDEO, DocKind.AUDIO, DocKind.PLAYLIST -> PlayerActivity::class.java
+            DocKind.ZIP, DocKind.ARCHIVE -> ArchiveActivity::class.java
             DocKind.TEXT, DocKind.CODE, DocKind.UNKNOWN -> TextViewerActivity::class.java
             else -> DocumentViewerActivity::class.java
         }

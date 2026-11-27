@@ -13,4 +13,9 @@
     <color name="ebook_brown">#92400E</color>
     <color name="image_purple">#7C3AED</color>
     <color name="text_gray">#475569</color>
+    <color name="video_pink">#DB2777</color>
+    <color name="audio_teal">#0D9488</color>
+    <color name="archive_amber">#B45309</color>
+    <color name="mail_sky">#0284C7</color>
+    <color name="data_slate">#334155</color>
 </resources>

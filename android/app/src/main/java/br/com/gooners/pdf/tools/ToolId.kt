@@ -2,17 +2,21 @@ package br.com.gooners.pdf.tools
 
 import br.com.gooners.pdf.R
 
-enum class Input { NONE, PDF, PDFS, IMAGES, DOCUMENT, IMAGE_OR_PDF }
+enum class Input { NONE, PDF, PDFS, IMAGES, DOCUMENT, IMAGE_OR_PDF, FILES, IMAGE, MEDIA }
 
 enum class ToolId(val title: String, val desc: String, val icon: Int, val input: Input, val group: String) {
     // Criar
     NEW_DOC("Novo documento", "Escreva e exporte em PDF, Word, HTML ou texto", R.drawable.ic_page_add, Input.NONE, "Criar"),
+    NEW_SHEET("Nova planilha", "Edite células e salve em Excel (.xlsx) ou CSV", R.drawable.ic_table, Input.NONE, "Criar"),
+    NEW_TEXT("Novo arquivo de texto", "Editor de texto e código com realce de sintaxe", R.drawable.ic_code, Input.NONE, "Criar"),
     BLANK_PDF("PDF em branco", "Folhas lisas, pautadas, quadriculadas ou pontilhadas", R.drawable.ic_pdf, Input.NONE, "Criar"),
     SCAN("Digitalizar", "Use a câmera para criar um PDF de documentos", R.drawable.ic_camera, Input.NONE, "Criar"),
     IMAGES_TO_PDF("Imagens para PDF", "Junte fotos e imagens num só PDF", R.drawable.ic_image, Input.IMAGES, "Criar"),
 
     // Editar
     EDIT("Editar PDF", "Texto, desenho, destaque, formas, imagens e corretivo", R.drawable.ic_edit, Input.PDF, "Editar"),
+    EDIT_DOC("Editar documento", "Word, ODT, RTF, Markdown, HTML, TXT e planilhas", R.drawable.ic_doc, Input.DOCUMENT, "Editar"),
+    IMAGE_EDIT("Editar imagem", "Recortar, girar, filtros de documento, brilho e tamanho", R.drawable.ic_crop, Input.IMAGE, "Editar"),
     SIGN("Assinar PDF", "Desenhe sua assinatura e posicione no documento", R.drawable.ic_sign, Input.PDF, "Editar"),
     FILL_FORM("Preencher formulário", "Campos de texto, caixas de seleção e listas", R.drawable.ic_form, Input.PDF, "Editar"),
     ORGANIZE("Organizar páginas", "Reordenar, girar, excluir, duplicar e inserir", R.drawable.ic_grid, Input.PDF, "Editar"),
@@ -40,6 +44,13 @@ enum class ToolId(val title: String, val desc: String, val icon: Int, val input:
     EXTRACT_IMAGES("Extrair imagens", "Salve as imagens contidas no PDF", R.drawable.ic_image, Input.PDF, "Converter"),
     OCR_PDF("OCR: PDF pesquisável", "Reconhece o texto de PDFs digitalizados", R.drawable.ic_scan, Input.PDF, "Converter"),
     OCR_IMAGE("OCR: imagem para texto", "Extraia o texto de fotos e prints", R.drawable.ic_scan, Input.IMAGES, "Converter"),
+
+    // Mídia e arquivos
+    PLAY_MEDIA("Reproduzir vídeo ou música", "MP4, MKV, AVI, WebM, MP3, FLAC, OGG, AC3, listas M3U…", R.drawable.ic_play, Input.MEDIA, "Mídia e arquivos"),
+    OPEN_LINK("Abrir link ou transmissão", "IPTV/HLS (.m3u8), DASH, RTSP, rádios e arquivos da web", R.drawable.ic_link, Input.NONE, "Mídia e arquivos"),
+    LIBRARY("Biblioteca do aparelho", "Todos os documentos, vídeos, músicas e imagens", R.drawable.ic_folder, Input.NONE, "Mídia e arquivos"),
+    ZIP_CREATE("Compactar em ZIP", "Junte vários arquivos num .zip", R.drawable.ic_zip, Input.FILES, "Mídia e arquivos"),
+    UNZIP("Abrir arquivo compactado", "ZIP, RAR, 7z, TAR, GZ, BZ2, XZ, DEB e mais", R.drawable.ic_zip, Input.DOCUMENT, "Mídia e arquivos"),
 
     // Segurança
     PROTECT("Proteger com senha", "Criptografia AES-256 e permissões", R.drawable.ic_lock, Input.PDF, "Segurança"),

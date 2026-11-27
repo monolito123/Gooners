@@ -1,0 +1,5 @@
+#EXTM3U
+#EXTINF:-1 tvg-logo="x.png" group-title="Notícias",Canal Um
+http://exemplo.com/um.m3u8
+#EXTINF:123,Artista - Música
+https://exemplo.com/musica.mp3

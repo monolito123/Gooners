@@ -40,5 +40,9 @@ object Prefs {
     fun setLastPage(key: String, page: Int) = sp.edit().putInt("page_$key", page).apply()
 
     fun getString(key: String, def: String = ""): String = sp.getString(key, def) ?: def
+    fun getLong(key: String, def: Long = 0): Long = sp.getLong(key, def)
+    fun putLong(key: String, value: Long) = sp.edit().putLong(key, value).apply()
+    fun getBoolean(key: String, def: Boolean = false): Boolean = sp.getBoolean(key, def)
+    fun putBoolean(key: String, value: Boolean) = sp.edit().putBoolean(key, value).apply()
     fun putString(key: String, value: String) = sp.edit().putString(key, value).apply()
 }

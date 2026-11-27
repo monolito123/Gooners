@@ -54,8 +54,8 @@
             android:layout_height="76dp"
             android:layout_marginStart="6dp"
             android:layout_weight="1"
-            android:text="Fotos→PDF"
-            app:icon="@drawable/ic_image"
+            android:text="Link"
+            app:icon="@drawable/ic_link"
             app:iconGravity="top"
             app:iconPadding="2dp" />
     </LinearLayout>
@@ -92,13 +92,13 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Todos os documentos do aparelho"
+                    android:text="Biblioteca do aparelho"
                     android:textAppearance="@style/TextAppearance.Material3.TitleSmall" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="PDF, Word, Excel, PowerPoint, eBooks e mais"
+                    android:text="Documentos, vídeos, músicas, imagens e compactados"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall" />
             </LinearLayout>
 

@@ -19,7 +19,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import br.com.gooners.pdf.R
 import br.com.gooners.pdf.convert.TextDecode
-import br.com.gooners.pdf.create.EditorActivity
+import br.com.gooners.pdf.create.CodeEditorActivity
+import br.com.gooners.pdf.create.Highlighter
 import br.com.gooners.pdf.tools.ToolActivity
 import br.com.gooners.pdf.tools.ToolId
 import br.com.gooners.pdf.ui.Dialogs
@@ -51,6 +52,7 @@ class TextViewerActivity : AppCompatActivity() {
     private var name = ""
     private var kind = DocKind.TEXT
     private var mono = false
+    private var binary = false
     private var numbers = false
     private var sizeSp = 15f
     private var query = ""
@@ -103,6 +105,7 @@ class TextViewerActivity : AppCompatActivity() {
                     }
                 }
                 lines = result.first
+                binary = result.second
                 if (result.second) {
                     toolbar.subtitle = "Arquivo binário — exibindo bytes (hex)"
                     mono = true
@@ -197,13 +200,8 @@ class TextViewerActivity : AppCompatActivity() {
             R.id.m_goto -> Dialogs.input(this, "Ir para a linha", "1 – ${lines.size}", type = InputType.TYPE_CLASS_NUMBER) { s ->
                 s.toIntOrNull()?.let { scrollToLine((it - 1).coerceIn(0, lines.size - 1)) }
             }
-            R.id.m_edit -> {
-                val text = lines.joinToString("\n")
-                if (text.length > 1_000_000) Toast.makeText(this, "Arquivo grande demais para o editor", Toast.LENGTH_SHORT).show()
-                else startActivity(Intent(this, EditorActivity::class.java).putExtra(EditorActivity.EXTRA_TEXT, text)
-                    .putExtra(EditorActivity.EXTRA_TITLE, FileUtil.baseName(name)).putExtra(EditorActivity.EXTRA_SOURCE_NAME, name)
-                    .setData(intent.data).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
-            }
+            R.id.m_edit -> startActivity(Intent(this, CodeEditorActivity::class.java).setData(intent.data).putExtra(Router.EXTRA_NAME, name)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
             R.id.m_to_pdf -> file?.let { ToolActivity.start(this, ToolId.DOC_TO_PDF, it, name, null) }
             R.id.m_share -> file?.let { FileUtil.share(this, listOf(it)) }
             R.id.m_other -> intent.data?.let { FileUtil.openWithOtherApp(this, it, FileUtil.mimeOf(name)) }
@@ -236,8 +234,13 @@ class TextViewerActivity : AppCompatActivity() {
                 if (i < to - 1) sb.append('\n')
             }
             val text = sb.toString()
-            if (query.isEmpty() && !numbers) { tv.text = text; return }
+            val lang = if (mono && !binary) Highlighter.lang(name) else Highlighter.Lang.NONE
+            if (query.isEmpty() && !numbers && lang == Highlighter.Lang.NONE) { tv.text = text; return }
             val sp = SpannableString(text)
+            if (lang != Highlighter.Lang.NONE && text.length < 60_000) {
+                val night = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                Highlighter.apply(sp, lang, if (night) Highlighter.dark else Highlighter.light)
+            }
             if (numbers) {
                 var off = 0
                 for (i in from until to) {

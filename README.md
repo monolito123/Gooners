@@ -9,7 +9,7 @@ Dois sites estáticos, indexáveis por buscadores e prontos para o GitHub Pages:
 
 ## App Android
 
-A pasta [`android/`](android/README.md) contém o **Gooners PDF**, leitor, editor e conversor de PDF e documentos para Android. O APK mais recente fica em *Releases → apk-latest*.
+A pasta [`android/`](android/README.md) contém o **Gooners PDF**: leitor, editor e conversor de PDF e documentos, player de vídeo e música e abridor de arquivos compactados para Android. O APK mais recente fica em *Releases → apk-latest*.
 
 ## Rodar localmente
 

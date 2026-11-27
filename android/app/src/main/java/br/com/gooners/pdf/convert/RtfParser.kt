@@ -104,3 +104,69 @@ object RtfParser {
         return out.toString().replace("<p></p>", "<p>&nbsp;</p>")
     }
 }
+
+/** RTF com HTML encapsulado (corpo de e-mails do Outlook): recupera o HTML original ([MS-OXRTFEX]). */
+fun RtfParser.deEncapsulateHtml(rtf: String): String? {
+    if (!rtf.contains("\\fromhtml")) return null
+    class G(var skip: Boolean = false, var tag: Boolean = false, var rtfOnly: Boolean = false) { fun copy() = G(skip, tag, rtfOnly) }
+    val skipWords = setOf("fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "listtable", "listoverridetable", "themedata", "generator")
+    val out = StringBuilder()
+    val stack = ArrayList<G>()
+    var g = G()
+    var star = false
+    var skipNext = 0
+    var i = 0
+    val n = rtf.length
+    fun emit(s: String) {
+        if (g.skip || g.rtfOnly) return
+        if (skipNext > 0) { skipNext--; return }
+        out.append(s)
+    }
+    while (i < n) {
+        val c = rtf[i]
+        when (c) {
+            '{' -> { stack += g.copy(); i++ }
+            '}' -> { g = stack.removeLastOrNull() ?: G(); star = false; i++ }
+            '\\' -> {
+                i++
+                if (i >= n) break
+                val d = rtf[i]
+                when {
+                    d == '\\' || d == '{' || d == '}' -> { emit(d.toString()); i++ }
+                    d == '\'' -> {
+                        rtf.substring(i + 1, minOf(i + 3, n)).toIntOrNull(16)?.let { emit(String(byteArrayOf(it.toByte()), charset("windows-1252"))) }
+                        i += 3
+                    }
+                    d == '*' -> { star = true; i++ }
+                    d == '~' -> { emit(" "); i++ }
+                    d.isLetter() -> {
+                        val st = i
+                        while (i < n && rtf[i].isLetter()) i++
+                        val word = rtf.substring(st, i)
+                        var num: Int? = null
+                        if (i < n && (rtf[i] == '-' || rtf[i].isDigit())) {
+                            val ns = i; i++
+                            while (i < n && rtf[i].isDigit()) i++
+                            num = rtf.substring(ns, i).toIntOrNull()
+                        }
+                        if (i < n && rtf[i] == ' ') i++
+                        when {
+                            word == "htmltag" -> { g.tag = true; g.skip = false }
+                            word == "htmlrtf" -> g.rtfOnly = num != 0
+                            word in skipWords -> g.skip = true
+                            star -> g.skip = true
+                            word == "par" || word == "line" -> emit("\n")
+                            word == "tab" -> emit("\t")
+                            word == "u" && num != null -> { emit(String(Character.toChars(if (num < 0) num + 65536 else num))); skipNext = 1 }
+                        }
+                        star = false
+                    }
+                    else -> i++
+                }
+            }
+            '\r', '\n' -> i++
+            else -> { emit(c.toString()); i++ }
+        }
+    }
+    return out.toString().takeIf { it.contains('<') }
+}

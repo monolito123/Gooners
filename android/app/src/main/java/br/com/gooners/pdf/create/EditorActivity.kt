@@ -9,7 +9,12 @@ import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
+import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
+import android.text.style.AbsoluteSizeSpan
 import android.text.style.AlignmentSpan
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
 import android.text.style.BulletSpan
 import android.text.style.CharacterStyle
 import android.text.style.ImageSpan
@@ -37,6 +42,7 @@ import br.com.gooners.pdf.tools.PdfTools
 import br.com.gooners.pdf.ui.Dialogs
 import br.com.gooners.pdf.ui.SaveHelper
 import br.com.gooners.pdf.ui.dp
+import br.com.gooners.pdf.util.BitmapUtil
 import br.com.gooners.pdf.util.DocKind
 import br.com.gooners.pdf.util.FileUtil
 import com.google.android.material.appbar.MaterialToolbar
@@ -60,6 +66,8 @@ class EditorActivity : AppCompatActivity() {
         const val EXTRA_HTML = "html"
         const val EXTRA_TITLE = "title"
         const val EXTRA_SOURCE_NAME = "source_name"
+        /** com intent.data: abre esse documento para edição e salva de volta no mesmo formato */
+        const val EXTRA_SOURCE_KIND = "source_kind"
     }
 
     private lateinit var body: EditText
@@ -68,14 +76,19 @@ class EditorActivity : AppCompatActivity() {
     private val draft by lazy { File(filesDir, "draft.html") }
     private val draftTitle by lazy { File(filesDir, "draft_title.txt") }
     private var useDraft = true
+    private var sourceKind: DocKind? = null
+    private var sourceName = ""
+    private var dirty = false
 
     private val pickDoc = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { importDoc(it) } }
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { insertImage(it) } }
+    private val saveCopy = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri -> uri?.let { writeSource(it, sourceKind ?: DocKind.DOCX, true) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_editor)
         val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
-        toolbar.setNavigationOnClickListener { finish() }
+        toolbar.setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
         toolbar.inflateMenu(R.menu.editor)
         toolbar.setOnMenuItemClickListener { onMenu(it.itemId); true }
         body = findViewById(R.id.body)
@@ -93,14 +106,33 @@ class EditorActivity : AppCompatActivity() {
             }
         }
         intent.getStringExtra(EXTRA_TITLE)?.let { title.setText(it) }
-        if (intent.data != null && text != null) toolbar.menu.findItem(R.id.m_save_orig).isVisible = true
-        toolbar.title = if (useDraft) "Novo documento" else "Editar documento"
+        sourceKind = intent.getStringExtra(EXTRA_SOURCE_KIND)?.let { runCatching { DocKind.valueOf(it) }.getOrNull() }
+        if (intent.data != null && text != null) sourceKind = DocKind.TEXT
+        sourceName = intent.getStringExtra(EXTRA_SOURCE_NAME) ?: intent.data?.let { FileUtil.displayName(this, it) } ?: ""
+        toolbar.menu.findItem(R.id.m_save_orig).isVisible = sourceKind != null
+        toolbar.title = if (sourceKind != null) sourceName else if (useDraft) "Novo documento" else "Editar documento"
+        if (sourceKind != null && text == null) { useDraft = false; loadSource() }
+        body.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) { dirty = true }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (sourceKind == null || !dirty) { finish(); return }
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this@EditorActivity).setTitle("Salvar alterações?")
+                    .setPositiveButton("Salvar") { _, _ -> saveSource() }
+                    .setNegativeButton("Descartar") { _, _ -> finish() }
+                    .setNeutralButton("Cancelar", null).show()
+            }
+        })
     }
 
-    /** Remove imagens e normaliza títulos vindos de HTML. */
-    private fun cleanSpans(s: Spanned): Spannable {
+    /** Remove imagens sem conteúdo e normaliza títulos vindos de HTML. */
+    private fun cleanSpans(s: Spanned, keepImages: Boolean = false): Spannable {
         val sb = SpannableStringBuilder(s)
         sb.getSpans(0, sb.length, ImageSpan::class.java).forEach { sp ->
+            if (keepImages && (sp.drawable as? BitmapDrawable)?.bitmap != null) return@forEach
             val a = sb.getSpanStart(sp); val b = sb.getSpanEnd(sp); sb.removeSpan(sp); if (a in 0 until b) sb.replace(a, b, "")
         }
         sb.getSpans(0, sb.length, RelativeSizeSpan::class.java).forEach { sp ->
@@ -125,8 +157,13 @@ class EditorActivity : AppCompatActivity() {
         btn(R.drawable.ic_line, "Tachado") { toggle { StrikethroughSpan() } }
         btn(R.drawable.ic_text, "Título 1") { heading(1) }
         btn(R.drawable.ic_text, "Título 2") { heading(2) }
+        btn(R.drawable.ic_text_color, "Cor do texto") { colorSpan(false) }
+        btn(R.drawable.ic_highlight, "Marca-texto") { colorSpan(true) }
+        btn(R.drawable.ic_font, "Tamanho da fonte") { sizeSpan() }
         btn(R.drawable.ic_bullets, "Lista") { paragraphToggle(BulletSpan::class.java) { BulletSpan(dp(10)) } }
         btn(R.drawable.ic_toc, "Alinhar") { align() }
+        btn(R.drawable.ic_image, "Inserir imagem") { pickImage.launch("image/*") }
+        btn(R.drawable.ic_replace, "Localizar e substituir") { findReplace() }
         btn(R.drawable.ic_close, "Limpar formatação") { clearFormat() }
         btn(R.drawable.ic_undo, "Inserir data") {
             val d = java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG, java.util.Locale("pt", "BR")).format(java.util.Date())
@@ -195,14 +232,82 @@ class EditorActivity : AppCompatActivity() {
         Toast.makeText(this, when (next) { Layout.Alignment.ALIGN_CENTER -> "Centralizado"; Layout.Alignment.ALIGN_OPPOSITE -> "À direita"; else -> "À esquerda" }, Toast.LENGTH_SHORT).show()
     }
 
+    private fun colorSpan(background: Boolean) {
+        val (s, e) = selection() ?: return
+        Dialogs.color(this, if (background) 0xFFFDE047.toInt() else 0xFFDC2626.toInt()) { c ->
+            val t = body.text
+            if (background) t.getSpans(s, e, BackgroundColorSpan::class.java).forEach { t.removeSpan(it) } else t.getSpans(s, e, ForegroundColorSpan::class.java).forEach { t.removeSpan(it) }
+            t.setSpan(if (background) BackgroundColorSpan(c) else ForegroundColorSpan(c), s, e, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
+            dirty = true
+        }
+    }
+
+    private fun sizeSpan() {
+        val (s, e) = selection() ?: return
+        val sizes = listOf(10, 12, 14, 16, 18, 20, 24, 28, 32, 40)
+        Dialogs.choose(this, "Tamanho da fonte", sizes.map { "$it pt" }) { i ->
+            val t = body.text
+            t.getSpans(s, e, AbsoluteSizeSpan::class.java).forEach { t.removeSpan(it) }
+            t.setSpan(AbsoluteSizeSpan(sizes[i], true), s, e, Spanned.SPAN_EXCLUSIVE_INCLUSIVE)
+            dirty = true
+        }
+    }
+
+    private fun imageSpan(bmp: Bitmap): ImageSpan {
+        val maxW = (resources.displayMetrics.widthPixels - dp(48)).coerceAtLeast(200)
+        val d = BitmapDrawable(resources, bmp)
+        val w = minOf(maxW, bmp.width)
+        d.setBounds(0, 0, w, (bmp.height.toLong() * w / bmp.width).toInt().coerceAtLeast(1))
+        return ImageSpan(d)
+    }
+
+    private fun insertImage(uri: Uri) {
+        lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.IO) { BitmapUtil.decode(this@EditorActivity, uri, 1400) } ?: run { toast("Imagem ilegível"); return@launch }
+            val pos = body.selectionStart.coerceAtLeast(0)
+            val sb = SpannableStringBuilder("\uFFFC")
+            sb.setSpan(imageSpan(bmp), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            body.text.insert(pos, "\n")
+            body.text.insert(pos + 1, sb)
+            body.text.insert(pos + 2, "\n")
+            dirty = true
+        }
+    }
+
+    private fun findReplace() {
+        val find = Dialogs.field(this, "Localizar")
+        val repl = Dialogs.field(this, "Substituir por")
+        val case = android.widget.CheckBox(this).apply { text = "Diferenciar maiúsculas" }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setTitle("Localizar e substituir")
+            .setView(Dialogs.wrap(this, find, repl, case))
+            .setPositiveButton("Substituir tudo") { _, _ ->
+                val q = find.text.toString()
+                if (q.isEmpty()) return@setPositiveButton
+                val t = body.text
+                var n = 0
+                var i = t.toString().indexOf(q, 0, !case.isChecked)
+                while (i >= 0) { t.replace(i, i + q.length, repl.text); n++; i = t.toString().indexOf(q, i + repl.text.length, !case.isChecked) }
+                toast("$n substituições"); if (n > 0) dirty = true
+            }
+            .setNeutralButton("Localizar") { _, _ ->
+                val q = find.text.toString()
+                val i = body.text.toString().indexOf(q, body.selectionEnd.coerceAtLeast(0), !case.isChecked).let { if (it < 0) body.text.toString().indexOf(q, 0, !case.isChecked) else it }
+                if (i >= 0) { body.requestFocus(); body.setSelection(i, i + q.length) } else toast("Não encontrado")
+            }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+
     private fun clearFormat() {
         val (s, e) = selection() ?: return
         val t = body.text
-        t.getSpans(s, e, Any::class.java).filter { it is CharacterStyle || it is HeadingSpan || it is BulletSpan || it is AlignmentSpan }.forEach { t.removeSpan(it) }
+        t.getSpans(s, e, Any::class.java).filter { (it is CharacterStyle && it !is ImageSpan) || it is HeadingSpan || it is BulletSpan || it is AlignmentSpan }.forEach { t.removeSpan(it) }
     }
 
     // ------------------------------------------------------------------ modelo para exportação
-    private class Run(val text: String, val b: Boolean, val i: Boolean, val u: Boolean, val s: Boolean)
+    private class Run(val text: String, val b: Boolean, val i: Boolean, val u: Boolean, val s: Boolean,
+                      val color: Int? = null, val bg: Int? = null, val size: Int? = null, val image: Bitmap? = null)
     private class Para(val runs: List<Run>, val heading: Int, val bullet: Boolean, val align: Layout.Alignment?)
 
     private fun model(t: Editable): List<Para> {
@@ -222,10 +327,14 @@ class EditorActivity : AppCompatActivity() {
                 val a = list[k]; val b = list[k + 1]
                 if (b <= a) continue
                 val spans = t.getSpans(a, b, CharacterStyle::class.java).filter { t.getSpanStart(it) <= a && t.getSpanEnd(it) >= b }
-                runs += Run(str.substring(a, b),
+                val img = spans.filterIsInstance<ImageSpan>().firstOrNull()?.drawable?.let { (it as? BitmapDrawable)?.bitmap }
+                runs += Run(if (img != null) "" else str.substring(a, b),
                     spans.any { it is StyleSpan && (it.style == Typeface.BOLD || it.style == Typeface.BOLD_ITALIC) },
                     spans.any { it is StyleSpan && (it.style == Typeface.ITALIC || it.style == Typeface.BOLD_ITALIC) },
-                    spans.any { it is UnderlineSpan }, spans.any { it is StrikethroughSpan })
+                    spans.any { it is UnderlineSpan }, spans.any { it is StrikethroughSpan },
+                    spans.filterIsInstance<ForegroundColorSpan>().lastOrNull()?.foregroundColor,
+                    spans.filterIsInstance<BackgroundColorSpan>().lastOrNull()?.backgroundColor,
+                    spans.filterIsInstance<AbsoluteSizeSpan>().lastOrNull()?.size, img)
             }
             out += Para(runs, heading, bullet, align)
             start = end + 1
@@ -245,8 +354,15 @@ class EditorActivity : AppCompatActivity() {
             sb.append("<$tag$style>")
             if (p.runs.isEmpty()) sb.append("&nbsp;")
             for (r in p.runs) {
+                if (r.image != null) {
+                    val bo = java.io.ByteArrayOutputStream(); r.image.compress(Bitmap.CompressFormat.PNG, 100, bo)
+                    sb.append("<img src=\"data:image/png;base64,").append(android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP)).append("\">")
+                    continue
+                }
                 var s = X.esc(r.text)
                 if (r.b) s = "<b>$s</b>"; if (r.i) s = "<i>$s</i>"; if (r.u) s = "<u>$s</u>"; if (r.s) s = "<s>$s</s>"
+                val css = listOfNotNull(r.color?.let { "color:#%06X".format(it and 0xFFFFFF) }, r.bg?.let { "background:#%06X".format(it and 0xFFFFFF) }, r.size?.let { "font-size:${it}pt" })
+                if (css.isNotEmpty()) s = "<span style=\"${css.joinToString(";")}\">$s</span>"
                 sb.append(s)
             }
             sb.append("</$tag>")
@@ -280,7 +396,13 @@ class EditorActivity : AppCompatActivity() {
         val list = ArrayList<DocxPara>()
         if (docTitle.isNotBlank()) list += DocxPara(listOf(DocxRun(docTitle)), heading = 1)
         for (p in paras) list += DocxPara(
-            p.runs.map { DocxRun(it.text, it.b, it.i, it.u) },
+            p.runs.map { r ->
+                if (r.image != null) {
+                    val bo = java.io.ByteArrayOutputStream(); r.image.compress(Bitmap.CompressFormat.PNG, 100, bo)
+                    DocxRun("", image = bo.toByteArray(), imageW = r.image.width, imageH = r.image.height)
+                } else DocxRun(r.text, r.b, r.i, r.u, sizePt = r.size?.toFloat() ?: 0f, color = r.color?.let { "%06X".format(it and 0xFFFFFF) },
+                    strike = r.s, shade = r.bg?.let { "%06X".format(it and 0xFFFFFF) })
+            },
             heading = if (p.heading > 0) p.heading + 1 else 0,
             align = when (p.align) { Layout.Alignment.ALIGN_CENTER -> "center"; Layout.Alignment.ALIGN_OPPOSITE -> "right"; else -> null },
             bullet = p.bullet
@@ -355,16 +477,7 @@ class EditorActivity : AppCompatActivity() {
             R.id.m_html -> export("html")
             R.id.m_md -> export("md")
             R.id.m_txt -> export("txt")
-            R.id.m_save_orig -> intent.data?.let { uri ->
-                lifecycleScope.launch {
-                    val ok = withContext(Dispatchers.IO) {
-                        runCatching {
-                            (contentResolver.openOutputStream(uri, "wt") ?: throw IllegalStateException()).use { it.write(body.text.toString().toByteArray()) }
-                        }.isSuccess
-                    }
-                    Toast.makeText(this@EditorActivity, if (ok) "Arquivo salvo" else "Sem permissão para alterar o original — use Exportar", Toast.LENGTH_LONG).show()
-                }
-            }
+            R.id.m_save_orig -> saveSource()
             R.id.m_open -> pickDoc.launch(arrayOf("*/*"))
             R.id.m_new -> Dialogs.confirm(this, "Novo documento", "Descartar o texto atual?", "Descartar") {
                 body.setText(""); title.setText(""); draft.delete()
@@ -374,6 +487,75 @@ class EditorActivity : AppCompatActivity() {
                 val words = s.split(Regex("\\s+")).count { it.isNotBlank() }
                 Dialogs.message(this, "Contagem", "Palavras: $words\nCaracteres: ${s.length}\nCaracteres sem espaços: ${s.count { !it.isWhitespace() }}\nParágrafos: ${s.split('\n').count { it.isNotBlank() }}")
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ edição de arquivos existentes
+    private fun loadSource() {
+        val uri = intent.data ?: return
+        val kind = sourceKind ?: return
+        val pd = Dialogs.progress(this, "Abrindo para edição…")
+        lifecycleScope.launch {
+            try {
+                val spanned = withContext(Dispatchers.IO) {
+                    val f = FileUtil.copyToCache(this@EditorActivity, uri, "work", sourceName)
+                    when (kind) {
+                        DocKind.TEXT, DocKind.CODE, DocKind.CSV -> SpannableStringBuilder(DocumentConverter.readText(f))
+                        else -> DocumentConverter.load(this@EditorActivity, f, kind, sourceName).use { d ->
+                            val maxW = (resources.displayMetrics.widthPixels - dp(48)).coerceAtLeast(200)
+                            val html = HtmlPdfWriter.simplify(d.epub?.combinedHtml(DocumentConverter.BASE) ?: d.body)
+                            val getter = android.text.Html.ImageGetter { src ->
+                                val bytes = if (src.startsWith("data:")) android.util.Base64.decode(src.substringAfter(","), android.util.Base64.DEFAULT) else d.resource(src)
+                                val bmp = bytes?.let { b -> android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = 1 }) }
+                                bmp?.let { BitmapDrawable(resources, it).apply { val w = minOf(maxW, it.width); setBounds(0, 0, w, (it.height.toLong() * w / it.width).toInt().coerceAtLeast(1)) } }
+                            }
+                            cleanSpans(HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT, getter, null), keepImages = true)
+                        }
+                    }
+                }
+                body.setText(spanned)
+                dirty = false
+                if (title.text.isEmpty()) title.setText("")
+            } catch (e: Exception) {
+                Dialogs.message(this@EditorActivity, "Não foi possível abrir para edição", e.message ?: e.toString())
+            } finally { pd.dismiss() }
+        }
+    }
+
+    /** Formatos que conseguimos regravar sem perder conteúdo; os demais viram uma cópia nova. */
+    private fun saveSource() {
+        val uri = intent.data ?: return
+        val kind = sourceKind ?: return
+        when (kind) {
+            DocKind.TEXT, DocKind.CODE, DocKind.MARKDOWN, DocKind.HTML -> writeSource(uri, kind, false)
+            DocKind.DOCX -> Dialogs.choose(this, "Salvar documento Word", listOf("Salvar como uma cópia nova (recomendado)", "Sobrescrever o original")) { i ->
+                if (i == 0) saveCopy.launch(FileUtil.baseName(sourceName) + "_editado.docx")
+                else Dialogs.confirm(this, "Sobrescrever o original", "Tabelas complexas, cabeçalhos, notas e estilos avançados do Word podem ser simplificados.", "Sobrescrever") { writeSource(uri, kind, false) }
+            }
+            else -> { toast("Este formato será salvo como Word (.docx)"); sourceKind = DocKind.DOCX; saveCopy.launch(FileUtil.baseName(sourceName) + ".docx") }
+        }
+    }
+
+    private fun writeSource(target: Uri, kind: DocKind, copy: Boolean) {
+        val t = SpannableStringBuilder(body.text)
+        val docTitle = title.text.toString().trim()
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val paras = model(t)
+                    val tmp = FileUtil.tempFile(this@EditorActivity, "out")
+                    when (kind) {
+                        DocKind.DOCX, DocKind.ODT, DocKind.RTF, DocKind.DOC -> toDocx(paras, docTitle, tmp)
+                        DocKind.HTML -> tmp.writeText(toHtml(paras, docTitle))
+                        DocKind.MARKDOWN -> tmp.writeText(toMarkdown(paras, docTitle))
+                        else -> tmp.writeText(t.toString())
+                    }
+                    FileUtil.writeTo(this@EditorActivity, tmp, target)
+                    tmp.delete()
+                }.isSuccess
+            }
+            if (ok) { dirty = false; toast(if (copy) "Cópia salva" else "Documento salvo") }
+            else { toast("Sem permissão para gravar aqui — escolha onde salvar"); saveCopy.launch(FileUtil.baseName(sourceName) + (if (kind == DocKind.DOCX || kind.isOffice) ".docx" else "." + FileUtil.extension(sourceName))) }
         }
     }
 

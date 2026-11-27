@@ -47,6 +47,11 @@ interface PageHost {
     fun onTapEditText(page: Int, x: Float, y: Float)
     fun onSingleTap()
     fun onDoubleTap(view: PageView, x: Float, y: Float)
+    /** seleção de texto por toque longo (coordenadas em pontos da página) */
+    fun onSelectStart(page: Int, x: Float, y: Float)
+    fun onSelectDrag(page: Int, x: Float, y: Float)
+    fun onSelectEnd()
+    fun selectionRects(page: Int): List<RectF>
 }
 
 @SuppressLint("ViewConstructor")
@@ -63,6 +68,8 @@ class PageView(context: Context, private val host: PageHost) : View(context) {
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
     private val hlPaint = Paint().apply { color = 0x66FFC107; style = Paint.Style.FILL }
     private val curPaint = Paint().apply { color = 0x88FF5722.toInt(); style = Paint.Style.FILL }
+    private val selPaint = Paint().apply { color = 0x553B82F6; style = Paint.Style.FILL }
+    private var selecting = false
     private val placeholder = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFBDBDBD.toInt(); textAlign = Paint.Align.CENTER }
     private val density = resources.displayMetrics.density
 
@@ -80,6 +87,13 @@ class PageView(context: Context, private val host: PageHost) : View(context) {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean { host.onSingleTap(); return true }
         override fun onDoubleTap(e: MotionEvent): Boolean { host.onDoubleTap(this@PageView, e.x, e.y); return true }
+        override fun onLongPress(e: MotionEvent) {
+            if (host.tool != Tool.HAND || page < 0) return
+            selecting = true
+            parent?.requestDisallowInterceptTouchEvent(true)
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            host.onSelectStart(page, e.x / scale, e.y / scale)
+        }
     })
 
     fun bind(p: Int) {
@@ -117,6 +131,7 @@ class PageView(context: Context, private val host: PageHost) : View(context) {
         c.save()
         c.scale(s, s)
         for (r in host.searchRects(page)) c.drawRect(r, hlPaint)
+        for (r in host.selectionRects(page)) c.drawRect(r, selPaint)
         host.currentMatch(page)?.let { c.drawRect(it, curPaint) }
         val moving = if (dragMode >= 2) dragTarget else null
         for (a in host.annotations(page)) {
@@ -140,7 +155,16 @@ class PageView(context: Context, private val host: PageHost) : View(context) {
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (page < 0) return false
         val tool = host.tool
-        if (tool == Tool.HAND) return gestures.onTouchEvent(e)
+        if (tool == Tool.HAND) {
+            if (selecting) {
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_MOVE -> host.onSelectDrag(page, e.x / scale, e.y / scale)
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { selecting = false; host.onSelectEnd() }
+                }
+                return true
+            }
+            return gestures.onTouchEvent(e)
+        }
         val s = scale
         val x = e.x / s
         val y = e.y / s

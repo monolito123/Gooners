@@ -2,9 +2,13 @@ package br.com.gooners.pdf.convert
 
 /** CSV/TSV com aspas, quebras de linha em campos e detecção do separador (vírgula, ponto e vírgula, tab). */
 object CsvParser {
-    fun parse(text: String, maxRows: Int = 5000): List<List<String>> {
+    fun separator(text: String): Char {
         val firstLine = text.lineSequence().firstOrNull() ?: ""
-        val sep = listOf('\t', ';', ',', '|').maxByOrNull { c -> firstLine.count { it == c } } ?: ','
+        return listOf('\t', ';', ',', '|').maxByOrNull { c -> firstLine.count { it == c } }?.takeIf { c -> firstLine.contains(c) } ?: ','
+    }
+
+    fun parse(text: String, maxRows: Int = 5000): List<List<String>> {
+        val sep = separator(text)
         val rows = ArrayList<List<String>>()
         var row = ArrayList<String>()
         val cell = StringBuilder()

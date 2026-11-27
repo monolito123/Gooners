@@ -20,6 +20,7 @@ import br.com.gooners.pdf.R
 import br.com.gooners.pdf.convert.DocumentConverter
 import br.com.gooners.pdf.convert.HtmlDoc
 import br.com.gooners.pdf.create.EditorActivity
+import br.com.gooners.pdf.create.SheetEditorActivity
 import br.com.gooners.pdf.tools.ToolActivity
 import br.com.gooners.pdf.tools.ToolId
 import br.com.gooners.pdf.ui.Dialogs
@@ -97,15 +98,20 @@ class DocumentViewerActivity : AppCompatActivity() {
                     // documentos convertidos ficam offline; páginas HTML do usuário podem carregar imagens da web
                     return if (d.raw) null else WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
-                var bytes = d.resource(url) ?: return WebResourceResponse("text/plain", "utf-8", 404, "Not found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+                val vf = d.virtual(url)
+                var bytes = vf?.bytes ?: d.resource(url) ?: return WebResourceResponse("text/plain", "utf-8", 404, "Not found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
                 val path = url.substringBefore('#').substringBefore('?')
-                val mime = FileUtil.mimeOf(path).let { if (path.endsWith(".xhtml") || path.endsWith(".html") || path.endsWith(".htm")) "text/html" else it }
+                val mime = vf?.mime ?: FileUtil.mimeOf(path).let { if (path.endsWith(".xhtml") || path.endsWith(".html") || path.endsWith(".htm")) "text/html" else it }
                 if (mime == "text/html" && d.epub != null) bytes = injectStyle(String(bytes, Charsets.UTF_8)).toByteArray()
                 return WebResourceResponse(mime, "utf-8", ByteArrayInputStream(bytes))
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url.toString()
+                if (url.startsWith(DocumentConverter.BASE + "open/") || url.startsWith(DocumentConverter.BASE + "action/")) {
+                    handleAction(url)
+                    return true
+                }
                 if (url.startsWith(DocumentConverter.BASE)) {
                     // links internos de EPUB: acompanha o capítulo atual
                     doc?.epub?.let { b ->
@@ -145,6 +151,11 @@ class DocumentViewerActivity : AppCompatActivity() {
                 file = f
                 val d = withContext(Dispatchers.IO) { DocumentConverter.load(this@DocumentViewerActivity, f, kind, name) }
                 doc = d
+                if (d.redirectPdf != null) {
+                    Router.openFile(this@DocumentViewerActivity, d.redirectPdf)
+                    finish()
+                    return@launch
+                }
                 if (d.epub != null) {
                     toolbar.title = d.title
                     epubBar.visibility = View.VISIBLE
@@ -160,6 +171,33 @@ class DocumentViewerActivity : AppCompatActivity() {
             } finally {
                 progress.visibility = View.GONE
             }
+        }
+    }
+
+    /** Links especiais do HTML gerado: anexos, instalar APK, ver conteúdo do pacote, abrir com outro app. */
+    private fun handleAction(url: String) {
+        val d = doc ?: return
+        val f = file ?: return
+        when {
+            url.startsWith(DocumentConverter.BASE + "open/") -> {
+                val vf = d.virtual(url) ?: return
+                lifecycleScope.launch {
+                    val out = withContext(Dispatchers.IO) {
+                        File(FileUtil.dir(this@DocumentViewerActivity, "tmp"), vf.name.ifBlank { "anexo" }).also { it.writeBytes(vf.bytes) }
+                    }
+                    Router.openFile(this@DocumentViewerActivity, out)
+                }
+            }
+            url.endsWith("action/install") -> try {
+                val apk = if (f.name.endsWith(".apk", true)) f else File(f.parentFile, f.nameWithoutExtension + ".apk").also { f.copyTo(it, true) }
+                startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(FileUtil.uriFor(this, apk), "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            } catch (e: Exception) {
+                toast("Não foi possível iniciar a instalação: ${e.message}")
+            }
+            url.endsWith("action/browse") -> startActivity(Intent(this, ArchiveActivity::class.java).setData(android.net.Uri.fromFile(f))
+                .putExtra(Router.EXTRA_NAME, name).putExtra(Router.EXTRA_KIND, DocKind.ZIP.name))
+            url.endsWith("action/other") -> intent.data?.let { FileUtil.openWithOtherApp(this, it, FileUtil.mimeOf(name)) }
         }
     }
 
@@ -206,8 +244,15 @@ class DocumentViewerActivity : AppCompatActivity() {
                 val pm = getSystemService(PRINT_SERVICE) as PrintManager
                 pm.print(FileUtil.baseName(name), web.createPrintDocumentAdapter(FileUtil.baseName(name)), null)
             }
-            R.id.m_edit -> file?.let { f ->
-                lifecycleScope.launch {
+            R.id.m_edit -> when (kind) {
+                DocKind.CSV, DocKind.XLSX, DocKind.XLS, DocKind.ODS -> startActivity(Intent(this, SheetEditorActivity::class.java).setData(intent.data)
+                    .putExtra(Router.EXTRA_NAME, name).putExtra(Router.EXTRA_KIND, kind.name)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                DocKind.DOCX, DocKind.ODT, DocKind.RTF, DocKind.DOC, DocKind.MARKDOWN, DocKind.HTML -> startActivity(Intent(this, EditorActivity::class.java).setData(intent.data)
+                    .putExtra(EditorActivity.EXTRA_SOURCE_KIND, kind.name).putExtra(EditorActivity.EXTRA_SOURCE_NAME, name)
+                    .putExtra(EditorActivity.EXTRA_TITLE, "")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                else -> lifecycleScope.launch {
                     val html = withContext(Dispatchers.IO) {
                         val d = doc ?: return@withContext null
                         if (d.epub != null) d.epub.combinedHtml("") else d.body

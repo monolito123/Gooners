@@ -6,7 +6,7 @@
     <item android:id="@+id/m_html" android:title="Exportar HTML" />
     <item android:id="@+id/m_md" android:title="Exportar Markdown" />
     <item android:id="@+id/m_txt" android:title="Exportar texto (.txt)" />
-    <item android:id="@+id/m_save_orig" android:title="Salvar no arquivo original" android:visible="false" />
+    <item android:id="@+id/m_save_orig" android:icon="@drawable/ic_save" android:title="Salvar no arquivo" android:visible="false" app:showAsAction="always" />
     <item android:id="@+id/m_open" android:title="Abrir documento…" />
     <item android:id="@+id/m_new" android:title="Novo documento" />
     <item android:id="@+id/m_stats" android:title="Contagem de palavras" />

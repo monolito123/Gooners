@@ -29,6 +29,7 @@ import br.com.gooners.pdf.edit.PdfBoxUtil
 import br.com.gooners.pdf.ocr.OcrHelper
 import br.com.gooners.pdf.organize.OrganizeActivity
 import br.com.gooners.pdf.ui.Dialogs
+import br.com.gooners.pdf.ui.OpenLink
 import br.com.gooners.pdf.ui.Router
 import br.com.gooners.pdf.ui.SaveHelper
 import br.com.gooners.pdf.ui.dp
@@ -109,6 +110,9 @@ class ToolActivity : AppCompatActivity() {
         tool = runCatching { ToolId.valueOf(intent.getStringExtra(EXTRA_TOOL) ?: "") }.getOrNull() ?: run { finish(); return }
         when (tool) {
             ToolId.NEW_DOC -> { startActivity(Intent(this, EditorActivity::class.java)); finish(); return }
+            ToolId.NEW_SHEET -> { startActivity(Intent(this, br.com.gooners.pdf.create.SheetEditorActivity::class.java).putExtra(Router.EXTRA_NAME, "Planilha.xlsx")); finish(); return }
+            ToolId.NEW_TEXT -> { startActivity(Intent(this, br.com.gooners.pdf.create.CodeEditorActivity::class.java).putExtra(br.com.gooners.pdf.create.CodeEditorActivity.EXTRA_NEW, true).putExtra(Router.EXTRA_NAME, "novo.txt")); finish(); return }
+            ToolId.LIBRARY -> { startActivity(Intent(this, br.com.gooners.pdf.ui.DeviceFilesActivity::class.java)); finish(); return }
             else -> {}
         }
         setContentView(R.layout.activity_tool)
@@ -128,6 +132,7 @@ class ToolActivity : AppCompatActivity() {
             setOnClickListener { pick() }
         }
         if (tool.input == Input.NONE) findViewById<View>(R.id.filesCard).visibility = View.GONE
+        if (tool == ToolId.OPEN_LINK) { OpenLink.ask(this); runBtn.visibility = View.GONE; findViewById<TextView>(R.id.desc).text = tool.desc + "\n\nToque em voltar para sair."; }
         buildOptions()
 
         val path = intent.getStringExtra(EXTRA_FILE)
@@ -150,6 +155,9 @@ class ToolActivity : AppCompatActivity() {
             Input.PDFS -> pickMany.launch(arrayOf("application/pdf"))
             Input.IMAGES -> pickMany.launch(arrayOf("image/*"))
             Input.DOCUMENT, Input.IMAGE_OR_PDF -> pickOne.launch(arrayOf("*/*"))
+            Input.FILES -> pickMany.launch(arrayOf("*/*"))
+            Input.IMAGE -> pickOne.launch(arrayOf("image/*"))
+            Input.MEDIA -> pickMany.launch(arrayOf("video/*", "audio/*", "application/ogg", "application/x-mpegURL", "audio/x-mpegurl", "*/*"))
             Input.NONE -> {}
         }
     }
@@ -169,12 +177,44 @@ class ToolActivity : AppCompatActivity() {
             }
             finish(); return
         }
+        when (tool) {
+            ToolId.IMAGE_EDIT -> {
+                Router.persist(this, uris[0])
+                startActivity(Intent(this, br.com.gooners.pdf.image.ImageEditorActivity::class.java).setData(uris[0])
+                    .putExtra(Router.EXTRA_NAME, FileUtil.displayName(this, uris[0])).putExtra(br.com.gooners.pdf.image.ImageEditorActivity.EXTRA_ORIGINAL, uris[0].toString())
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                finish(); return
+            }
+            ToolId.UNZIP -> { Router.persist(this, uris[0]); Router.open(this, uris[0]); finish(); return }
+            ToolId.PLAY_MEDIA -> {
+                uris.forEach { Router.persist(this, it) }
+                if (uris.size == 1) Router.open(this, uris[0])
+                else br.com.gooners.pdf.player.PlayerActivity.playList(this, uris, uris.map { FileUtil.baseName(FileUtil.displayName(this, it)) }, 0)
+                finish(); return
+            }
+            ToolId.EDIT_DOC -> {
+                val u = uris[0]
+                Router.persist(this, u)
+                val n = FileUtil.displayName(this, u)
+                val k = DocKind.detect(this, u, n)
+                val i = when (k) {
+                    DocKind.CSV, DocKind.XLSX, DocKind.XLS, DocKind.ODS -> Intent(this, br.com.gooners.pdf.create.SheetEditorActivity::class.java).putExtra(Router.EXTRA_KIND, k.name)
+                    DocKind.TEXT, DocKind.CODE, DocKind.UNKNOWN -> Intent(this, br.com.gooners.pdf.create.CodeEditorActivity::class.java)
+                    DocKind.PDF -> null
+                    else -> Intent(this, EditorActivity::class.java).putExtra(EditorActivity.EXTRA_SOURCE_KIND, k.name).putExtra(EditorActivity.EXTRA_SOURCE_NAME, n)
+                }
+                if (i == null) Router.open(this, u) { putExtra(Router.EXTRA_EDIT, true) }
+                else startActivity(i.setData(u).putExtra(Router.EXTRA_NAME, n).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                finish(); return
+            }
+            else -> {}
+        }
         if (tool.input == Input.PDF || tool.input == Input.DOCUMENT) inputs.clear()
         lifecycleScope.launch {
             status.text = "Carregando…"
             for (u in uris) {
                 val name = FileUtil.displayName(this@ToolActivity, u)
-                if (tool.input == Input.IMAGES) { inputs += InFile(null, u, name); continue }
+                if (tool.input == Input.IMAGES || tool.input == Input.FILES) { inputs += InFile(null, u, name); continue }
                 try {
                     val f = withContext(Dispatchers.IO) { FileUtil.copyToCache(this@ToolActivity, u, "work", name) }
                     inputs += InFile(f, u, name)
@@ -258,7 +298,7 @@ class ToolActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------------ campos de opções
     private fun label(t: String) = options.addView(TextView(this).apply {
-        text = t; setPadding(0, dp(12), 0, dp(2)); setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+        text = t; setPadding(0, dp(12), 0, dp(2)); androidx.core.widget.TextViewCompat.setTextAppearance(this, com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
     })
 
     private fun text(lbl: String, hint: String = "", initial: String = "", type: Int = InputType.TYPE_CLASS_TEXT): EditText {
@@ -526,6 +566,24 @@ class ToolActivity : AppCompatActivity() {
                     Result(listOf(out), "PDF criado com ${inputs.size} imagem(ns).")
                 }
             }
+            ToolId.ZIP_CREATE -> action = { p ->
+                require(inputs.isNotEmpty()) { "Escolha os arquivos" }
+                val out = outFile(if (inputs.size == 1) "${base()}.zip" else "Arquivos_${stamp()}.zip")
+                val used = HashSet<String>()
+                java.util.zip.ZipOutputStream(out.outputStream().buffered()).use { z ->
+                    inputs.forEachIndexed { i, inf ->
+                        p("Compactando ${i + 1} de ${inputs.size}…", i / inputs.size.toFloat())
+                        var n = FileUtil.sanitize(inf.name)
+                        var k = 1
+                        while (!used.add(n.lowercase())) n = FileUtil.baseName(inf.name) + " (${k++})." + FileUtil.extension(inf.name)
+                        z.putNextEntry(java.util.zip.ZipEntry(n))
+                        FileUtil.open(this, inf.uri!!).use { it.copyTo(z, 64 * 1024) }
+                        z.closeEntry()
+                    }
+                }
+                val total = inputs.sumOf { FileUtil.size(this, it.uri!!).coerceAtLeast(0) }
+                Result(listOf(out), "${inputs.size} arquivo(s) compactado(s): ${FileUtil.human(total)} → ${FileUtil.human(out.length())}.")
+            }
             ToolId.BLANK_PDF -> {
                 val n = text("Número de páginas", "1", "1", InputType.TYPE_CLASS_NUMBER)
                 val size = spinner("Tamanho", PdfTools.pageSizes.map { it.label })
@@ -618,7 +676,7 @@ class ToolActivity : AppCompatActivity() {
                 setBackgroundResource(R.drawable.bg_chip)
                 layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
             }
-            card.addView(TextView(this).apply { text = "${f.name}  ·  ${FileUtil.human(f.length())}"; setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall) })
+            card.addView(TextView(this).apply { text = "${f.name}  ·  ${FileUtil.human(f.length())}"; androidx.core.widget.TextViewCompat.setTextAppearance(this, com.google.android.material.R.style.TextAppearance_Material3_TitleSmall) })
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             fun b(t: String, fn: () -> Unit) = row.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply { text = t; setOnClickListener { fn() } })
             b("Abrir") { Router.openFile(this, f) }

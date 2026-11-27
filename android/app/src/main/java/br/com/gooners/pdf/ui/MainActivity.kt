@@ -31,11 +31,15 @@ import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 
 class MainActivity : AppCompatActivity() {
+    companion object {
+        const val EXTRA_LINK = "open_link"
+    }
+
     private lateinit var homeList: RecyclerView
     private lateinit var toolsList: RecyclerView
     private var recents: List<RecentFile> = emptyList()
     private var filter = 0
-    private val filters = listOf("Todos", "Favoritos", "PDF", "Office", "eBooks", "Imagens", "Texto")
+    private val filters = listOf("Todos", "Favoritos", "PDF", "Office", "eBooks", "Vídeos", "Músicas", "Imagens", "Texto", "Compactados")
     private val homeAdapter = HomeAdapter()
 
     private val openDoc = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -67,11 +71,17 @@ class MainActivity : AppCompatActivity() {
         }
         toolsList.adapter = toolsAdapter
 
+        intent.getStringExtra(EXTRA_LINK)?.let { OpenLink.open(this, it) }
         findViewById<BottomNavigationView>(R.id.nav).setOnItemSelectedListener {
             homeList.visibility = if (it.itemId == R.id.nav_home) View.VISIBLE else View.GONE
             toolsList.visibility = if (it.itemId == R.id.nav_tools) View.VISIBLE else View.GONE
             true
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(EXTRA_LINK)?.let { OpenLink.open(this, it) }
     }
 
     override fun onResume() {
@@ -85,9 +95,12 @@ class MainActivity : AppCompatActivity() {
             1 -> it.favorite
             2 -> it.kind == DocKind.PDF
             3 -> it.kind.isOffice || it.kind == DocKind.CSV
-            4 -> it.kind == DocKind.EPUB || it.kind == DocKind.FB2 || it.kind == DocKind.CBZ
-            5 -> it.kind == DocKind.IMAGE || it.kind == DocKind.SVG
-            6 -> it.kind in setOf(DocKind.TEXT, DocKind.CODE, DocKind.MARKDOWN, DocKind.HTML)
+            4 -> it.kind.isEbook
+            5 -> it.kind == DocKind.VIDEO
+            6 -> it.kind == DocKind.AUDIO || it.kind == DocKind.PLAYLIST
+            7 -> it.kind == DocKind.IMAGE || it.kind == DocKind.SVG
+            8 -> it.kind in setOf(DocKind.TEXT, DocKind.CODE, DocKind.MARKDOWN, DocKind.HTML)
+            9 -> it.kind.isArchive || it.kind == DocKind.APK
             else -> true
         }
     }
@@ -121,6 +134,7 @@ class MainActivity : AppCompatActivity() {
     private fun onMenu(id: Int) {
         when (id) {
             R.id.m_open -> openDoc.launch(arrayOf("*/*"))
+            R.id.m_link -> OpenLink.ask(this)
             R.id.m_theme -> {
                 val modes = listOf(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM, AppCompatDelegate.MODE_NIGHT_NO, AppCompatDelegate.MODE_NIGHT_YES)
                 Dialogs.single(this, "Tema do app", listOf("Seguir o sistema", "Claro", "Escuro"), modes.indexOf(Prefs.themeMode).coerceAtLeast(0)) {
@@ -133,23 +147,31 @@ class MainActivity : AppCompatActivity() {
             }
             R.id.m_clear -> Dialogs.confirm(this, "Limpar recentes", "Os favoritos são mantidos.", "Limpar") { Recents.clear(this); onResume() }
             R.id.m_formats -> Dialogs.message(this, "Formatos suportados", """
-                Leitura e edição completa
-                • PDF (inclusive protegido por senha e com formulários)
+                Ler e editar
+                • PDF (anotações, formulários, assinatura, páginas, senha)
+                • Word DOCX/DOC/ODT/RTF, Markdown, HTML e TXT (editor de documentos)
+                • Planilhas XLSX/XLS/ODS/CSV (editor de planilhas)
+                • Texto e código-fonte (editor com realce de sintaxe)
+                • Imagens JPG/PNG/WebP (recortar, girar, filtros)
 
-                Leitura
-                • Word: DOCX, DOC (texto) · OpenDocument: ODT, ODS, ODP
-                • Excel: XLSX, XLS (texto), CSV, TSV · PowerPoint: PPTX, PPT (texto)
-                • eBooks: EPUB, FB2 · Quadrinhos: CBZ
-                • RTF, Markdown, HTML, SVG, TXT, LOG, JSON, XML e código-fonte
-                • Imagens: JPG, PNG, WebP, GIF (animado), BMP, HEIC/AVIF*
-                • ZIP (abre os arquivos de dentro)
+                Ler
+                • PowerPoint PPTX/PPT, ODP, XPS, iWork (pré-visualização)
+                • E-books EPUB, MOBI, AZW, AZW3, PRC, FB2 · Quadrinhos CBZ/CBR/CB7/CBT
+                • E-mails EML, MSG (Outlook), MBOX · páginas MHT
+                • Contatos VCF · agenda ICS · notebooks IPYNB · bancos SQLite
+                • Fontes TTF/OTF/WOFF · APK · torrent
+                • Imagens GIF animado, HEIC/AVIF*, BMP, TIFF multipágina, PSD, TGA, PBM/PGM/PPM, RAW de câmeras, SVG, EPS
 
-                Criação e conversão
-                • Novo documento → PDF, DOCX, HTML, Markdown, TXT
-                • Qualquer formato acima → PDF · PDF → Word, imagens, texto e HTML
-                • Imagens e digitalização → PDF · OCR
+                Reproduzir
+                • Vídeo MP4, MKV, WebM, AVI, MOV, 3GP, TS/M2TS, FLV, MPEG, OGV*
+                • Áudio MP3, AAC/M4A, FLAC, OGG, Opus, WAV, AIFF, AMR, MIDI, AC3/E-AC3, TrueHD, ALAC*
+                • Listas M3U/M3U8 (IPTV), PLS, XSPF; transmissões HLS, DASH, RTSP e rádios web
+                • Legendas SRT, VTT, ASS/SSA
 
-                * conforme o suporte da versão do Android
+                Compactados
+                • ZIP, 7z, RAR (até v4), TAR, GZ, BZ2, XZ, LZMA, Z, DEB/AR, CPIO, ARJ
+
+                * conforme os decodificadores do aparelho e a versão do Android
             """.trimIndent())
             R.id.m_about -> Dialogs.message(this, "Gooners PDF ${BuildConfig.VERSION_NAME}",
                 "Leitor, editor e conversor de documentos leve, sem anúncios e que funciona offline.\n\n" +
@@ -158,7 +180,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun launchTool(t: ToolId) = ToolActivity.start(this, t)
+    private fun launchTool(t: ToolId) = if (t == ToolId.OPEN_LINK) OpenLink.ask(this) else ToolActivity.start(this, t)
 
     // ------------------------------------------------------------------ início
     private inner class HomeAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -176,7 +198,7 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = RecyclerView.LayoutParams(-1, -2)
                 setPadding(dp(32), dp(40), dp(32), dp(40))
                 textAlignment = View.TEXT_ALIGNMENT_CENTER
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                androidx.core.widget.TextViewCompat.setTextAppearance(this, com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
             }) {}
         }
 
@@ -198,11 +220,12 @@ class MainActivity : AppCompatActivity() {
             v.findViewById<View>(R.id.qOpen).setOnClickListener { openDoc.launch(arrayOf("*/*")) }
             v.findViewById<View>(R.id.qScan).setOnClickListener { launchTool(ToolId.SCAN) }
             v.findViewById<View>(R.id.qCreate).setOnClickListener {
-                Dialogs.choose(this@MainActivity, "Criar", listOf("Novo documento de texto", "PDF em branco (para escrever e desenhar)", "PDF a partir de imagens", "Digitalizar documento")) {
-                    launchTool(listOf(ToolId.NEW_DOC, ToolId.BLANK_PDF, ToolId.IMAGES_TO_PDF, ToolId.SCAN)[it])
-                }
+                val opts = listOf("Documento (Word, PDF, HTML…)" to ToolId.NEW_DOC, "Planilha (Excel, CSV)" to ToolId.NEW_SHEET,
+                    "Arquivo de texto ou código" to ToolId.NEW_TEXT, "PDF em branco (para escrever e desenhar)" to ToolId.BLANK_PDF,
+                    "PDF a partir de imagens" to ToolId.IMAGES_TO_PDF, "Digitalizar documento" to ToolId.SCAN, "Arquivo ZIP" to ToolId.ZIP_CREATE)
+                Dialogs.choose(this@MainActivity, "Criar", opts.map { it.first }) { launchTool(opts[it].second) }
             }
-            v.findViewById<View>(R.id.qImages).setOnClickListener { launchTool(ToolId.IMAGES_TO_PDF) }
+            v.findViewById<View>(R.id.qImages).setOnClickListener { OpenLink.ask(this@MainActivity) }
             v.findViewById<View>(R.id.deviceCard).setOnClickListener { startActivity(Intent(this@MainActivity, DeviceFilesActivity::class.java)) }
             val group = v.findViewById<ChipGroup>(R.id.filters)
             filters.forEachIndexed { i, f ->
@@ -224,7 +247,7 @@ class MainActivity : AppCompatActivity() {
             if (viewType == 0) object : RecyclerView.ViewHolder(TextView(parent.context).apply {
                 layoutParams = RecyclerView.LayoutParams(-1, -2)
                 setPadding(dp(8), dp(16), dp(8), dp(4))
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+                androidx.core.widget.TextViewCompat.setTextAppearance(this, com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
             }) {}
             else object : RecyclerView.ViewHolder(LayoutInflater.from(parent.context).inflate(R.layout.item_tool, parent, false)) {}
 

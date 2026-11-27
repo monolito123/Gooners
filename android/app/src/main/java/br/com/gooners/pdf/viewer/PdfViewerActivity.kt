@@ -585,7 +585,182 @@ class PdfViewerActivity : AppCompatActivity(), PageHost {
         visiblePageViews().forEach { it.invalidate() }
     }
 
-    override fun onSingleTap() = toggleBars()
+    override fun onSingleTap() {
+        if (selPage >= 0) { clearSelection(); return }
+        toggleBars()
+    }
+
+    // ---------- seleção de texto
+    private var selPage = -1
+    private var selAnchor = -1
+    private var selFrom = -1
+    private var selTo = -1
+    private var selText: PageText? = null
+    private var selRects: List<RectF> = emptyList()
+
+    override fun selectionRects(page: Int): List<RectF> = if (page == selPage) selRects else emptyList()
+
+    private fun nearestChar(pt: PageText, x: Float, y: Float): Int {
+        var best = -1
+        var bestD = Float.MAX_VALUE
+        for (i in pt.boxes.indices) {
+            val b = pt.boxes[i] ?: continue
+            if (b.contains(x, y)) return i
+            val dx = maxOf(b.left - x, 0f, x - b.right); val dy = maxOf(b.top - y, 0f, y - b.bottom)
+            val d = dx * dx + dy * dy * 4
+            if (d < bestD) { bestD = d; best = i }
+        }
+        return best
+    }
+
+    private fun wordBounds(t: String, i: Int): IntRange {
+        if (i !in t.indices) return i..i
+        var a = i; var b = i
+        while (a > 0 && t[a - 1].isLetterOrDigit()) a--
+        while (b < t.length - 1 && t[b + 1].isLetterOrDigit()) b++
+        return a..b
+    }
+
+    private fun updateSelectionRects() {
+        val pt = selText ?: return
+        val out = ArrayList<RectF>()
+        var cur: RectF? = null
+        for (i in selFrom..selTo) {
+            val b = pt.boxes.getOrNull(i) ?: continue
+            val c = cur
+            cur = if (c != null && kotlin.math.abs(b.centerY() - c.centerY()) < b.height() / 2) c.apply { union(b) } else { c?.let { out += it }; RectF(b) }
+        }
+        cur?.let { out += it }
+        selRects = out
+        pageView(selPage)?.invalidate()
+    }
+
+    override fun onSelectStart(page: Int, x: Float, y: Float) {
+        val t = pdfText ?: return
+        lifecycleScope.launch {
+            val pt = withContext(textDispatcher) { runCatching { t.page(page) }.getOrNull() }
+            if (pt == null || pt.text.isBlank()) { toast("Esta página não tem texto selecionável. Use o OCR para reconhecer o texto."); return@launch }
+            val i = nearestChar(pt, x, y)
+            if (i < 0) return@launch
+            if (selPage >= 0 && selPage != page) pageView(selPage)?.invalidate()
+            selPage = page; selText = pt; selAnchor = i
+            val w = wordBounds(pt.text, i)
+            selFrom = w.first; selTo = w.last
+            updateSelectionRects()
+        }
+    }
+
+    override fun onSelectDrag(page: Int, x: Float, y: Float) {
+        val pt = selText ?: return
+        if (page != selPage) return
+        val i = nearestChar(pt, x, y)
+        if (i < 0) return
+        val a = wordBounds(pt.text, selAnchor); val b = wordBounds(pt.text, i)
+        selFrom = minOf(a.first, b.first); selTo = maxOf(a.last, b.last)
+        updateSelectionRects()
+    }
+
+    override fun onSelectEnd() {
+        if (selPage < 0 || selText == null) return
+        showTextBar()
+    }
+
+    private fun selectedText(): String = selText?.text?.substring(selFrom.coerceAtLeast(0), (selTo + 1).coerceAtMost(selText?.text?.length ?: 0))?.trim().orEmpty()
+
+    private fun clearSelection() {
+        val p = selPage
+        selPage = -1; selText = null; selRects = emptyList()
+        findViewById<View>(R.id.textSelScroll).visibility = View.GONE
+        if (p >= 0) pageView(p)?.invalidate()
+    }
+
+    private fun markSelection(type: ShapeType) {
+        val p = selPage
+        if (p < 0) return
+        val color = when (type) { ShapeType.HIGHLIGHT -> highlightColor; ShapeType.STRIKE -> 0xFFDC2626.toInt(); else -> 0xFF2563EB.toInt() }
+        val added = selRects.map { r ->
+            if (type == ShapeType.HIGHLIGHT) ShapeAnnot(p, type, r.left, r.top, r.right, r.bottom, color, 1f)
+            else ShapeAnnot(p, type, r.left, r.top, r.right, if (type == ShapeType.UNDERLINE) r.bottom - 0.5f else r.bottom, color, 1.2f)
+        }
+        history.set(history.items + added)
+        changed(p)
+        clearSelection()
+        toast("Marcação adicionada — use \"Salvar alterações\" para gravar no PDF")
+    }
+
+    private fun showTextBar() {
+        val bar = findViewById<LinearLayout>(R.id.textSelBar)
+        bar.removeAllViews()
+        fun action(label: String, fn: () -> Unit) {
+            bar.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                text = label; isAllCaps = false; setOnClickListener { fn() }
+            })
+        }
+        action("Copiar") {
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("texto", selectedText()))
+            toast("Texto copiado"); clearSelection()
+        }
+        action("Destacar") { markSelection(ShapeType.HIGHLIGHT) }
+        action("Sublinhar") { markSelection(ShapeType.UNDERLINE) }
+        action("Riscar") { markSelection(ShapeType.STRIKE) }
+        action("Compartilhar") {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, selectedText()), "Compartilhar"))
+            clearSelection()
+        }
+        action("Ouvir") {
+            val text = selectedText()
+            val engine = tts
+            if (engine != null) engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sel")
+            else tts = TextToSpeech(this) { st -> if (st == TextToSpeech.SUCCESS) { tts?.language = Locale.getDefault(); tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sel") } }
+            clearSelection()
+        }
+        action("Pesquisar") {
+            val q = selectedText()
+            try { startActivity(Intent(Intent.ACTION_WEB_SEARCH).putExtra(android.app.SearchManager.QUERY, q)) }
+            catch (e: Exception) { runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q)))) } }
+            clearSelection()
+        }
+        action("✕") { clearSelection() }
+        findViewById<View>(R.id.textSelScroll).visibility = View.VISIBLE
+    }
+
+    // ---------- miniaturas
+    private fun showThumbnails() {
+        val c = core ?: return
+        val dlgList = RecyclerView(this)
+        val span = (resources.displayMetrics.widthPixels / dp(110)).coerceIn(3, 8)
+        dlgList.layoutManager = androidx.recyclerview.widget.GridLayoutManager(this, span)
+        val thumbs = HashMap<Int, Bitmap>()
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+        dlgList.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+            override fun getItemCount() = c.pageCount
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                val box = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(4), dp(6), dp(4), dp(6))
+                    layoutParams = RecyclerView.LayoutParams(-1, dp(150))
+                }
+                box.addView(ImageView(parent.context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setBackgroundColor(0xFFFFFFFF.toInt()) }, LinearLayout.LayoutParams(-1, 0, 1f))
+                box.addView(TextView(parent.context).apply { gravity = Gravity.CENTER; textSize = 12f })
+                return object : RecyclerView.ViewHolder(box) {}
+            }
+            override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
+                val box = h.itemView as LinearLayout
+                val iv = box.getChildAt(0) as ImageView
+                (box.getChildAt(1) as TextView).text = if (pos == currentPage) "▶ ${pos + 1}" else "${pos + 1}"
+                iv.setImageBitmap(thumbs[pos])
+                iv.tag = pos
+                if (thumbs[pos] == null) lifecycleScope.launch {
+                    val b = withContext(renderDispatcher) { runCatching { c.render(pos, dp(100)) }.getOrNull() } ?: return@launch
+                    thumbs[pos] = b
+                    if (iv.tag == pos) iv.setImageBitmap(b)
+                }
+                box.setOnClickListener { goToPage(pos); dialog.dismiss() }
+            }
+        }
+        dlgList.layoutParams = ViewGroup.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.7f).toInt())
+        dialog = MaterialAlertDialogBuilder(this).setTitle("Páginas (${c.pageCount})").setView(dlgList).setNegativeButton("Fechar", null).show()
+        dlgList.scrollToPosition(currentPage)
+    }
 
     override fun onDoubleTap(view: PageView, x: Float, y: Float) {
         val loc = IntArray(2); val root = IntArray(2)
@@ -874,6 +1049,8 @@ class PdfViewerActivity : AppCompatActivity(), PageHost {
             }
             R.id.m_share -> shareCurrent()
             R.id.m_toc -> showOutline()
+            R.id.m_thumbs -> showThumbnails()
+            R.id.m_save -> save(false)
             R.id.m_bookmarks -> showBookmarks()
             R.id.m_goto -> askGoTo()
             R.id.m_organize -> withSaved { f -> organizeLauncher.launch(Intent(this, OrganizeActivity::class.java).putExtra(OrganizeActivity.EXTRA_FILE, f.path).putExtra(OrganizeActivity.EXTRA_NAME, docName)) }

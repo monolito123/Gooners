@@ -42,7 +42,8 @@ class UiSmokeTest {
     @Test fun allTools() {
         val pdf = Fixtures.file("sample.pdf")
         for (t in ToolId.values()) {
-            if (t == ToolId.NEW_DOC || t == ToolId.SCAN || t == ToolId.ORGANIZE) continue
+            // estas ferramentas abrem outra tela direto
+            if (t in setOf(ToolId.NEW_DOC, ToolId.NEW_SHEET, ToolId.NEW_TEXT, ToolId.LIBRARY, ToolId.SCAN, ToolId.ORGANIZE)) continue
             val i = Intent(ApplicationProvider.getApplicationContext(), ToolActivity::class.java)
                 .putExtra("tool_id", t.name).putExtra("file", pdf.path).putExtra("name", "sample.pdf")
             val a = Robolectric.buildActivity(ToolActivity::class.java, i).setup().get()

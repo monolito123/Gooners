@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/m_queue" android:icon="@drawable/ic_queue" android:title="Fila" app:showAsAction="always" app:iconTint="#FFFFFF" />
+    <item android:id="@+id/m_aspect" android:icon="@drawable/ic_aspect" android:title="Ajuste da imagem" app:showAsAction="ifRoom" app:iconTint="#FFFFFF" />
+    <item android:id="@+id/m_subtitle" android:title="Carregar legenda (.srt, .vtt, .ass)…" />
+    <item android:id="@+id/m_speed" android:title="Velocidade" />
+    <item android:id="@+id/m_timer" android:title="Timer para desligar" />
+    <item android:id="@+id/m_eq" android:title="Equalizador" />
+    <item android:id="@+id/m_pip" android:title="Janela flutuante (PiP)" />
+    <item android:id="@+id/m_bg" android:checkable="true" android:title="Continuar o vídeo em segundo plano" />
+    <item android:id="@+id/m_rotate" android:checkable="true" android:title="Girar a tela conforme o vídeo" />
+    <item android:id="@+id/m_lock" android:title="Bloquear controles" />
+    <item android:id="@+id/m_info" android:title="Informações da mídia" />
+    <item android:id="@+id/m_share" android:title="Compartilhar" />
+    <item android:id="@+id/m_system" android:title="Abrir no player do sistema" />
+    <item android:id="@+id/m_other" android:title="Abrir com outro app" />
+</menu>

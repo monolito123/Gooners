@@ -1,5 +1,7 @@
 package br.com.gooners.pdf.reader
 
+import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.drawable.AnimatedImageDrawable
@@ -8,7 +10,6 @@ import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -18,7 +19,11 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
 import br.com.gooners.pdf.R
-import br.com.gooners.pdf.convert.ZipRes
+import br.com.gooners.pdf.archive.ArchiveEntry
+import br.com.gooners.pdf.archive.ArchiveReader
+import br.com.gooners.pdf.archive.Archives
+import br.com.gooners.pdf.image.ImageDecoders
+import br.com.gooners.pdf.image.ImageEditorActivity
 import br.com.gooners.pdf.ocr.OcrHelper
 import br.com.gooners.pdf.tools.PdfTools
 import br.com.gooners.pdf.ui.Dialogs
@@ -27,6 +32,7 @@ import br.com.gooners.pdf.ui.SaveHelper
 import br.com.gooners.pdf.util.BitmapUtil
 import br.com.gooners.pdf.util.DocKind
 import br.com.gooners.pdf.util.FileUtil
+import br.com.gooners.pdf.util.Prefs
 import com.google.android.material.appbar.MaterialToolbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,15 +40,24 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
 
-/** Visualizador de imagens (JPG, PNG, WebP, GIF animado, HEIC/AVIF, BMP) e de quadrinhos CBZ. */
+/**
+ * Visualizador de imagens: JPG, PNG, WebP, GIF animado, HEIC/AVIF, BMP, TIFF multipágina, PSD, TGA,
+ * Netpbm, RAW de câmeras, EPS; e quadrinhos CBZ/CBR/CB7/CBT.
+ */
 class ImageViewerActivity : AppCompatActivity() {
+    private sealed class Page {
+        class FromUri(val uri: Uri) : Page()
+        class FromFile(val file: File, val fmt: ImageDecoders.Fmt, val index: Int) : Page()
+        class FromArchive(val entry: ArchiveEntry) : Page()
+    }
+
     private lateinit var toolbar: MaterialToolbar
     private lateinit var pager: RecyclerView
     private val lm by lazy { LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false) }
-    private var pages: List<String> = emptyList() // caminhos no ZIP ou o próprio arquivo
-    private var zip: ZipRes? = null
-    private var single: Uri? = null
+    private var pages: List<Page> = emptyList()
+    private var archive: ArchiveReader? = null
     private var name = ""
+    private var key = ""
     private var current = 0
     private val saver = SaveHelper(this)
     private val maxDim by lazy { (max(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels) * 1.6f).toInt().coerceIn(1024, 4096) }
@@ -52,6 +67,7 @@ class ImageViewerActivity : AppCompatActivity() {
         setContentView(R.layout.activity_image)
         val uri = intent.data ?: run { finish(); return }
         name = intent.getStringExtra(Router.EXTRA_NAME) ?: FileUtil.displayName(this, uri)
+        key = FileUtil.keyFor(uri)
         val kind = runCatching { DocKind.valueOf(intent.getStringExtra(Router.EXTRA_KIND) ?: "") }.getOrDefault(DocKind.IMAGE)
         toolbar = findViewById(R.id.toolbar)
         toolbar.title = name
@@ -67,87 +83,144 @@ class ImageViewerActivity : AppCompatActivity() {
                 if (state == RecyclerView.SCROLL_STATE_IDLE) {
                     current = lm.findFirstCompletelyVisibleItemPosition().takeIf { it >= 0 } ?: current
                     updateTitle()
+                    if (pages.size > 1) Prefs.setLastPage("img_$key", current)
                 }
             }
         })
-        if (kind == DocKind.CBZ) {
-            lifecycleScope.launch {
-                try {
-                    val f = withContext(Dispatchers.IO) { FileUtil.copyToCache(this@ImageViewerActivity, uri, "work", name) }
-                    val z = withContext(Dispatchers.IO) { ZipRes(f) }
-                    zip = z
-                    pages = z.entries().filter { DocKind.fromName(it) == DocKind.IMAGE }.sortedWith(naturalOrder)
-                    pager.adapter?.notifyDataSetChanged()
-                    updateTitle()
-                } catch (e: Exception) {
-                    Dialogs.message(this@ImageViewerActivity, "Erro", e.message ?: e.toString())
+        lifecycleScope.launch {
+            try {
+                pages = withContext(Dispatchers.IO) { buildPages(uri, kind) }
+                pager.adapter?.notifyDataSetChanged()
+                if (pages.size > 1) {
+                    current = Prefs.lastPage("img_$key").coerceIn(0, pages.size - 1)
+                    lm.scrollToPosition(current)
                 }
+                updateTitle()
+                if (pages.isEmpty()) Dialogs.message(this@ImageViewerActivity, "Sem imagens", "Nenhuma imagem foi encontrada neste arquivo.")
+            } catch (e: Throwable) {
+                Dialogs.message(this@ImageViewerActivity, "Não foi possível abrir", e.message ?: e.toString())
             }
-        } else {
-            single = uri
-            pages = listOf(uri.toString())
         }
     }
 
-    private val naturalOrder = Comparator<String> { a, b ->
+    private fun buildPages(uri: Uri, kind: DocKind): List<Page> {
+        if (kind == DocKind.CBZ || kind == DocKind.ZIP || kind == DocKind.ARCHIVE) {
+            val f = FileUtil.copyToCache(this, uri, "work", name)
+            val a = Archives.open(f, name)
+            archive = a
+            return a.entries.filter { DocKind.fromName(it.name) == DocKind.IMAGE }.sortedWith { x, y -> natural(x.path, y.path) }.map { Page.FromArchive(it) }
+        }
+        val head = FileUtil.open(this, uri).use { s -> ByteArray(64).also { s.read(it) } }
+        val fmt = ImageDecoders.detect(head, name)
+        if (fmt == ImageDecoders.Fmt.PLATFORM) return listOf(Page.FromUri(uri))
+        val f = FileUtil.copyToCache(this, uri, "work", name)
+        val n = ImageDecoders.pageCount(f, fmt)
+        return (0 until n.coerceAtLeast(1)).map { Page.FromFile(f, fmt, it) }
+    }
+
+    private fun natural(a: String, b: String): Int {
         val ra = Regex("\\d+|\\D+").findAll(a.lowercase()).map { it.value }.toList()
         val rb = Regex("\\d+|\\D+").findAll(b.lowercase()).map { it.value }.toList()
         for (i in 0 until minOf(ra.size, rb.size)) {
             val x = ra[i]; val y = rb[i]
             val c = if (x[0].isDigit() && y[0].isDigit()) (x.toBigIntegerOrNull() ?: 0.toBigInteger()).compareTo(y.toBigIntegerOrNull() ?: 0.toBigInteger()) else x.compareTo(y)
-            if (c != 0) return@Comparator c
+            if (c != 0) return c
         }
-        ra.size - rb.size
+        return ra.size - rb.size
     }
 
     private fun updateTitle() {
         if (pages.size > 1) toolbar.subtitle = "${current + 1} / ${pages.size}"
     }
 
-    private fun decode(index: Int): Drawable? {
-        val s = single
-        if (s != null) {
+    private fun decode(page: Page): Drawable? = when (page) {
+        is Page.FromUri -> {
+            var d: Drawable? = null
             if (Build.VERSION.SDK_INT >= 28) {
                 try {
-                    val d = ImageDecoder.decodeDrawable(ImageDecoder.createSource(contentResolver, s)) { dec, info, _ ->
+                    d = ImageDecoder.decodeDrawable(ImageDecoder.createSource(contentResolver, page.uri)) { dec, info, _ ->
                         val m = max(info.size.width, info.size.height)
                         if (m > maxDim) { val f = maxDim.toFloat() / m; dec.setTargetSize((info.size.width * f).toInt(), (info.size.height * f).toInt()) }
                     }
                     if (d is AnimatedImageDrawable) d.start()
-                    return d
-                } catch (_: Exception) {
-                }
+                } catch (_: Exception) {}
             }
-            return BitmapUtil.decode(this, s, maxDim)?.let { BitmapDrawable(resources, it) }
+            d ?: BitmapUtil.decode(this, page.uri, maxDim)?.let { BitmapDrawable(resources, it) }
         }
-        val bytes = zip?.bytes(pages[index]) ?: return null
-        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
-        var sample = 1
-        while (max(o.outWidth, o.outHeight) / (sample * 2) >= maxDim) sample *= 2
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.let { BitmapDrawable(resources, it) }
+        is Page.FromFile -> ImageDecoders.decode(page.file, page.fmt, page.index, maxDim)?.let { BitmapDrawable(resources, it) }
+        is Page.FromArchive -> archive?.bytes(page.entry)?.let { bytes ->
+            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+            val bmp = if (o.outWidth > 0) BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = ImageDecoders.sample(o.outWidth, o.outHeight, maxDim) })
+            else {
+                // formato que o Android não decodifica (TIFF, TGA…) dentro do arquivo
+                val tmp = File(FileUtil.dir(this, "tmp"), page.entry.name).also { it.writeBytes(bytes) }
+                val fmt = ImageDecoders.detect(bytes.copyOf(64), page.entry.name)
+                runCatching { ImageDecoders.decode(tmp, fmt, 0, maxDim) }.getOrNull()
+            }
+            bmp?.let { BitmapDrawable(resources, it) }
+        }
     }
 
-    /** Arquivo local da imagem atual (para converter/compartilhar). */
-    private suspend fun currentFile(): File? = withContext(Dispatchers.IO) {
-        single?.let { return@withContext FileUtil.copyToCache(this@ImageViewerActivity, it, "work", name) }
-        val path = pages.getOrNull(current) ?: return@withContext null
-        val bytes = zip?.bytes(path) ?: return@withContext null
-        File(FileUtil.dir(this@ImageViewerActivity, "tmp"), path.substringAfterLast('/')).also { it.writeBytes(bytes) }
+    /** Imagem atual como arquivo comum (JPG/PNG/WebP), convertendo formatos exóticos. */
+    private suspend fun currentFile(forceStandard: Boolean = false): File? = withContext(Dispatchers.IO) {
+        val p = pages.getOrNull(current) ?: return@withContext null
+        when (p) {
+            is Page.FromUri -> FileUtil.copyToCache(this@ImageViewerActivity, p.uri, "work", name)
+            is Page.FromArchive -> archive?.let { a -> a.extract(p.entry, FileUtil.dir(this@ImageViewerActivity, "tmp/img")) }
+            is Page.FromFile -> if (!forceStandard && pages.size == 1) p.file else {
+                val bmp = ImageDecoders.decode(p.file, p.fmt, p.index, 4096) ?: return@withContext null
+                File(FileUtil.dir(this@ImageViewerActivity, "tmp"), FileUtil.baseName(name) + (if (pages.size > 1) "_p${p.index + 1}" else "") + ".png")
+                    .also { f -> f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            }
+        }
+    }
+
+    private suspend fun allFiles(): List<File> = withContext(Dispatchers.IO) {
+        pages.mapIndexedNotNull { i, p ->
+            when (p) {
+                is Page.FromUri -> FileUtil.copyToCache(this@ImageViewerActivity, p.uri, "work", name)
+                is Page.FromArchive -> archive?.extract(p.entry, FileUtil.dir(this@ImageViewerActivity, "tmp/img"))
+                is Page.FromFile -> ImageDecoders.decode(p.file, p.fmt, p.index, 3000)?.let { bmp ->
+                    File(FileUtil.dir(this@ImageViewerActivity, "tmp"), "pagina_${i + 1}.jpg").also { f -> f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) } }
+                }
+            }
+        }
     }
 
     private fun onMenu(id: Int) {
         when (id) {
             R.id.m_rotate -> (lm.findViewByPosition(current) as? FrameLayout)?.getChildAt(0)?.let { (it as ZoomImageView).rotateBy(90f) }
             R.id.m_share -> lifecycleScope.launch { currentFile()?.let { FileUtil.share(this@ImageViewerActivity, listOf(it)) } }
+            R.id.m_edit -> lifecycleScope.launch {
+                val f = currentFile(forceStandard = true) ?: return@launch
+                startActivity(Intent(this@ImageViewerActivity, ImageEditorActivity::class.java).setData(Uri.fromFile(f))
+                    .putExtra(Router.EXTRA_NAME, FileUtil.baseName(name) + "." + (f.extension.ifEmpty { "jpg" }))
+                    .putExtra(ImageEditorActivity.EXTRA_ORIGINAL, if (pages.size == 1 && pages[0] is Page.FromUri) intent.data?.toString() else null))
+            }
+            R.id.m_convert -> {
+                val formats = listOf("JPG", "PNG", "WebP")
+                Dialogs.choose(this, "Converter imagem para", formats) { i ->
+                    lifecycleScope.launch {
+                        val src = currentFile(forceStandard = true) ?: return@launch
+                        val out = withContext(Dispatchers.IO) {
+                            val bmp = BitmapUtil.decode(this@ImageViewerActivity, Uri.fromFile(src), 8192) ?: return@withContext null
+                            @Suppress("DEPRECATION")
+                            val cf = when (i) { 0 -> Bitmap.CompressFormat.JPEG; 1 -> Bitmap.CompressFormat.PNG; else -> Bitmap.CompressFormat.WEBP }
+                            val flat = if (i == 0 && bmp.hasAlpha()) Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888).also { b ->
+                                android.graphics.Canvas(b).apply { drawColor(android.graphics.Color.WHITE); drawBitmap(bmp, 0f, 0f, null) }
+                            } else bmp
+                            FileUtil.newOutFile(this@ImageViewerActivity, FileUtil.baseName(name) + "." + formats[i].lowercase())
+                                .also { f -> f.outputStream().use { flat.compress(cf, 92, it) } }
+                        }
+                        if (out == null) toast("Não foi possível converter") else saver.showResult(listOf(out), "Imagem convertida para ${formats[i]}.")
+                    }
+                }
+            }
             R.id.m_to_pdf -> lifecycleScope.launch {
                 val pd = Dialogs.progress(this@ImageViewerActivity, "Criando PDF…")
                 try {
-                    val files = withContext(Dispatchers.IO) {
-                        if (single != null) listOfNotNull(currentFile()) else pages.mapNotNull { p ->
-                            zip?.bytes(p)?.let { b -> File(FileUtil.dir(this@ImageViewerActivity, "tmp"), "cbz_" + p.substringAfterLast('/')).also { it.writeBytes(b) } }
-                        }
-                    }
+                    val files = allFiles()
                     val out = FileUtil.newOutFile(this@ImageViewerActivity, FileUtil.baseName(name) + ".pdf")
                     withContext(Dispatchers.IO) { PdfTools.imagesToPdf(this@ImageViewerActivity, files.map { Uri.fromFile(it) }, out, -1, 0f, 0.88f) { s, f -> runOnUiThread { pd.update(s, f) } } }
                     pd.dismiss()
@@ -159,7 +232,7 @@ class ImageViewerActivity : AppCompatActivity() {
             R.id.m_ocr -> lifecycleScope.launch {
                 val pd = Dialogs.progress(this@ImageViewerActivity, "Reconhecendo texto…")
                 try {
-                    val f = currentFile() ?: return@launch
+                    val f = currentFile(forceStandard = true) ?: return@launch
                     val text = withContext(Dispatchers.Default) {
                         val bmp = BitmapUtil.decode(this@ImageViewerActivity, Uri.fromFile(f), 2600) ?: throw IllegalStateException("Imagem ilegível")
                         OcrHelper.recognize(bmp).text
@@ -171,7 +244,7 @@ class ImageViewerActivity : AppCompatActivity() {
                         .setMessage(text.ifBlank { "(nenhum texto encontrado)" })
                         .setPositiveButton("Copiar") { _, _ ->
                             (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("ocr", text))
-                            Toast.makeText(this@ImageViewerActivity, "Copiado", Toast.LENGTH_SHORT).show()
+                            toast("Copiado")
                         }
                         .setNeutralButton("Salvar .txt") { _, _ -> saver.saveAs(out) }
                         .setNegativeButton("Fechar", null).show()
@@ -179,15 +252,24 @@ class ImageViewerActivity : AppCompatActivity() {
                     pd.dismiss(); Dialogs.message(this@ImageViewerActivity, "OCR indisponível", e.message ?: e.toString())
                 }
             }
+            R.id.m_goto -> if (pages.size > 1) Dialogs.input(this, "Ir para a página", "1 – ${pages.size}", type = android.text.InputType.TYPE_CLASS_NUMBER) { s ->
+                s.toIntOrNull()?.let { current = (it - 1).coerceIn(0, pages.size - 1); lm.scrollToPosition(current); updateTitle() }
+            }
             R.id.m_info -> lifecycleScope.launch {
                 val f = currentFile() ?: return@launch
                 val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(f.path, o)
-                Dialogs.message(this@ImageViewerActivity, "Informações", "Arquivo: ${f.name}\nDimensões: ${o.outWidth} × ${o.outHeight} px\nTamanho: ${FileUtil.human(f.length())}\nTipo: ${o.outMimeType ?: "?"}")
+                val d = (lm.findViewByPosition(current) as? FrameLayout)?.getChildAt(0)?.let { (it as ZoomImageView).drawable }
+                val w = if (o.outWidth > 0) o.outWidth else d?.intrinsicWidth ?: 0
+                val h = if (o.outHeight > 0) o.outHeight else d?.intrinsicHeight ?: 0
+                Dialogs.message(this@ImageViewerActivity, "Informações", "Arquivo: ${if (pages.size > 1) name else f.name}\nDimensões: $w × $h px\n" +
+                    "Tamanho: ${FileUtil.human(f.length())}\nTipo: ${o.outMimeType ?: FileUtil.extension(f.name).uppercase()}" + if (pages.size > 1) "\nPáginas: ${pages.size}" else "")
             }
-            R.id.m_other -> intent.data?.let { FileUtil.openWithOtherApp(this, it, if (single != null) "image/*" else "application/zip") }
+            R.id.m_other -> intent.data?.let { FileUtil.openWithOtherApp(this, it, if (archive == null) "image/*" else "application/zip") }
         }
     }
+
+    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
     private var barsVisible = true
     private fun toggleBars() {
@@ -210,9 +292,9 @@ class ImageViewerActivity : AppCompatActivity() {
             iv.setImageDrawable(null)
             iv.tag = pos
             lifecycleScope.launch {
-                val d = withContext(Dispatchers.IO) { try { decode(pos) } catch (e: Throwable) { null } }
+                val d = withContext(Dispatchers.IO) { try { decode(pages[pos]) } catch (e: Throwable) { null } }
                 if (iv.tag == pos) {
-                    if (d == null) Toast.makeText(this@ImageViewerActivity, "Não foi possível exibir esta imagem", Toast.LENGTH_SHORT).show()
+                    if (d == null) toast("Não foi possível exibir esta imagem")
                     iv.setImageDrawable(d)
                 }
             }
@@ -221,6 +303,6 @@ class ImageViewerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        zip?.close()
+        runCatching { archive?.close() }
     }
 }

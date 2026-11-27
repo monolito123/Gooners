@@ -1,69 +1,101 @@
 # Gooners PDF — app Android
 
-Leitor, editor, criador e conversor de documentos para Android 5.0+ (API 21 até 15). APK de ~4 MB, sem anúncios, funciona offline.
+Leitor, editor, player e conversor para quase todo tipo de arquivo, para Android 5.0+ (API 21 até 15).
+APK universal de ~8,5 MB (ou ~6,5 MB na versão só para celulares arm64), sem anúncios, funciona offline.
 
 ## Download
 
-Cada push que altera `android/` roda o workflow **App Android (APK)**, que executa os testes, gera o APK e publica em
-**Releases → `apk-latest`** (arquivo `GoonersPDF.apk`). O APK também fica como artefato da execução.
+Cada push que altera `android/` roda o workflow **App Android (APK)**, que executa os testes, gera os APKs e publica em
+**Releases → `apk-latest`**:
 
-## O que o app faz
+| Arquivo | Para quem |
+|---|---|
+| `GoonersPDF.apk` | qualquer aparelho (universal) |
+| `GoonersPDF-arm64.apk` | a maioria dos celulares atuais (menor) |
+| `GoonersPDF-armv7.apk` | celulares de 32 bits mais antigos |
 
-**Leitor de PDF**
-- Renderização nativa (pdfium do Android), rolagem contínua, zoom por pinça e duplo toque com nitidez total (renderiza só a região visível).
-- Busca com destaque (ignora acentos e maiúsculas), sumário/marcadores do PDF, marcadores próprios, ir para página, retoma a última página.
-- Modos noturno, sépia e alto contraste; tela cheia; manter a tela ligada; ler em voz alta (TTS); copiar o texto da página; OCR da página.
-- PDFs protegidos por senha e reparo automático de PDFs danificados. Imprimir pelo serviço de impressão do Android.
+## Abrir e reproduzir
 
-**Editor de PDF (recursos "Pro")**
-- Editar texto existente (toque na linha → corrige e reescreve no lugar), adicionar texto, caneta, marca-texto, destacar, sublinhar, riscar.
-- Retângulo, elipse, linha, seta, corretivo (branco), **tarja definitiva** (a página é achatada e o conteúdo some de verdade).
-- Assinatura desenhada (fica salva para reutilizar), imagens, carimbos (APROVADO, PAGO, CONFIDENCIAL, data…).
-- Selecionar, mover, redimensionar, duplicar e apagar anotações; desfazer/refazer.
-- Preencher formulários (texto, caixa de seleção, listas) com opção de achatar.
-- Organizar páginas: reordenar arrastando, girar, duplicar, excluir, extrair, inserir página em branco, outro PDF ou imagem.
-- Tudo é gravado como conteúdo real do PDF (aparece em qualquer leitor). Salva no arquivo original ou em "Salvar como".
+| Tipo | Formatos |
+|---|---|
+| PDF | leitura e edição completas (protegido por senha, formulários, reparo de arquivos danificados) |
+| Documentos | DOCX, DOC, ODT, RTF, Markdown, HTML, TXT, XPS, iWork (pré-visualização), Jupyter `.ipynb` |
+| Planilhas | XLSX, XLS, ODS, CSV/TSV, bancos SQLite |
+| Apresentações | PPTX, PPT, ODP/ODG |
+| E-books e quadrinhos | EPUB, MOBI, AZW, AZW3, PRC, FB2 · CBZ, CBR, CB7, CBT |
+| E-mail e agenda | EML, MSG (Outlook), MBOX, MHT · contatos VCF · agenda ICS |
+| Imagens | JPG, PNG, WebP, GIF animado, BMP, HEIC/AVIF*, SVG, TIFF multipágina (inclusive fax G3/G4), PSD, TGA, PBM/PGM/PPM, RAW de câmeras (CR2, NEF, ARW, DNG…), EPS |
+| Vídeo | MP4, MKV, WebM, AVI, MOV, 3GP, TS/M2TS, FLV, MPEG, OGV* |
+| Áudio | MP3, AAC/M4A, FLAC, OGG, Opus, WAV, AIFF, AMR, MIDI, AC3/E-AC3, TrueHD, ALAC* |
+| Transmissões | listas M3U/M3U8 (IPTV), PLS, XSPF; HLS, DASH, RTSP, rádios e vídeos da web |
+| Compactados | ZIP, 7z, RAR (até v4), TAR, GZ, BZ2, XZ, LZMA, Z, DEB/AR, CPIO, ARJ |
+| Outros | código-fonte com realce de sintaxe, fontes TTF/OTF/WOFF, APK (informações e instalação), torrent (com link magnet) |
 
-**Ferramentas**: mesclar, dividir (intervalos, a cada N, uma por página), extrair/excluir páginas, comprimir (4 níveis), tons de cinza,
-proteger com senha AES-256 e permissões, remover senha, marca d'água, numerar páginas, cabeçalho/rodapé, girar, metadados, achatar formulário.
+\* dependem dos decodificadores do aparelho e da versão do Android. O áudio AC3/E-AC3/TrueHD e similares usa o FFmpeg embutido.
 
-**Conversão**: PDF → Word (.docx), imagens (JPG/PNG, até 300 ppp), texto, HTML; extrair imagens; OCR (PDF pesquisável e imagem → texto);
-qualquer documento suportado → PDF; imagens/fotos → PDF; digitalizador com detecção de bordas (ML Kit; câmera comum como alternativa).
+O app aparece em "Abrir com" e "Compartilhar" para **qualquer** arquivo e também abre links compartilhados de navegadores.
 
-**Criação**: editor de documentos (negrito, itálico, sublinhado, tachado, títulos, listas, alinhamento, rascunho automático) que exporta
-PDF, DOCX, HTML, Markdown e TXT; PDF em branco liso, pautado, quadriculado ou pontilhado.
+## Player de vídeo e música
 
-**Outros formatos que o app lê**: DOCX, DOC*, ODT, RTF, XLSX, XLS*, ODS, CSV/TSV, PPTX, PPT*, ODP, EPUB (com sumário e capítulos),
-FB2, CBZ (quadrinhos), Markdown, HTML, SVG, TXT/LOG/JSON/XML e código-fonte (com busca, números de linha, formatar JSON),
-imagens (JPG, PNG, WebP, GIF animado, BMP, HEIC/AVIF conforme o Android) e ZIP (abre os arquivos de dentro).
-\* formatos binários 97-2003: só o texto.
+- Reprodução em segundo plano com controles na notificação, na tela de bloqueio e em fones Bluetooth.
+- Gestos: deslizar à esquerda/direita da tela para brilho/volume, horizontal para avançar, toque duplo para ±10 s.
+- Velocidade (0,25× a 3×), faixas de áudio e legendas embutidas, legendas externas (SRT, VTT, ASS), ajuste da imagem,
+  janela flutuante (PiP), bloqueio de toques, giro automático, timer para desligar, equalizador, fila e repetição/aleatório.
+- Continua de onde parou em vídeos e áudios longos.
+- Se o player principal não reconhecer um arquivo, ele pode ser aberto no reprodutor do próprio Android.
 
-Também aparece em "Abrir com" e "Compartilhar" de outros apps e pode listar todos os documentos do aparelho (permissão opcional).
+## Editar e criar
+
+- **PDF**: editar linhas de texto existentes, texto, caneta, marca-texto, formas, assinatura, imagens, carimbos, corretivo,
+  tarja definitiva, formulários, organizar páginas; seleção de texto com toque longo (copiar, destacar, sublinhar, riscar, ouvir, pesquisar);
+  miniaturas das páginas.
+- **Documentos**: editor com negrito, itálico, sublinhado, cores, marca-texto, tamanhos, títulos, listas, alinhamento, imagens e
+  localizar/substituir; salva de volta em DOCX, HTML, Markdown ou TXT, ou exporta para PDF.
+- **Planilhas**: edita células, insere/exclui linhas e colunas, ordena, várias planilhas; salva em XLSX ou CSV.
+- **Texto e código**: localizar/substituir, desfazer/refazer, realce de sintaxe, quebra de linha, salvar no arquivo original.
+- **Imagens**: recortar (com proporções), girar, espelhar, redimensionar, filtro de documento preto e branco, brilho/contraste/saturação.
+- Ferramentas de PDF (mesclar, dividir, comprimir, senha, marca d'água, numeração, OCR, conversões…), digitalizador, imagens → PDF,
+  compactar em ZIP e extrair qualquer formato compactado (mantendo as pastas).
+
+## Biblioteca e links
+
+- Biblioteca do aparelho com abas de documentos, vídeos, músicas (com capas), imagens e compactados (permissões opcionais).
+- "Abrir link": transmissões vão para o player; documentos são baixados e abertos no leitor certo.
 
 ## Compilar
 
 ```bash
 cd android
-./gradlew assembleRelease        # APK em app/build/outputs/apk/release/
-./gradlew testDebugUnitTest      # testes (Robolectric) de conversores, ferramentas de PDF e telas
+./gradlew assembleRelease        # APKs em app/build/outputs/apk/release/ (universal e por processador)
+./gradlew testDebugUnitTest      # 43 testes (Robolectric): formatos, ferramentas de PDF, compactados, imagens, playlists e telas
 ```
 
-Requer JDK 17 e Android SDK 35. Sem as variáveis `GPDF_KEYSTORE*`, o release é assinado com a chave de debug (instalável, mas
-cada máquina gera uma assinatura diferente). Para assinatura fixa no CI, crie os secrets `GPDF_KEYSTORE_BASE64`
-(`base64 -w0 sua-chave.jks`), `GPDF_KEYSTORE_PASSWORD`, `GPDF_KEY_ALIAS` e `GPDF_KEY_PASSWORD`.
+Requer JDK 17 e Android SDK 35. Sem as variáveis `GPDF_KEYSTORE*`, o release local é assinado com a chave de debug; no CI, com uma
+chave gerada e guardada em cache. Para uma assinatura própria fixa, crie os secrets `GPDF_KEYSTORE_BASE64` (`base64 -w0 sua-chave.jks`),
+`GPDF_KEYSTORE_PASSWORD`, `GPDF_KEY_ALIAS` e `GPDF_KEY_PASSWORD`.
 
 ## Arquitetura
 
 | Pacote | Conteúdo |
 |---|---|
-| `viewer/` | `PdfViewerActivity` (leitor/editor), `PdfCore` (PdfRenderer), `PageView` (página + anotações), `ZoomLayout`, `PdfText` (texto com posições) |
-| `edit/` | Modelo de anotações, `PdfSaver` (grava no PDF via PdfBox), assinatura, formulários, geometria de páginas giradas |
-| `tools/` | `PdfTools` (todas as operações), `ToolActivity` (tela genérica de ferramentas), digitalizador |
-| `convert/` | Leitores DOCX/XLSX/PPTX/ODF/EPUB/RTF/FB2/Markdown/CSV → HTML, `HtmlPdfWriter` (PDF vetorial), `DocxWriter` |
-| `reader/` | Leitores de documentos (WebView offline), texto/código, imagens/CBZ e ZIP |
-| `create/` | Editor de documentos |
-| `organize/` | Organizar páginas |
-| `ui/`, `util/` | Tela inicial, recentes/favoritos, roteamento por formato, diálogos |
+| `viewer/` | Leitor/editor de PDF (`PdfViewerActivity`), renderização nativa, seleção de texto, zoom |
+| `edit/` | Anotações, gravação no PDF (PdfBox), assinatura, formulários |
+| `player/` | `PlaybackService` (ExoPlayer + sessão de mídia), `PlayerActivity`, listas de reprodução, player do sistema |
+| `archive/` | Leitura de ZIP, 7z, RAR, TAR e demais formatos compactados |
+| `image/` | Decodificadores (TIFF, PSD, TGA, Netpbm, RAW, EPS) e editor de imagens |
+| `convert/` | Conversores para HTML (Office, OLE2/CFB para formatos 97-2003, Outlook, MIME, MOBI, XPS, EPUB…), gravadores DOCX/XLSX/PDF |
+| `reader/` | Leitores de documentos, texto/código, imagens/quadrinhos e compactados |
+| `create/` | Editores de documento, planilha e texto/código; realce de sintaxe |
+| `tools/` | Ferramentas de PDF e a tela genérica de ferramentas |
+| `ui/`, `util/` | Tela inicial, biblioteca, abrir link, roteamento por formato, recentes |
 
-Bibliotecas: AndroidX, Material Components, PdfBox-Android (Apache 2.0) e ML Kit via Google Play Services (OCR e digitalizador;
-os modelos são baixados pelo sistema, então não pesam no APK). Sem bibliotecas nativas próprias: um único APK serve para todos os processadores.
+Bibliotecas: AndroidX, Material Components, Media3/ExoPlayer, decodificador FFmpeg do Jellyfin (áudio), PdfBox-Android,
+Apache Commons Compress + XZ for Java, junrar e ML Kit via Google Play Services (OCR e digitalizador; modelos baixados pelo sistema).
+
+## Limitações conhecidas
+
+- RAR 5, DjVu, CAB e CHM ainda não abrem (há atalho para "abrir com outro app").
+- Vídeo com codecs que o aparelho não decodifica em hardware (ex.: alguns WMV/RMVB/DivX antigos) depende do player do sistema.
+- O editor de documentos regrava DOCX com formatação simplificada (por isso oferece salvar uma cópia); planilhas salvas perdem
+  fórmulas e formatação, mantendo valores e textos.
+- Arquivos 7z exigem Android 7 ou mais recente.
