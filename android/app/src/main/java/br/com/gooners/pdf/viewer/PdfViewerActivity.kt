@@ -597,6 +597,7 @@ class PdfViewerActivity : AppCompatActivity(), PageHost {
     private var selTo = -1
     private var selText: PageText? = null
     private var selRects: List<RectF> = emptyList()
+    private var selTouching = false
 
     override fun selectionRects(page: Int): List<RectF> = if (page == selPage) selRects else emptyList()
 
@@ -637,6 +638,7 @@ class PdfViewerActivity : AppCompatActivity(), PageHost {
 
     override fun onSelectStart(page: Int, x: Float, y: Float) {
         val t = pdfText ?: return
+        selTouching = true
         lifecycleScope.launch {
             val pt = withContext(textDispatcher) { runCatching { t.page(page) }.getOrNull() }
             if (pt == null || pt.text.isBlank()) { toast("Esta página não tem texto selecionável. Use o OCR para reconhecer o texto."); return@launch }
@@ -647,6 +649,8 @@ class PdfViewerActivity : AppCompatActivity(), PageHost {
             val w = wordBounds(pt.text, i)
             selFrom = w.first; selTo = w.last
             updateSelectionRects()
+            // o texto da página demorou a carregar e o dedo já saiu da tela
+            if (!selTouching) showTextBar()
         }
     }
 
@@ -661,6 +665,7 @@ class PdfViewerActivity : AppCompatActivity(), PageHost {
     }
 
     override fun onSelectEnd() {
+        selTouching = false
         if (selPage < 0 || selText == null) return
         showTextBar()
     }

@@ -116,7 +116,8 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            loading.visibility = if (state == Player.STATE_BUFFERING && player?.playWhenReady == true && player?.currentPosition == 0L) View.VISIBLE else View.GONE
+            // o PlayerView já mostra o indicador de carregamento
+            loading.visibility = View.GONE
             if (state == Player.STATE_ENDED) player?.currentMediaItem?.mediaId?.let { Prefs.putLong("pos_" + FileUtil.keyFor(Uri.parse(it)), 0) }
         }
 
@@ -136,6 +137,9 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         override fun onPlayerError(error: PlaybackException) = showError(error)
+
+        // Android 12+: a janela flutuante automática só vale enquanto um vídeo está tocando
+        override fun onIsPlayingChanged(isPlaying: Boolean) = updatePipParams()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -238,7 +242,7 @@ class PlayerActivity : AppCompatActivity() {
         playerView.player = p
         apply(p)
         updateTitle()
-        if (p.playbackState == Player.STATE_READY || p.playbackState == Player.STATE_BUFFERING) loading.visibility = View.GONE
+        loading.visibility = View.GONE
     }
 
     private fun apply(p: ExoPlayer) {
