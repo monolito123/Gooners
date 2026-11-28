@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fólio Judiciário</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Conversor de PDF para Markdown e ferramentas para analistas judiciários: prazos processuais, número CNJ, dosimetria e prescrição, anonimização (LGPD), PDF, Word e mais. Tudo roda no navegador.">
+<meta name="theme-color" content="#3a3f9e">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='4' fill='none' stroke='%233a3f9e' stroke-width='3'/%3E%3Cpath d='M11 9h10v3h-6.5v3H20v3h-5.5v5H11z' fill='%233a3f9e'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&amp;family=Newsreader:opsz,wght@6..72,500;6..72,600&amp;display=swap">
+<link rel="stylesheet" href="assets/folio.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="btn btn-quiet menu-btn" id="menu-btn" type="button" aria-controls="sidebar" aria-label="Abrir lista de ferramentas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Ferramentas</button>
+  <a class="brand" href="#pdf-markdown" aria-label="Fólio Judiciário, início">
+    <span class="brand-mark">FÓLIO</span>
+    <span class="brand-name">Fólio Judiciário</span>
+  </a>
+  <span class="brand-sub">mesa de trabalho do analista</span>
+  <span class="spacer"></span>
+  <span class="privacy" title="Nenhum arquivo é enviado: o processamento acontece neste navegador."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span class="txt">Processamento local</span></span>
+</header>
+<div class="app">
+  <nav class="sidebar" id="sidebar" aria-label="Ferramentas"></nav>
+  <main id="main"></main>
+  <footer class="page-foot">
+    <p>Fólio Judiciário é um projeto independente, sem vínculo oficial com o Tribunal de Justiça do Distrito Federal e dos Territórios. Os arquivos são processados no navegador; as bibliotecas (pdf.js, pdf-lib, Mammoth, Turndown, marked) vêm de CDNs públicas. Resultados de prazos e cálculos são auxiliares: confira-os nos sistemas oficiais, na legislação e na portaria de feriados do ano.</p>
+  </footer>
+</div>
+<script src="assets/core.js"></script>
+<script src="assets/pdf2md.js"></script>
+<script src="assets/conversores.js"></script>
+<script src="assets/pdf-tools.js"></script>
+<script src="assets/calculos.js"></script>
+<script src="assets/texto.js"></script>
+<script>Folio.start();</script>
+</body>
+</html>
